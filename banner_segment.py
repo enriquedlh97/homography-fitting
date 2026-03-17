@@ -5,7 +5,7 @@ banner_segment.py
 Interactive banner segmentation + parallelogram fitting.
 
 1. Show frame 0 of a video
-2. Click on banner regions (left-click = add point, Enter/Space = done)
+2. Click on banner regions (left-click = add point, N = next object, Enter/Space = done)
 3. SAM2 segments each clicked object
 4. Fit a parallelogram to each mask
 5. Visualize results
@@ -30,38 +30,70 @@ from PIL import Image
 # Click UI
 # ---------------------------------------------------------------------------
 
-def collect_clicks(frame: np.ndarray) -> list[tuple[int, int]]:
-    """Show frame in an OpenCV window; collect left-clicks. Press Enter/Space
-    to finish, Escape to cancel."""
-    clicks: list[tuple[int, int]] = []
+OBJ_COLORS_UI = [
+    (0, 255, 0), (0, 100, 255), (0, 0, 255),
+    (255, 0, 255), (0, 255, 255), (255, 255, 0),
+]
+
+
+def collect_clicks(frame: np.ndarray) -> list[list[tuple[int, int]]]:
+    """Show frame in an OpenCV window; collect grouped clicks.
+
+    - Left-click : add point to current object
+    - N          : finish current object, start a new one
+    - Enter/Space: finish all
+    - Escape     : cancel
+
+    Returns a list of groups, e.g. [[(x1,y1),(x2,y2)], [(x3,y3)], ...]
+    """
+    groups: list[list[tuple[int, int]]] = [[]]
     display = frame.copy()
-    win = "Click on banners (Enter=done, Esc=cancel)"
+    win = "Click banners (N=next object, Enter=done, Esc=cancel)"
+
+    def current_color():
+        return OBJ_COLORS_UI[(len(groups) - 1) % len(OBJ_COLORS_UI)]
+
+    def redraw_status():
+        obj_idx = len(groups)
+        n_pts = len(groups[-1])
+        label = f"Object {obj_idx}  ({n_pts} pts)  |  N=next  Enter=done"
+        cv2.rectangle(display, (0, 0), (frame.shape[1], 30), (30, 30, 30), -1)
+        cv2.putText(display, label, (8, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.imshow(win, display)
 
     def on_mouse(event, x, y, flags, _):
         if event == cv2.EVENT_LBUTTONDOWN:
-            clicks.append((x, y))
-            cv2.drawMarker(display, (x, y), (0, 255, 0),
-                           cv2.MARKER_STAR, 20, 2)
-            cv2.putText(display, str(len(clicks)), (x + 12, y - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.imshow(win, display)
+            groups[-1].append((x, y))
+            col = current_color()
+            pt_idx = len(groups[-1])
+            cv2.drawMarker(display, (x, y), col, cv2.MARKER_STAR, 20, 2)
+            cv2.putText(display, f"{len(groups)}.{pt_idx}", (x + 12, y - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, col, 2, cv2.LINE_AA)
+            redraw_status()
 
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, min(frame.shape[1], 1400), min(frame.shape[0], 900))
     cv2.setMouseCallback(win, on_mouse)
-    cv2.imshow(win, display)
+    redraw_status()
 
-    print("[UI] Left-click on each banner. Press Enter/Space when done, Esc to cancel.")
+    print("[UI] Left-click to add points. N = next object. Enter/Space = done. Esc = cancel.")
     while True:
         key = cv2.waitKey(0) & 0xFF
         if key in (13, 32):  # Enter or Space
             break
         if key == 27:  # Escape
-            clicks.clear()
+            groups.clear()
             break
+        if key in (ord('n'), ord('N')):
+            if groups[-1]:  # only advance if current group has points
+                print(f"  Object {len(groups)} done ({len(groups[-1])} pts). Starting object {len(groups) + 1}…")
+                groups.append([])
+                redraw_status()
 
     cv2.destroyAllWindows()
-    return clicks
+    # Drop trailing empty group (if user pressed N then immediately Enter)
+    return [g for g in groups if g]
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +119,10 @@ def extract_frame0(video_path: str) -> np.ndarray:
 # SAM2 (image predictor — fast, single-frame)
 # ---------------------------------------------------------------------------
 
-def run_sam2(frame_bgr: np.ndarray, clicks: list[tuple[int, int]],
+def run_sam2(frame_bgr: np.ndarray, click_groups: list[list[tuple[int, int]]],
              checkpoint: str = "sam2/checkpoints/sam2.1_hiera_tiny.pt",
              model_cfg: str = "configs/sam2.1/sam2.1_hiera_t.yaml"):
-    """Run SAM2 image predictor: one positive click per object.
+    """Run SAM2 image predictor: one group of positive clicks per object.
     Returns dict[obj_id] -> binary mask (H, W) for the given frame."""
     import sys
     # The sam2 repo dir shadows the installed package — point Python inside it
@@ -127,10 +159,10 @@ def run_sam2(frame_bgr: np.ndarray, clicks: list[tuple[int, int]],
     predictor.set_image(frame_rgb)
 
     masks_out: dict[int, np.ndarray] = {}
-    for idx, (x, y) in enumerate(clicks):
+    for idx, group in enumerate(click_groups):
         obj_id = idx + 1
-        point_coords = np.array([[x, y]], dtype=np.float32)
-        point_labels = np.array([1], np.int32)
+        point_coords = np.array(group, dtype=np.float32)
+        point_labels = np.ones(len(group), dtype=np.int32)
         masks, scores, _ = predictor.predict(
             point_coords=point_coords,
             point_labels=point_labels,
@@ -138,30 +170,99 @@ def run_sam2(frame_bgr: np.ndarray, clicks: list[tuple[int, int]],
         )
         best = masks[np.argmax(scores)]
         masks_out[obj_id] = best
-        print(f"  Click ({x},{y}) → obj {obj_id}, score={scores.max():.3f}", flush=True)
+        pts_str = ", ".join(f"({x},{y})" for x, y in group)
+        print(f"  Obj {obj_id}: {len(group)} pts [{pts_str}] → score={scores.max():.3f}", flush=True)
 
     print(f"  Got {len(masks_out)} masks", flush=True)
     return masks_out
 
 
 # ---------------------------------------------------------------------------
-# Parallelogram fitting (reuses court_homography)
+# Perspective-aware quadrilateral fitting
 # ---------------------------------------------------------------------------
 
-from court_homography import get_hull_vertices, classify_vertices, find_corners
+def _fit_line_pts(pts: np.ndarray):
+    """Fit a line to 2D points. Returns (point_on_line, unit_direction)."""
+    vx, vy, cx, cy = cv2.fitLine(pts.reshape(-1, 1, 2).astype(np.float32),
+                                  cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+    return np.array([cx, cy], dtype=np.float64), np.array([vx, vy], dtype=np.float64)
 
 
-def fit_parallelogram(mask_bool: np.ndarray) -> np.ndarray | None:
-    """Given a boolean mask, return 4 corners [TL, TR, BR, BL] or None."""
-    mask_u8 = (mask_bool.astype(np.uint8)) * 255
-    try:
-        pts = get_hull_vertices(mask_u8)
-        labels = classify_vertices(pts, mask_u8.shape)
-        corners = find_corners(pts, labels)
-        return corners
-    except RuntimeError as e:
-        print(f"  [warn] parallelogram fit failed: {e}")
+def fit_quadrilateral(mask: np.ndarray) -> np.ndarray | None:
+    """Fit a perspective-aware quadrilateral to a binary mask.
+
+    Splits contour into top/bottom edge points and fits an independent line to
+    each, capturing natural perspective convergence. Returns [TL, TR, BR, BL]
+    or None on failure.
+    """
+    mask_u8 = (mask > 0).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
         return None
+    largest = max(contours, key=cv2.contourArea)
+    pts = largest.reshape(-1, 2).astype(np.float64)
+
+    rect = cv2.minAreaRect(largest)
+    center = np.array(rect[0])
+    angle_deg = rect[2]
+    w, h = rect[1]
+    if w < h:
+        angle_deg += 90
+
+    angle_rad = np.deg2rad(angle_deg)
+    short_dir = np.array([-np.sin(angle_rad), np.cos(angle_rad)])
+
+    rel = pts - center
+    proj_short = rel @ short_dir
+
+    top_pts = pts[proj_short >= 0]
+    bot_pts = pts[proj_short < 0]
+    print(f"  Top edge: {len(top_pts)} pts, Bottom edge: {len(bot_pts)} pts")
+
+    if len(top_pts) < 5 or len(bot_pts) < 5:
+        print("  [warn] Not enough points, falling back to minAreaRect")
+        return cv2.boxPoints(rect).astype(np.float32)
+
+    pt_top, dir_top = _fit_line_pts(top_pts)
+    pt_bot, dir_bot = _fit_line_pts(bot_pts)
+
+    if dir_top @ dir_bot < 0:
+        dir_bot = -dir_bot
+
+    d_avg = (dir_top + dir_bot) / 2.0
+    d_avg /= np.linalg.norm(d_avg)
+
+    proj_long = pts @ d_avg
+    p_min, p_max = proj_long.min(), proj_long.max()
+
+    def point_on_line(pt_on, d, target):
+        denom = d @ d_avg
+        if abs(denom) < 1e-9:
+            return pt_on
+        t = (target - pt_on @ d_avg) / denom
+        return pt_on + t * d
+
+    tl = point_on_line(pt_top, dir_top, p_min)
+    tr = point_on_line(pt_top, dir_top, p_max)
+    br = point_on_line(pt_bot, dir_bot, p_max)
+    bl = point_on_line(pt_bot, dir_bot, p_min)
+
+    corners = np.array([tl, tr, br, bl], dtype=np.float32)
+
+    angle_top = np.degrees(np.arctan2(dir_top[1], dir_top[0]))
+    angle_bot = np.degrees(np.arctan2(dir_bot[1], dir_bot[0]))
+    print(f"  Top line angle: {angle_top:.2f}°, Bottom line angle: {angle_bot:.2f}°")
+    print(f"  Convergence: {abs(angle_top - angle_bot):.2f}°")
+
+    # Sort into TL/TR/BR/BL
+    s = corners.sum(axis=1)
+    d = corners[:, 0] - corners[:, 1]
+    return np.array([
+        corners[np.argmin(s)],
+        corners[np.argmax(d)],
+        corners[np.argmax(s)],
+        corners[np.argmin(d)],
+    ], dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +354,7 @@ def main():
     if not clicks:
         print("No clicks — exiting.")
         return
-    print(f"  {len(clicks)} click(s): {clicks}", flush=True)
+    print(f"  {len(clicks)} object(s): {clicks}", flush=True)
 
     print("[3/4] Running SAM2 (image mode) …", flush=True)
     masks = run_sam2(frame, clicks,
@@ -274,7 +375,7 @@ def main():
     corners_map = {}
     for obj_id, mask in masks.items():
         print(f"  Object {obj_id}:")
-        corners = fit_parallelogram(mask)
+        corners = fit_quadrilateral(mask)
         if corners is not None:
             corners_map[obj_id] = corners
             for lbl, pt in zip(["TL", "TR", "BR", "BL"], corners):
