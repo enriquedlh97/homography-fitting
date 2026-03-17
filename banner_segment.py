@@ -181,11 +181,23 @@ def run_sam2(frame_bgr: np.ndarray, click_groups: list[list[tuple[int, int]]],
 # Perspective-aware quadrilateral fitting
 # ---------------------------------------------------------------------------
 
-def _fit_line_pts(pts: np.ndarray):
-    """Fit a line to 2D points. Returns (point_on_line, unit_direction)."""
-    vx, vy, cx, cy = cv2.fitLine(pts.reshape(-1, 1, 2).astype(np.float32),
-                                  cv2.DIST_L2, 0, 0.01, 0.01).flatten()
-    return np.array([cx, cy], dtype=np.float64), np.array([vx, vy], dtype=np.float64)
+def _fit_line_pts(pts: np.ndarray, weights: np.ndarray | None = None):
+    """Fit a line to 2D points. Returns (point_on_line, unit_direction).
+
+    If *weights* is given, uses weighted PCA instead of cv2.fitLine.
+    """
+    if weights is None:
+        vx, vy, cx, cy = cv2.fitLine(pts.reshape(-1, 1, 2).astype(np.float32),
+                                      cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+        return np.array([cx, cy], dtype=np.float64), np.array([vx, vy], dtype=np.float64)
+
+    w = weights / weights.sum()
+    centroid = (pts * w[:, None]).sum(axis=0)
+    centered = pts - centroid
+    cov = (centered * w[:, None]).T @ centered
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    direction = eigvecs[:, -1].astype(np.float64)
+    return centroid.astype(np.float64), direction
 
 
 def _line_intersect(p1, d1, p2, d2):
@@ -257,11 +269,29 @@ def fit_quadrilateral(mask: np.ndarray, axis: str = "short") -> np.ndarray | Non
         group_a = pts[left_idx]
         group_b = pts[right_idx]
         labels = ("Left", "Right")
+
+        # Hann-window weights: middle of edge → 1, top/bottom → 0
+        def _hann_weights(grp):
+            s = (grp - center) @ short_dir
+            t = (s - s.min()) / max(s.max() - s.min(), 1e-9)
+            return np.clip(0.5 * (1 - np.cos(2 * np.pi * t)), 0.01, 1.0)
+
+        weights_a = _hann_weights(group_a)
+        weights_b = _hann_weights(group_b)
     else:
         proj_short = rel @ short_dir
         group_a = pts[proj_short >= 0]
         group_b = pts[proj_short < 0]
         labels = ("Top", "Bottom")
+
+        # Hann weights along the long axis to downweight left/right corners
+        def _hann_weights_long(grp):
+            s = (grp - center) @ long_dir
+            t = (s - s.min()) / max(s.max() - s.min(), 1e-9)
+            return np.clip(0.5 * (1 - np.cos(2 * np.pi * t)), 0.01, 1.0)
+
+        weights_a = _hann_weights_long(group_a)
+        weights_b = _hann_weights_long(group_b)
 
     print(f"  {labels[0]} edge: {len(group_a)} pts, {labels[1]} edge: {len(group_b)} pts")
 
@@ -269,8 +299,8 @@ def fit_quadrilateral(mask: np.ndarray, axis: str = "short") -> np.ndarray | Non
         print("  [warn] Not enough points, falling back to minAreaRect")
         return cv2.boxPoints(rect).astype(np.float32)
 
-    pt_a, dir_a = _fit_line_pts(group_a)
-    pt_b, dir_b = _fit_line_pts(group_b)
+    pt_a, dir_a = _fit_line_pts(group_a, weights_a)
+    pt_b, dir_b = _fit_line_pts(group_b, weights_b)
 
     if dir_a @ dir_b < 0:
         dir_b = -dir_b
@@ -444,6 +474,7 @@ OBJ_COLORS = [
 def visualize(frame: np.ndarray,
               masks: dict[int, np.ndarray],
               corners_map: dict[int, np.ndarray],
+              composited: np.ndarray | None = None,
               save_path: str = "banner_result.png"):
     vis = frame.copy()
 
@@ -468,31 +499,19 @@ def visualize(frame: np.ndarray,
     cv2.imwrite(save_path, vis)
     print(f"  Saved: {save_path}")
 
-    # Warped top-down views
-    warpeds = []
-    for obj_id in sorted(corners_map):
-        c = corners_map[obj_id]
-        dst_w, dst_h = 300, 450
-        dst = np.array([[0, 0], [dst_w, 0], [dst_w, dst_h], [0, dst_h]], dtype=np.float32)
-        H, _ = cv2.findHomography(c, dst)
-        if H is not None:
-            warpeds.append((obj_id, cv2.warpPerspective(frame, H, (dst_w, dst_h))))
-
-    ncols = 1 + len(warpeds)
-    ratios = [3] + [1] * len(warpeds)
-    fig, axes = plt.subplots(1, ncols, figsize=(8 + 4 * len(warpeds), 6),
-                             gridspec_kw={"width_ratios": ratios})
+    ncols = 2 if composited is not None else 1
+    fig, axes = plt.subplots(1, ncols, figsize=(7 * ncols, 6))
     if ncols == 1:
         axes = [axes]
 
     axes[0].imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-    axes[0].set_title(f"Masks + parallelogram fit ({len(corners_map)} objects)")
+    axes[0].set_title(f"Masks + quad fit ({len(corners_map)} objects)")
     axes[0].axis("off")
 
-    for i, (oid, warped) in enumerate(warpeds):
-        axes[1 + i].imshow(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
-        axes[1 + i].set_title(f"Obj {oid} top-down")
-        axes[1 + i].axis("off")
+    if composited is not None:
+        axes[1].imshow(cv2.cvtColor(composited, cv2.COLOR_BGR2RGB))
+        axes[1].set_title("Composited logo")
+        axes[1].axis("off")
 
     plt.tight_layout()
     plt.savefig(save_path.rsplit(".", 1)[0] + "_full.png", dpi=150, bbox_inches="tight")
@@ -552,14 +571,14 @@ def main():
             for lbl, pt in zip(["TL", "TR", "BR", "BL"], corners):
                 print(f"    {lbl}: ({int(pt[0])}, {int(pt[1])})")
 
-    print(f"  Visualizing ({len(corners_map)} parallelograms) …", flush=True)
-    visualize(frame, masks, corners_map, save_path=args.save)
-
+    composited = None
     if args.logo and corners_map:
         print("[5/5] Compositing logo …", flush=True)
         first_corners = next(iter(corners_map.values()))
-        composite_logo(frame, first_corners, args.logo)
+        composited = composite_logo(frame, first_corners, args.logo)
 
+    print(f"  Visualizing ({len(corners_map)} parallelograms) …", flush=True)
+    visualize(frame, masks, corners_map, composited=composited, save_path=args.save)
     print("Done.")
 
 
