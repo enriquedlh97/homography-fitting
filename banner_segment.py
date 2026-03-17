@@ -188,15 +188,41 @@ def _fit_line_pts(pts: np.ndarray):
     return np.array([cx, cy], dtype=np.float64), np.array([vx, vy], dtype=np.float64)
 
 
-def fit_quadrilateral(mask: np.ndarray) -> np.ndarray | None:
+def _line_intersect(p1, d1, p2, d2):
+    """Intersect lines p1+t*d1 and p2+s*d2. Returns the intersection point."""
+    cross = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(cross) < 1e-9:
+        return (p1 + p2) / 2.0
+    dp = p2 - p1
+    t = (dp[0] * d2[1] - dp[1] * d2[0]) / cross
+    return p1 + t * d1
+
+
+def fit_quadrilateral(mask: np.ndarray, axis: str = "short") -> np.ndarray | None:
     """Fit a perspective-aware quadrilateral to a binary mask.
 
-    Splits contour into top/bottom edge points and fits an independent line to
-    each, capturing natural perspective convergence. Returns [TL, TR, BR, BL]
-    or None on failure.
+    *axis* controls which pair of edges gets independent line fitting:
+      - "short" (default): split along short axis → top/bottom edges can converge
+      - "long": split along long axis → left/right edges can converge
+
+    Returns [TL, TR, BR, BL] or None on failure.
     """
     mask_u8 = (mask > 0).astype(np.uint8) * 255
-    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Keep only the largest connected component
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8)
+    if n_labels > 2:
+        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        mask_u8 = ((labels == largest_label) * 255).astype(np.uint8)
+        print(f"  Kept largest component ({stats[largest_label, cv2.CC_STAT_AREA]}px), "
+              f"dropped {n_labels - 2} small blob(s)")
+
+    # Smooth edges
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, kern)
+    mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, kern)
+
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return None
     largest = max(contours, key=cv2.contourArea)
@@ -210,49 +236,129 @@ def fit_quadrilateral(mask: np.ndarray) -> np.ndarray | None:
         angle_deg += 90
 
     angle_rad = np.deg2rad(angle_deg)
+    long_dir = np.array([np.cos(angle_rad), np.sin(angle_rad)])
     short_dir = np.array([-np.sin(angle_rad), np.cos(angle_rad)])
 
     rel = pts - center
-    proj_short = rel @ short_dir
 
-    top_pts = pts[proj_short >= 0]
-    bot_pts = pts[proj_short < 0]
-    print(f"  Top edge: {len(top_pts)} pts, Bottom edge: {len(bot_pts)} pts")
+    if axis == "long":
+        proj_long = rel @ long_dir
+        proj_short = rel @ short_dir
+        short_bins = np.round(proj_short).astype(int)
+        unique_bins = np.unique(short_bins)
+        # Trim top/bottom 15% of rows to avoid corner-rounding points
+        n_trim = max(1, int(len(unique_bins) * 0.15))
+        unique_bins = unique_bins[n_trim:-n_trim]
+        left_idx, right_idx = [], []
+        for b in unique_bins:
+            in_bin = np.where(short_bins == b)[0]
+            left_idx.append(in_bin[np.argmin(proj_long[in_bin])])
+            right_idx.append(in_bin[np.argmax(proj_long[in_bin])])
+        group_a = pts[left_idx]
+        group_b = pts[right_idx]
+        labels = ("Left", "Right")
+    else:
+        proj_short = rel @ short_dir
+        group_a = pts[proj_short >= 0]
+        group_b = pts[proj_short < 0]
+        labels = ("Top", "Bottom")
 
-    if len(top_pts) < 5 or len(bot_pts) < 5:
+    print(f"  {labels[0]} edge: {len(group_a)} pts, {labels[1]} edge: {len(group_b)} pts")
+
+    if len(group_a) < 5 or len(group_b) < 5:
         print("  [warn] Not enough points, falling back to minAreaRect")
         return cv2.boxPoints(rect).astype(np.float32)
 
-    pt_top, dir_top = _fit_line_pts(top_pts)
-    pt_bot, dir_bot = _fit_line_pts(bot_pts)
+    pt_a, dir_a = _fit_line_pts(group_a)
+    pt_b, dir_b = _fit_line_pts(group_b)
 
-    if dir_top @ dir_bot < 0:
-        dir_bot = -dir_bot
+    if dir_a @ dir_b < 0:
+        dir_b = -dir_b
 
-    d_avg = (dir_top + dir_bot) / 2.0
-    d_avg /= np.linalg.norm(d_avg)
+    # Find the two extent edges of the minAreaRect perpendicular to the
+    # fitted lines, then intersect to get corners.
+    box_corners = cv2.boxPoints(rect).astype(np.float64)
+    if axis == "long":
+        # Fitted lines ≈ short dir; extent edges ≈ long dir (top/bottom of rect)
+        extent_dir = short_dir
+    else:
+        # Fitted lines ≈ long dir; extent edges ≈ short dir (left/right of rect)
+        extent_dir = long_dir
 
-    proj_long = pts @ d_avg
-    p_min, p_max = proj_long.min(), proj_long.max()
+    proj_box = (box_corners - center) @ extent_dir
+    order = np.argsort(proj_box)
+    edge1_pts = box_corners[order[:2]]  # low-projection edge
+    edge2_pts = box_corners[order[2:]]  # high-projection edge
+    edge1_dir = edge1_pts[1] - edge1_pts[0]
+    edge1_dir /= np.linalg.norm(edge1_dir)
+    edge2_dir = edge2_pts[1] - edge2_pts[0]
+    edge2_dir /= np.linalg.norm(edge2_dir)
 
-    def point_on_line(pt_on, d, target):
-        denom = d @ d_avg
-        if abs(denom) < 1e-9:
-            return pt_on
-        t = (target - pt_on @ d_avg) / denom
-        return pt_on + t * d
+    c_a1 = _line_intersect(pt_a, dir_a, edge1_pts[0], edge1_dir)
+    c_a2 = _line_intersect(pt_a, dir_a, edge2_pts[0], edge2_dir)
+    c_b1 = _line_intersect(pt_b, dir_b, edge1_pts[0], edge1_dir)
+    c_b2 = _line_intersect(pt_b, dir_b, edge2_pts[0], edge2_dir)
 
-    tl = point_on_line(pt_top, dir_top, p_min)
-    tr = point_on_line(pt_top, dir_top, p_max)
-    br = point_on_line(pt_bot, dir_bot, p_max)
-    bl = point_on_line(pt_bot, dir_bot, p_min)
+    corners = np.array([c_a1, c_a2, c_b1, c_b2], dtype=np.float32)
 
-    corners = np.array([tl, tr, br, bl], dtype=np.float32)
+    angle_a = np.degrees(np.arctan2(dir_a[1], dir_a[0]))
+    angle_b = np.degrees(np.arctan2(dir_b[1], dir_b[0]))
+    print(f"  {labels[0]} line angle: {angle_a:.2f}°, {labels[1]} line angle: {angle_b:.2f}°")
+    print(f"  Convergence: {abs(angle_a - angle_b):.2f}°")
 
-    angle_top = np.degrees(np.arctan2(dir_top[1], dir_top[0]))
-    angle_bot = np.degrees(np.arctan2(dir_bot[1], dir_bot[0]))
-    print(f"  Top line angle: {angle_top:.2f}°, Bottom line angle: {angle_bot:.2f}°")
-    print(f"  Convergence: {abs(angle_top - angle_bot):.2f}°")
+    # --- Debug visualisation ---
+    h_img, w_img = mask.shape[:2]
+    dbg = np.zeros((h_img, w_img, 3), dtype=np.uint8)
+    dbg[mask_u8 > 0] = (60, 60, 60)
+    # minAreaRect (white dashed-ish)
+    box_pts = cv2.boxPoints(rect).astype(np.int32).reshape((-1, 1, 2))
+    cv2.polylines(dbg, [box_pts], True, (255, 255, 255), 1, cv2.LINE_AA)
+    # Long / short axis arrows from center
+    arrow_len = 60
+    ct = tuple(center.astype(int))
+    cv2.arrowedLine(dbg, ct, tuple((center + arrow_len * long_dir).astype(int)),
+                    (0, 200, 200), 1, cv2.LINE_AA, tipLength=0.2)
+    cv2.putText(dbg, "long", tuple((center + arrow_len * long_dir + 5).astype(int)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 200), 1)
+    cv2.arrowedLine(dbg, ct, tuple((center + arrow_len * short_dir).astype(int)),
+                    (200, 200, 0), 1, cv2.LINE_AA, tipLength=0.2)
+    cv2.putText(dbg, "short", tuple((center + arrow_len * short_dir + 5).astype(int)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 0), 1)
+    # All contour points in grey
+    for p in pts.astype(int):
+        cv2.circle(dbg, tuple(p), 1, (120, 120, 120), -1)
+    # group_a points (cyan) and group_b points (magenta)
+    for p in group_a.astype(int):
+        cv2.circle(dbg, tuple(p), 3, (255, 255, 0), -1)
+    for p in group_b.astype(int):
+        cv2.circle(dbg, tuple(p), 3, (255, 0, 255), -1)
+    # Fitted lines — extend far in both directions
+    line_len = max(h_img, w_img)
+    la1 = (pt_a - line_len * dir_a).astype(int)
+    la2 = (pt_a + line_len * dir_a).astype(int)
+    lb1 = (pt_b - line_len * dir_b).astype(int)
+    lb2 = (pt_b + line_len * dir_b).astype(int)
+    cv2.line(dbg, tuple(la1), tuple(la2), (0, 255, 255), 1, cv2.LINE_AA)
+    cv2.line(dbg, tuple(lb1), tuple(lb2), (0, 0, 255), 1, cv2.LINE_AA)
+    # Extent edges (green) — the minAreaRect edges used for intersection
+    e1a, e1b = edge1_pts[0].astype(int), edge1_pts[1].astype(int)
+    e2a, e2b = edge2_pts[0].astype(int), edge2_pts[1].astype(int)
+    cv2.line(dbg, tuple(e1a), tuple(e1b), (0, 180, 0), 1, cv2.LINE_AA)
+    cv2.line(dbg, tuple(e2a), tuple(e2b), (0, 180, 0), 1, cv2.LINE_AA)
+    # Corners
+    for i, c in enumerate(corners):
+        cv2.circle(dbg, (int(c[0]), int(c[1])), 5, (0, 0, 255), -1)
+        cv2.putText(dbg, str(i), (int(c[0]) + 8, int(c[1]) - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    # Crop to region of interest (mask bounding box + padding)
+    ys, xs = np.where(mask_u8 > 0)
+    if len(xs) > 0:
+        pad = 60
+        x0, x1 = max(xs.min() - pad, 0), min(xs.max() + pad, w_img)
+        y0, y1 = max(ys.min() - pad, 0), min(ys.max() + pad, h_img)
+        dbg = dbg[y0:y1, x0:x1]
+    cv2.imwrite("debug_fit.png", dbg)
+    print("  Debug image saved: debug_fit.png")
 
     # Sort into TL/TR/BR/BL
     s = corners.sum(axis=1)
@@ -268,6 +374,66 @@ def fit_quadrilateral(mask: np.ndarray) -> np.ndarray | None:
 # ---------------------------------------------------------------------------
 # Visualisation
 # ---------------------------------------------------------------------------
+
+def composite_logo(frame: np.ndarray, corners: np.ndarray, logo_path: str,
+                   save_path: str = "sponsor_morph_result.png") -> np.ndarray:
+    """Warp a sponsor logo into the detected quad region."""
+    logo_bgra = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+    if logo_bgra is None:
+        raise RuntimeError(f"Could not read logo: {logo_path}")
+
+    h, w = frame.shape[:2]
+
+    # Sample background color from a thin border around the quad
+    quad_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(quad_mask, [corners.astype(np.int32)], 255)
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    border_mask = cv2.dilate(quad_mask, kern) & ~quad_mask
+    bg_color = np.median(frame[border_mask > 0], axis=0).astype(np.uint8)
+    print(f"  Background color (BGR): {tuple(int(c) for c in bg_color)}")
+
+    # Canvas sized to match quad proportions
+    w_top = np.linalg.norm(corners[1] - corners[0])
+    w_bot = np.linalg.norm(corners[2] - corners[3])
+    h_left = np.linalg.norm(corners[3] - corners[0])
+    h_right = np.linalg.norm(corners[2] - corners[1])
+    canvas_w = int(max(w_top, w_bot))
+    canvas_h = int(max(h_left, h_right))
+    canvas = np.full((canvas_h, canvas_w, 3), bg_color, dtype=np.uint8)
+
+    # Resize logo to fit canvas with a small margin
+    logo_h, logo_w = logo_bgra.shape[:2]
+    pad = 4
+    scale = min((canvas_w - 2 * pad) / logo_w, (canvas_h - 2 * pad) / logo_h)
+    new_w, new_h = int(logo_w * scale), int(logo_h * scale)
+    logo_resized = cv2.resize(logo_bgra, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # Centre logo on canvas with alpha blending
+    x0 = (canvas_w - new_w) // 2
+    y0 = (canvas_h - new_h) // 2
+    if logo_resized.shape[2] == 4:
+        alpha = logo_resized[:, :, 3:4].astype(np.float32) / 255.0
+        roi = canvas[y0:y0 + new_h, x0:x0 + new_w].astype(np.float32)
+        canvas[y0:y0 + new_h, x0:x0 + new_w] = (
+            logo_resized[:, :, :3].astype(np.float32) * alpha + roi * (1 - alpha)
+        ).astype(np.uint8)
+    else:
+        canvas[y0:y0 + new_h, x0:x0 + new_w] = logo_resized[:, :, :3]
+
+    # Warp canvas into quad via homography
+    src = np.array([[0, 0], [canvas_w, 0], [canvas_w, canvas_h], [0, canvas_h]], dtype=np.float32)
+    H, _ = cv2.findHomography(src, corners.astype(np.float32))
+    warped = cv2.warpPerspective(canvas, H, (w, h))
+    warp_mask = cv2.warpPerspective(np.ones((canvas_h, canvas_w), dtype=np.uint8) * 255, H, (w, h))
+
+    result = frame.copy()
+    m = warp_mask > 0
+    result[m] = warped[m]
+
+    cv2.imwrite(save_path, result)
+    print(f"  Saved composited result: {save_path}")
+    return result
+
 
 OBJ_COLORS = [
     (0, 200, 0), (200, 0, 0), (0, 0, 200),
@@ -343,6 +509,11 @@ def main():
     parser.add_argument("--save", default="banner_result.png", help="Output image path")
     parser.add_argument("--checkpoint", default="sam2/checkpoints/sam2.1_hiera_tiny.pt")
     parser.add_argument("--model-cfg", default="configs/sam2.1/sam2.1_hiera_t.yaml")
+    parser.add_argument("--axis", choices=["short", "long"], default="short",
+                        help="Which axis to split contour for line fitting: "
+                             "'short' (default) fits top/bottom edges independently; "
+                             "'long' fits left/right edges independently")
+    parser.add_argument("--logo", default=None, help="Path to sponsor logo PNG to composite into the detected region")
     parser.add_argument("--mask-dir", default="masks", help="Directory to save masks + frame (default: masks/)")
     args = parser.parse_args()
 
@@ -375,7 +546,7 @@ def main():
     corners_map = {}
     for obj_id, mask in masks.items():
         print(f"  Object {obj_id}:")
-        corners = fit_quadrilateral(mask)
+        corners = fit_quadrilateral(mask, axis=args.axis)
         if corners is not None:
             corners_map[obj_id] = corners
             for lbl, pt in zip(["TL", "TR", "BR", "BL"], corners):
@@ -383,6 +554,12 @@ def main():
 
     print(f"  Visualizing ({len(corners_map)} parallelograms) …", flush=True)
     visualize(frame, masks, corners_map, save_path=args.save)
+
+    if args.logo and corners_map:
+        print("[5/5] Compositing logo …", flush=True)
+        first_corners = next(iter(corners_map.values()))
+        composite_logo(frame, first_corners, args.logo)
+
     print("Done.")
 
 
