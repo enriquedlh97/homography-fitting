@@ -429,13 +429,19 @@ def composite_logo(frame: np.ndarray, corners: np.ndarray, logo_path: str,
     border_mask = cv2.dilate(mask_u8, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))) & ~mask_u8
     bg_color = np.median(frame[border_mask > 0], axis=0).astype(np.uint8)
 
-    # Step 2: Build logo + alpha canvases at the quad's aspect ratio
+    # Step 2: Build logo + alpha canvases. Use average screen-space edge
+    # lengths (best available estimate without world-space info).
     w_top = np.linalg.norm(corners[1] - corners[0])
     w_bot = np.linalg.norm(corners[2] - corners[3])
     h_left = np.linalg.norm(corners[3] - corners[0])
     h_right = np.linalg.norm(corners[2] - corners[1])
-    canvas_w = int(max(w_top, w_bot))
-    canvas_h = int(max(h_left, h_right))
+    avg_w = (w_top + w_bot) / 2
+    avg_h = (h_left + h_right) / 2
+    # Scale up to a minimum resolution for quality
+    scale_up = max(1.0, 500 / max(avg_w, avg_h))
+    canvas_w = max(int(avg_w * scale_up), 1)
+    canvas_h = max(int(avg_h * scale_up), 1)
+    print(f"  Canvas {canvas_w}x{canvas_h} (aspect {avg_w/max(avg_h,1):.2f})")
 
     rgb_canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     alpha_canvas = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
@@ -452,6 +458,18 @@ def composite_logo(frame: np.ndarray, corners: np.ndarray, logo_path: str,
     y0 = (canvas_h - new_h) // 2
     rgb_canvas[y0:y0 + new_h, x0:x0 + new_w] = logo_resized[:, :, :3]
     alpha_canvas[y0:y0 + new_h, x0:x0 + new_w] = logo_resized[:, :, 3]
+
+    # Debug: save pre-warp canvas + rectified original region
+    dbg_canvas = rgb_canvas.copy()
+    dbg_canvas[alpha_canvas == 0] = (40, 40, 40)
+    cv2.imwrite("debug_canvas.png", dbg_canvas)
+    src_rect = np.array([[0, 0], [canvas_w, 0], [canvas_w, canvas_h], [0, canvas_h]], dtype=np.float32)
+    H_rect, _ = cv2.findHomography(corners.astype(np.float32), src_rect)
+    if H_rect is not None:
+        rectified = cv2.warpPerspective(frame, H_rect, (canvas_w, canvas_h))
+        cv2.imwrite("debug_rectified.png", rectified)
+        print(f"  Debug rectified original saved: debug_rectified.png")
+    print(f"  Debug canvas saved: debug_canvas.png ({canvas_w}x{canvas_h}, logo {new_w}x{new_h})")
 
     # Warp both canvases into frame space
     src = np.array([[0, 0], [canvas_w, 0], [canvas_w, canvas_h], [0, canvas_h]], dtype=np.float32)
