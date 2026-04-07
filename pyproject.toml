@@ -17,6 +17,7 @@ dependencies = [
     "mypy>=1.15",
     "pre-commit>=4.0",
     "types-PyYAML>=6.0",
+    "modal>=1.4.1",
 ]
 
 [build-system]

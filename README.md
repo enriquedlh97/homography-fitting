@@ -2,27 +2,29 @@
 
 Video banner/logo replacement using SAM2 segmentation. Detects billboard regions in video frames, fits perspective-aware quadrilaterals, and composites new logos with correct aspect ratio and luminosity matching.
 
-## Quick start
+## Setup
 
 ```bash
 # 1. Clone and enter the repo
 git clone <repo-url> && cd homography-fitting
 
-# 2. Install dependencies (requires uv: https://docs.astral.sh/uv/)
+# 2. Install all dependencies (requires uv: https://docs.astral.sh/uv/)
 uv sync
 
-# 3. Install SAM2
-git clone https://github.com/facebookresearch/sam2.git
-pip install -e ./sam2
-
-# 4. Download a SAM2 checkpoint
-cd sam2/checkpoints && ./download_ckpts.sh && cd ../..
-
-# 5. Install pre-commit hooks
+# 3. Install pre-commit hooks
 uv run pre-commit install
 
-# 6. Run the pipeline (interactive — click on banner regions)
-python scripts/run_pipeline.py --config configs/default.yaml --save result.png
+# 4. Authenticate with Modal (one-time, for GPU runs)
+modal setup
+```
+
+SAM2 setup is only needed for **local** runs. Modal downloads checkpoints automatically.
+
+```bash
+# Only if running locally (not needed for Modal)
+git clone https://github.com/facebookresearch/sam2.git
+pip install -e ./sam2
+cd sam2/checkpoints && ./download_ckpts.sh && cd ../..
 ```
 
 ## Pipeline stages
@@ -34,24 +36,47 @@ Input frame → [Segment] → [Fit quad] → [Composite] → Output frame
 
 Each stage is swappable via the YAML config.
 
-## Running experiments
+## Running on Modal (GPU)
+
+Two-step process: collect clicks locally, then run on a remote GPU.
 
 ```bash
-# Run and save outputs + metrics
-python scripts/run_experiment.py --config configs/default.yaml
+# Step 1: Click on banner regions (local, no GPU needed)
+python scripts/collect_prompts.py --config configs/default.yaml
 
-# Benchmark FPS (requires pre-defined prompts in config)
-python scripts/benchmark_fps.py --config configs/default.yaml --runs 10
+# Step 2: Run on a GPU via Modal
+modal run scripts/modal_run.py --config configs/default.yaml --gpu T4
 ```
 
-Experiment results are saved to `experiments/<timestamp>_<name>/` with frozen config, output images, and `metrics.json`.
+Available GPUs: `T4` (cheapest), `L4`, `A10G`, `A100`, `H100`.
+
+Benchmark across GPU tiers:
+
+```bash
+modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --benchmark 5
+modal run scripts/modal_run.py --config configs/default.yaml --gpu A10G --benchmark 5
+```
+
+Results are saved to `experiments/<timestamp>_<name>/` with `metrics.json`.
+
+## Running locally
+
+```bash
+# Interactive (opens UI for clicking + runs SAM2 locally)
+python scripts/run_pipeline.py --config configs/default.yaml --save result.png
+
+# Run experiment with saved outputs + metrics
+python scripts/run_experiment.py --config configs/default.yaml
+
+# Benchmark FPS locally
+python scripts/benchmark_fps.py --config configs/default.yaml --runs 5
+```
 
 ## Swapping components
 
 Change the config to use different algorithms:
 
 ```yaml
-# configs/experiments/lp_oriented.yaml
 pipeline:
   fitter:
     type: lp           # pca | lp | hull
@@ -83,7 +108,8 @@ src/banner_pipeline/
   composite/  inpaint.py, alpha.py                 # compositing strategies
   pipeline.py                                      # orchestration + config
 configs/      default.yaml, experiments/            # experiment configs
-scripts/      run_pipeline.py, run_experiment.py, benchmark_fps.py
+scripts/      run_pipeline.py, run_experiment.py, benchmark_fps.py,
+              collect_prompts.py, modal_run.py
 ```
 
 See [MIGRATION.md](MIGRATION.md) for how the old files map to this structure.
