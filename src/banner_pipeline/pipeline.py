@@ -18,7 +18,7 @@ from banner_pipeline.fitting.hull_fit import HullFitter
 from banner_pipeline.fitting.lp_fit import LPFitter
 from banner_pipeline.fitting.pca_fit import PCAFitter
 from banner_pipeline.homography.camera import compute_oriented_homography, estimate_camera_matrix
-from banner_pipeline.io import get_video_fps, load_frame, write_video
+from banner_pipeline.io import StreamingVideoWriter, get_video_fps, load_frame
 from banner_pipeline.segment.base import ObjectPrompt, SegmentationModel
 from banner_pipeline.segment.sam2_image import SAM2ImageSegmenter
 from banner_pipeline.segment.sam2_video import SAM2VideoSegmenter
@@ -351,20 +351,33 @@ def run_pipeline_video(
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
-    output_frames: list[np.ndarray] = []
     fit_times: list[float] = []
     composite_times: list[float] = []
+    write_video_s = 0.0  # accumulated time spent piping frames to ffmpeg
+    num_written = 0
 
     # Reset perf counters before the per-frame loop. PERF_ENABLED is False
     # by default, so the Timer blocks in compositors are no-ops unless the
     # caller has set _perf.enable() (e.g. via --profile).
     _perf.reset()
 
+    # Open the streaming video writer using the first frame's dimensions.
+    # This avoids buffering all frames in RAM and replaces the legacy
+    # mp4v→ffmpeg double-write with a single libx264 encode pass.
+    first_bgr = cv2.imread(os.path.join(frame_dir, frame_names[0]))
+    if first_bgr is None:
+        raise RuntimeError(f"Could not read first frame: {frame_names[0]}")
+    fh, fw = first_bgr.shape[:2]
+    video_writer = StreamingVideoWriter(output_path, fw, fh, fps=input_fps)
+
     try:
         for frame_idx, fname in enumerate(frame_names):
-            frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
-            if frame_bgr is None:
-                raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+            if frame_idx == 0:
+                frame_bgr = first_bgr
+            else:
+                frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
+                if frame_bgr is None:
+                    raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
 
             masks_for_frame = video_segments.get(frame_idx, {})
 
@@ -400,19 +413,21 @@ def run_pipeline_video(
                     )
                 composite_times.append(time.perf_counter() - t_comp)
 
-            output_frames.append(frame_bgr)
+            # Stream this frame to ffmpeg immediately (no in-memory buffer).
+            t_write = time.perf_counter()
+            video_writer.write(frame_bgr)
+            num_written += 1
+            write_video_s += time.perf_counter() - t_write
 
             if (frame_idx + 1) % 50 == 0 or frame_idx == len(frame_names) - 1:
                 print(f"[video] Processed frame {frame_idx + 1}/{len(frame_names)}")
 
     finally:
+        video_writer.close()
         shutil.rmtree(frame_dir, ignore_errors=True)
 
-    # --- Write output video ---
-    t0 = time.perf_counter()
-    write_video(output_frames, output_path, fps=input_fps)
-    metrics["write_video_s"] = time.perf_counter() - t0
-    print(f"[video] Wrote {len(output_frames)} frames → {output_path}")
+    metrics["write_video_s"] = round(write_video_s, 4)
+    print(f"[video] Wrote {num_written} frames → {output_path}")
 
     # --- Aggregate metrics ---
     fit_arr = np.array(fit_times) * 1000  # ms
