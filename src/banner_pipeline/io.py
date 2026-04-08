@@ -84,16 +84,46 @@ def write_video(
     output_path: str,
     fps: float = 30.0,
 ) -> None:
-    """Write a list of BGR frames as an MP4 video."""
+    """Write a list of BGR frames as an H.264 MP4 video.
+
+    Writes with OpenCV first, then re-encodes with ffmpeg to H.264
+    for broad compatibility (WhatsApp, browsers, etc.).
+    """
     if not frames:
         raise ValueError("No frames to write.")
     h, w = frames[0].shape[:2]
     os.makedirs(str(Path(output_path).parent), exist_ok=True)
+
+    # Write to a temp file with OpenCV (mpeg4 codec).
+    tmp_path = output_path + ".tmp.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    writer = cv2.VideoWriter(tmp_path, fourcc, fps, (w, h))
     for frame in frames:
         writer.write(frame)
     writer.release()
+
+    # Re-encode to H.264 with ffmpeg for broad compatibility.
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            tmp_path,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            output_path,
+            "-y",
+            "-loglevel",
+            "error",
+        ],
+        check=True,
+    )
+    os.unlink(tmp_path)
 
 
 def get_video_fps(video_path: str, default: float = 30.0) -> float:
