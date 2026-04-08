@@ -115,7 +115,7 @@ experiments/2026-04-07_20-38-28_pca_T4/
     composited.mp4   # output video (or .png for image mode)
 ```
 
-Configs and metrics are tracked in git. Outputs (large files) are gitignored but can be reproduced from the saved config:
+Everything is tracked in git — configs, metrics, and outputs. For long videos that exceed GitHub's file size limit, the output will be rejected by git; in that case, just add the specific output to `.gitignore` and let teammates reproduce it from the saved config:
 
 ```bash
 # Reproduce an experiment exactly
