@@ -42,7 +42,7 @@ for i, arg in enumerate(sys.argv):
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "git")
+    .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "git", "build-essential")
     .pip_install(
         "torch>=2.0",
         "torchvision>=0.15",
@@ -53,7 +53,11 @@ image = (
         "scipy>=1.11",
         "pyyaml>=6.0",
     )
-    .pip_install("git+https://github.com/facebookresearch/sam2.git")
+    # Install SAM2 from source with C extension compiled.
+    .run_commands(
+        "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
+        "cd /tmp/sam2 && pip install -e '.[all]'",
+    )
     .add_local_dir("src", remote_path="/root/src")
 )
 
