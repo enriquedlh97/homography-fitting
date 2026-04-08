@@ -172,17 +172,48 @@ def run_on_gpu(
             output_bytes = buf.tobytes()
 
     # --- Aggregate benchmark stats ---
-    report = {"runs": benchmark_runs, "gpu": gpu_name, "gpu_memory_gb": round(gpu_mem, 1)}
+    report: dict = {
+        "runs": benchmark_runs,
+        "gpu": gpu_name,
+        "gpu_memory_gb": round(gpu_mem, 1),
+        "mode": mode,
+    }
+
+    # Carry over per-run metadata fields (same across all runs).
+    metadata_keys = [
+        "num_prompts",
+        "num_prompt_points",
+        "num_frames",
+        "input_fps",
+        "duration_s",
+        "frame_width",
+        "frame_height",
+        "video_path",
+        "fitter_type",
+        "compositor_type",
+        "checkpoint",
+    ]
+    for key in metadata_keys:
+        if all_metrics and key in all_metrics[0]:
+            report[key] = all_metrics[0][key]
+
+    # Numeric stats: aggregate any timing-like field.
+    timing_keys = [
+        "load_frame_s",
+        "segment_s",
+        "segment_total_s",
+        "fit_s",
+        "fit_mean_ms",
+        "composite_s",
+        "composite_mean_ms",
+        "write_video_s",
+        "total_s",
+        "run_total_s",
+        "output_fps",
+    ]
     if benchmark_runs > 1:
-        for key in [
-            "load_frame_s",
-            "segment_s",
-            "fit_s",
-            "composite_s",
-            "total_s",
-            "run_total_s",
-        ]:
-            values = [m.get(key, 0) for m in all_metrics if key in m]
+        for key in timing_keys:
+            values = [m[key] for m in all_metrics if key in m]
             if values:
                 report[key] = {
                     "mean": round(float(np.mean(values)), 4),
@@ -190,16 +221,10 @@ def run_on_gpu(
                     "min": round(float(np.min(values)), 4),
                     "max": round(float(np.max(values)), 4),
                 }
-        total_times = [m.get("run_total_s", 0) for m in all_metrics]
-        fps_values = [1.0 / t for t in total_times if t > 0]
-        if fps_values:
-            report["fps"] = {
-                "mean": round(float(np.mean(fps_values)), 2),
-                "min": round(float(np.min(fps_values)), 2),
-                "max": round(float(np.max(fps_values)), 2),
-            }
     else:
-        report.update(all_metrics[0])
+        for key in timing_keys:
+            if all_metrics and key in all_metrics[0]:
+                report[key] = all_metrics[0][key]
 
     return {
         "metrics": report,
