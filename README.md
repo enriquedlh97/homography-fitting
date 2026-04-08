@@ -15,7 +15,7 @@ uv sync
 uv run pre-commit install
 
 # 4. Authenticate with Modal (one-time, for GPU runs)
-modal setup
+uv run modal setup
 ```
 
 SAM2 setup is only needed for **local** runs. Modal downloads checkpoints automatically.
@@ -42,34 +42,76 @@ Two-step process: collect clicks locally, then run on a remote GPU.
 
 ```bash
 # Step 1: Click on banner regions (local, no GPU needed)
-python scripts/collect_prompts.py --config configs/default.yaml
+uv run python scripts/collect_prompts.py --config configs/default.yaml
 
 # Step 2: Run on a GPU via Modal
-modal run scripts/modal_run.py --config configs/default.yaml --gpu T4
+uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4
 ```
 
-Available GPUs: `T4` (cheapest), `L4`, `A10G`, `A100`, `H100`.
+Available GPUs (pass any to `--gpu`):
+
+| GPU | VRAM | Cost/hr |
+|-----|------|---------|
+| `T4` | 16 GB | $0.59 |
+| `L4` | 24 GB | $0.80 |
+| `A10G` | 24 GB | $1.10 |
+| `L40S` | 48 GB | $1.95 |
+| `A100` | 40 GB | $2.10 |
+| `A100-80GB` | 80 GB | $2.50 |
+| `H100` | 80 GB | $3.95 |
+| `H200` | 141 GB | $4.54 |
+| `B200` | 192 GB | $6.25 |
 
 Benchmark across GPU tiers:
 
 ```bash
-modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --benchmark 5
-modal run scripts/modal_run.py --config configs/default.yaml --gpu A10G --benchmark 5
+uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --benchmark 5
+uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu A100 --benchmark 5
+uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu B200 --benchmark 5
 ```
 
 Results are saved to `experiments/<timestamp>_<name>/` with `metrics.json`.
+
+## Experiments and reproducibility
+
+Each experiment saves a self-contained directory:
+
+```
+experiments/2026-04-07_19-50-00_pca_T4/
+  config.yaml      # frozen config with exact click coordinates
+  metrics.json      # timing, FPS, GPU info
+  outputs/
+    composited.png   # result image
+    mask_obj1.png    # SAM2 masks
+```
+
+To reproduce any experiment, run it with the saved config:
+
+```bash
+uv run modal run scripts/modal_run.py --config experiments/2026-04-07_19-50-00_pca_T4/config.yaml --gpu T4
+```
+
+To reuse the same coordinates with different settings, copy the config and edit it:
+
+```bash
+cp experiments/2026-04-07_19-50-00_pca_T4/config.yaml configs/experiments/my_test.yaml
+# edit fitter.type, compositor.type, etc.
+uv run modal run scripts/modal_run.py --config configs/experiments/my_test.yaml --gpu A100
+```
+
+Click coordinates are saved in the config — you never need to re-click to reproduce or vary an experiment.
 
 ## Running locally
 
 ```bash
 # Interactive (opens UI for clicking + runs SAM2 locally)
-python scripts/run_pipeline.py --config configs/default.yaml --save result.png
+uv run python scripts/run_pipeline.py --config configs/default.yaml --save result.png
 
 # Run experiment with saved outputs + metrics
-python scripts/run_experiment.py --config configs/default.yaml
+uv run python scripts/run_experiment.py --config configs/default.yaml
 
 # Benchmark FPS locally
-python scripts/benchmark_fps.py --config configs/default.yaml --runs 5
+uv run python scripts/benchmark_fps.py --config configs/default.yaml --runs 5
 ```
 
 ## Swapping components

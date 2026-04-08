@@ -4,24 +4,37 @@
 Usage
 -----
     # First time: authenticate with Modal
-    modal setup
+    uv run modal setup
 
     # Run on T4 (cheapest)
-    modal run scripts/modal_run.py --gpu T4 --config configs/default.yaml
+    uv run modal run scripts/modal_run.py --gpu T4 --config configs/default.yaml
 
     # Run on A10G
-    modal run scripts/modal_run.py --gpu A10G --config configs/default.yaml
+    uv run modal run scripts/modal_run.py --gpu A10G --config configs/default.yaml
 
     # Run on A100
-    modal run scripts/modal_run.py --gpu A100 --config configs/default.yaml
+    uv run modal run scripts/modal_run.py --gpu A100 --config configs/default.yaml
 
     # Benchmark (5 runs)
-    modal run scripts/modal_run.py --gpu T4 --config configs/default.yaml --benchmark 5
+    uv run modal run scripts/modal_run.py --gpu T4 --config configs/default.yaml --benchmark 5
 """
 
 from __future__ import annotations
 
+import sys
+
 import modal
+
+# ---------------------------------------------------------------------------
+# Parse --gpu from CLI before decorators run (Modal evaluates decorators at
+# import time, so the GPU must be known before @app.function is reached).
+# ---------------------------------------------------------------------------
+
+_GPU = "T4"
+for i, arg in enumerate(sys.argv):
+    if arg == "--gpu" and i + 1 < len(sys.argv):
+        _GPU = sys.argv[i + 1]
+        break
 
 # ---------------------------------------------------------------------------
 # Modal image: Linux + CUDA torch + SAM2 + our pipeline code
@@ -29,7 +42,7 @@ import modal
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "libgl1", "libglib2.0-0")
+    .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "git")
     .pip_install(
         "torch>=2.0",
         "torchvision>=0.15",
@@ -41,6 +54,7 @@ image = (
         "pyyaml>=6.0",
     )
     .pip_install("git+https://github.com/facebookresearch/sam2.git")
+    .add_local_dir("src", remote_path="/root/src")
 )
 
 app = modal.App("banner-pipeline", image=image)
@@ -51,9 +65,6 @@ checkpoints_volume = modal.Volume.from_name(
     create_if_missing=True,
 )
 
-# Mount local source code into the container.
-src_mount = modal.Mount.from_local_dir("src", remote_path="/root/src")
-
 
 # ---------------------------------------------------------------------------
 # Remote GPU function
@@ -61,8 +72,7 @@ src_mount = modal.Mount.from_local_dir("src", remote_path="/root/src")
 
 
 @app.function(
-    gpu="T4",
-    mounts=[src_mount],
+    gpu=_GPU,
     volumes={"/checkpoints": checkpoints_volume},
     timeout=600,
 )
@@ -119,7 +129,7 @@ def run_on_gpu(
     # --- Report GPU info ---
     if torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
-        gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
     else:
         gpu_name = "none"
@@ -152,7 +162,14 @@ def run_on_gpu(
     # --- Aggregate benchmark stats ---
     report = {"runs": benchmark_runs, "gpu": gpu_name, "gpu_memory_gb": round(gpu_mem, 1)}
     if benchmark_runs > 1:
-        for key in ["load_frame_s", "segment_s", "fit_s", "composite_s", "total_s", "run_total_s"]:
+        for key in [
+            "load_frame_s",
+            "segment_s",
+            "fit_s",
+            "composite_s",
+            "total_s",
+            "run_total_s",
+        ]:
             values = [m.get(key, 0) for m in all_metrics if key in m]
             if values:
                 report[key] = {
@@ -225,13 +242,11 @@ def main(
             logo_bytes = f.read()
         print(f"Logo: {logo_path} ({len(logo_bytes) / 1024:.0f} KB)")
 
-    # Override GPU in the function.
     print(f"GPU: {gpu}")
     print(f"Benchmark runs: {benchmark}")
 
-    # Call the remote function with the specified GPU.
-    # We need to use .options() to override the GPU at runtime.
-    result = run_on_gpu.options(gpu=gpu).remote(
+    # Call the remote function.
+    result = run_on_gpu.remote(
         config_dict=config_dict,
         video_bytes=video_bytes,
         logo_bytes=logo_bytes,
@@ -244,6 +259,11 @@ def main(
     exp_name = name or f"{fitter_type}_{gpu}"
     exp_dir = os.path.join(config_dict["output"]["dir"], f"{timestamp}_{exp_name}")
     os.makedirs(exp_dir, exist_ok=True)
+
+    # Save frozen config.
+    config_path = os.path.join(exp_dir, "config.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
 
     # Save metrics.
     metrics = result["metrics"]

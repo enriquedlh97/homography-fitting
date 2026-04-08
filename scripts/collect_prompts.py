@@ -67,7 +67,7 @@ def main():
         pts = ", ".join(f"({x},{y})" for x, y in p["points"])
         print(f"  obj {p['obj_id']}: {pts}")
     print("\nNow run:")
-    print(f"  modal run scripts/modal_run.py --config {args.config} --gpu T4")
+    print(f"  uv run modal run scripts/modal_run.py --config {args.config} --gpu T4")
 
 
 if __name__ == "__main__":
