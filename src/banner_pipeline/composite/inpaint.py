@@ -16,6 +16,14 @@ from banner_pipeline.composite.base import Compositor
 class InpaintCompositor(Compositor):
     """Inpaints the old logo away, then warps the new one with luminosity matching."""
 
+    def __init__(self) -> None:
+        # Cached BGRA copies of overlays we've seen, keyed by id().
+        self._logo_bgra_cache: dict[int, np.ndarray] = {}
+        # Cached resized logo canvases, keyed by (id(overlay), new_w, new_h).
+        self._logo_resize_cache: dict[tuple[int, int, int], np.ndarray] = {}
+        # Reusable structuring element for the inpaint dilation step.
+        self._dilate_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
     @property
     def name(self) -> str:
         return "inpaint"
@@ -30,10 +38,16 @@ class InpaintCompositor(Compositor):
     ) -> np.ndarray:
         padding: float = kwargs.get("padding", 0.05)
 
-        # Ensure BGRA overlay.
+        # Cache BGRA overlay (constant across the entire video run).
         with Timer("inpaint.bgr2bgra"):
-            if overlay.shape[2] == 3:
-                overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
+            oid = id(overlay)
+            cached_bgra = self._logo_bgra_cache.get(oid)
+            if cached_bgra is None:
+                cached_bgra = (
+                    cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA) if overlay.shape[2] == 3 else overlay
+                )
+                self._logo_bgra_cache[oid] = cached_bgra
+            overlay = cached_bgra
 
         frame_h, frame_w = frame.shape[:2]
 
@@ -58,8 +72,7 @@ class InpaintCompositor(Compositor):
         with Timer("inpaint.inpaint"):
             if mask_roi is not None:
                 mask_u8_roi = (mask_roi > 0).astype(np.uint8) * 255
-                dilate_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
+                mask_u8_roi = cv2.dilate(mask_u8_roi, self._dilate_kern)
                 inpainted_roi = cv2.inpaint(
                     frame_roi, mask_u8_roi, inpaintRadius=5, flags=cv2.INPAINT_TELEA
                 )
@@ -87,7 +100,16 @@ class InpaintCompositor(Compositor):
             pad_h = int(canvas_h * padding)
             scale = min((canvas_w - 2 * pad_w) / logo_w, (canvas_h - 2 * pad_h) / logo_h)
             new_w, new_h = int(logo_w * scale), int(logo_h * scale)
-            logo_resized = cv2.resize(overlay, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            # Cache the resized logo: same overlay + same target size repeats
+            # across frames (and across same-sized banners within a frame).
+            resize_key = (oid, new_w, new_h)
+            logo_resized = self._logo_resize_cache.get(resize_key)
+            if logo_resized is None:
+                logo_resized = cv2.resize(overlay, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                # Bound the cache so it doesn't grow unbounded across runs.
+                if len(self._logo_resize_cache) > 64:
+                    self._logo_resize_cache.clear()
+                self._logo_resize_cache[resize_key] = logo_resized
 
             cx0 = (canvas_w - new_w) // 2
             cy0 = (canvas_h - new_h) // 2
