@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import yaml
 
+from banner_pipeline import _perf
 from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
@@ -354,6 +355,11 @@ def run_pipeline_video(
     fit_times: list[float] = []
     composite_times: list[float] = []
 
+    # Reset perf counters before the per-frame loop. PERF_ENABLED is False
+    # by default, so the Timer blocks in compositors are no-ops unless the
+    # caller has set _perf.enable() (e.g. via --profile).
+    _perf.reset()
+
     try:
         for frame_idx, fname in enumerate(frame_names):
             frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
@@ -426,6 +432,10 @@ def run_pipeline_video(
         4,
     )
     metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+
+    # Per-stage breakdown from _perf timers (empty dict if profiling disabled).
+    if _perf.PERF_ENABLED:
+        metrics["composite_breakdown_ms"] = _perf.snapshot_ms(divisor=len(frame_names))
 
     return {
         "output_path": output_path,
