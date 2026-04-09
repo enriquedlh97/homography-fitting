@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import cv2
 
+from banner_pipeline import _perf
 from banner_pipeline.pipeline import load_config, run
 
 
@@ -28,7 +29,15 @@ def main():
     parser = argparse.ArgumentParser(description="Run an experiment and save results")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--name", default=None, help="Experiment name (default: auto from config)")
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable per-operation timing inside the compositor (composite_breakdown_ms)",
+    )
     args = parser.parse_args()
+
+    if args.profile:
+        _perf.enable()
 
     config = load_config(args.config)
 

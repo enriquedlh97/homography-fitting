@@ -86,15 +86,16 @@ class SAM2VideoSegmenter:
             self._predictor.add_new_points_or_box(**kwargs)
             print(f"[SAM2Video] Prompt obj_id={prompt.obj_id} frame={prompt.frame_idx}")
 
-        # Propagate.
+        # Propagate. One bulk GPU→CPU transfer per frame instead of N
+        # individual ones — saves a sync barrier per object.
         print("[SAM2Video] Propagating masks …", flush=True)
         video_segments: dict[int, dict[int, np.ndarray]] = {}
         for out_frame_idx, out_obj_ids, out_mask_logits in self._predictor.propagate_in_video(
             inference_state
         ):
+            masks_np = (out_mask_logits > 0.0).cpu().numpy()
             video_segments[out_frame_idx] = {
-                obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                for i, obj_id in enumerate(out_obj_ids)
+                obj_id: masks_np[i] for i, obj_id in enumerate(out_obj_ids)
             }
 
         return video_segments, frame_dir, frame_names

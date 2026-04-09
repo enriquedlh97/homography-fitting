@@ -1,0 +1,59 @@
+{
+  "runs": 3,
+  "gpu": "NVIDIA B200",
+  "gpu_memory_gb": 178.4,
+  "mode": "video",
+  "num_prompts": 11,
+  "num_prompt_points": 75,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpv7gnc1uy/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "segment_total_s": {
+    "mean": 36.7678,
+    "std": 4.5882,
+    "min": 32.364,
+    "max": 43.0968
+  },
+  "fit_mean_ms": {
+    "mean": 70.48,
+    "std": 0.3217,
+    "min": 70.16,
+    "max": 70.92
+  },
+  "composite_mean_ms": {
+    "mean": 113.23,
+    "std": 0.6898,
+    "min": 112.51,
+    "max": 114.16
+  },
+  "write_video_s": {
+    "mean": 3.7481,
+    "std": 0.0929,
+    "min": 3.6233,
+    "max": 3.846
+  },
+  "total_s": {
+    "mean": 77.6255,
+    "std": 4.6265,
+    "min": 73.2601,
+    "max": 84.0289
+  },
+  "run_total_s": {
+    "mean": 79.6535,
+    "std": 4.6527,
+    "min": 75.2614,
+    "max": 86.0926
+  },
+  "output_fps": {
+    "mean": 2.61,
+    "std": 0.153,
+    "min": 2.4,
+    "max": 2.76
+  }
+}

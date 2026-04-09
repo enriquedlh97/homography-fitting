@@ -34,4 +34,7 @@ checkpoints/
 .cursor/
 .vscode/
 
+# Perf optimization scratchpad (perf/optimize branch) — top-level only
+/perf/
+
 # uv lock is committed; .python-version is committed for uv auto-install

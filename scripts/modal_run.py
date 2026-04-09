@@ -85,6 +85,7 @@ def run_on_gpu(
     video_bytes: bytes,
     logo_bytes: bytes | None,
     benchmark_runs: int = 1,
+    profile: bool = False,
 ) -> dict:
     """Run the pipeline on a GPU. Returns metrics + output image bytes."""
     import os
@@ -99,7 +100,11 @@ def run_on_gpu(
     # Make our source code importable.
     sys.path.insert(0, "/root/src")
 
+    from banner_pipeline import _perf
     from banner_pipeline.pipeline import run
+
+    if profile:
+        _perf.enable()
 
     # --- Download SAM2 checkpoint if not cached ---
     checkpoint_path = config_dict["pipeline"]["segmenter"]["checkpoint"]
@@ -226,6 +231,16 @@ def run_on_gpu(
             if all_metrics and key in all_metrics[0]:
                 report[key] = all_metrics[0][key]
 
+    # Aggregate composite_breakdown_ms (a dict of per-step ms means).
+    if all_metrics and "composite_breakdown_ms" in all_metrics[0]:
+        breakdown_runs = [
+            m["composite_breakdown_ms"] for m in all_metrics if "composite_breakdown_ms" in m
+        ]
+        all_keys = sorted({k for d in breakdown_runs for k in d})
+        report["composite_breakdown_ms"] = {
+            k: round(float(np.mean([d.get(k, 0.0) for d in breakdown_runs])), 3) for k in all_keys
+        }
+
     return {
         "metrics": report,
         "output_bytes": output_bytes,
@@ -257,6 +272,7 @@ def main(
     mode: str = "",
     benchmark: int = 1,
     name: str = "",
+    profile: bool = False,
 ):
     import json
     import os
@@ -287,6 +303,8 @@ def main(
 
     print(f"GPU: {gpu}")
     print(f"Benchmark runs: {benchmark}")
+    if profile:
+        print("Profiling: enabled (composite_breakdown_ms will be recorded)")
 
     # Call the remote function.
     result = run_on_gpu.remote(
@@ -294,6 +312,7 @@ def main(
         video_bytes=video_bytes,
         logo_bytes=logo_bytes,
         benchmark_runs=benchmark,
+        profile=profile,
     )
 
     # --- Save results locally ---

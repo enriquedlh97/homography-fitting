@@ -79,6 +79,81 @@ def extract_all_frames(video_path: str, out_dir: str) -> list[str]:
     return frame_names
 
 
+class StreamingVideoWriter:
+    """Single-pass H.264 writer that pipes raw BGR frames to ffmpeg via stdin.
+
+    Avoids the legacy two-step write (OpenCV mp4v → ffmpeg re-encode) and
+    avoids holding the entire frame buffer in memory. Use as a context
+    manager or call ``write()`` per frame and ``close()`` at the end.
+    """
+
+    def __init__(self, output_path: str, width: int, height: int, fps: float = 30.0) -> None:
+        self.output_path = output_path
+        os.makedirs(str(Path(output_path).parent), exist_ok=True)
+        self._proc = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-vcodec",
+                "rawvideo",
+                "-s",
+                f"{width}x{height}",
+                "-pix_fmt",
+                "bgr24",
+                "-r",
+                str(fps),
+                "-i",
+                "-",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-loglevel",
+                "error",
+                output_path,
+            ],
+            stdin=subprocess.PIPE,
+        )
+        # subprocess.PIPE guarantees stdin is set, but mypy can't see that.
+        assert self._proc.stdin is not None
+        self._stdin = self._proc.stdin
+        self._closed = False
+
+    def write(self, frame_bgr: np.ndarray) -> None:
+        if self._closed:
+            raise RuntimeError("StreamingVideoWriter is already closed")
+        # tobytes() requires C-contiguous; cv2 outputs are usually contiguous
+        # but we ensure it for in-place mutated slices.
+        if not frame_bgr.flags["C_CONTIGUOUS"]:
+            frame_bgr = np.ascontiguousarray(frame_bgr)
+        self._stdin.write(frame_bgr.tobytes())
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._stdin.close()
+            rc = self._proc.wait()
+            if rc != 0:
+                raise RuntimeError(f"ffmpeg exited with code {rc}")
+        except Exception:
+            self._proc.kill()
+            raise
+
+    def __enter__(self) -> StreamingVideoWriter:
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
+
+
 def write_video(
     frames: list[np.ndarray],
     output_path: str,
@@ -86,44 +161,15 @@ def write_video(
 ) -> None:
     """Write a list of BGR frames as an H.264 MP4 video.
 
-    Writes with OpenCV first, then re-encodes with ffmpeg to H.264
-    for broad compatibility (WhatsApp, browsers, etc.).
+    Single-pass: pipes raw BGR frames to ffmpeg's libx264 encoder via stdin.
+    For streaming use cases, prefer :class:`StreamingVideoWriter`.
     """
     if not frames:
         raise ValueError("No frames to write.")
     h, w = frames[0].shape[:2]
-    os.makedirs(str(Path(output_path).parent), exist_ok=True)
-
-    # Write to a temp file with OpenCV (mpeg4 codec).
-    tmp_path = output_path + ".tmp.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(tmp_path, fourcc, fps, (w, h))
-    for frame in frames:
-        writer.write(frame)
-    writer.release()
-
-    # Re-encode to H.264 with ffmpeg for broad compatibility.
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-i",
-            tmp_path,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            output_path,
-            "-y",
-            "-loglevel",
-            "error",
-        ],
-        check=True,
-    )
-    os.unlink(tmp_path)
+    with StreamingVideoWriter(output_path, w, h, fps) as writer:
+        for frame in frames:
+            writer.write(frame)
 
 
 def get_video_fps(video_path: str, default: float = 30.0) -> float:

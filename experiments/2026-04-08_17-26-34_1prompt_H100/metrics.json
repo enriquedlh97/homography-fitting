@@ -1,0 +1,59 @@
+{
+  "runs": 3,
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "gpu_memory_gb": 79.2,
+  "mode": "video",
+  "num_prompts": 1,
+  "num_prompt_points": 6,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmp746xbvaw/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "segment_total_s": {
+    "mean": 15.6104,
+    "std": 2.8123,
+    "min": 13.417,
+    "max": 19.5803
+  },
+  "fit_mean_ms": {
+    "mean": 11.2967,
+    "std": 0.0967,
+    "min": 11.16,
+    "max": 11.37
+  },
+  "composite_mean_ms": {
+    "mean": 10.97,
+    "std": 0.1944,
+    "min": 10.79,
+    "max": 11.24
+  },
+  "write_video_s": {
+    "mean": 1.2908,
+    "std": 0.1328,
+    "min": 1.1541,
+    "max": 1.4707
+  },
+  "total_s": {
+    "mean": 21.4002,
+    "std": 2.9605,
+    "min": 19.0657,
+    "max": 25.5773
+  },
+  "run_total_s": {
+    "mean": 23.8689,
+    "std": 3.0299,
+    "min": 21.4787,
+    "max": 28.1439
+  },
+  "output_fps": {
+    "mean": 9.6067,
+    "std": 1.2115,
+    "min": 7.9,
+    "max": 10.59
+  }
+}

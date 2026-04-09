@@ -1,0 +1,59 @@
+{
+  "runs": 3,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "gpu_memory_gb": 39.5,
+  "mode": "video",
+  "num_prompts": 1,
+  "num_prompt_points": 6,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpjqqxipop/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "segment_total_s": {
+    "mean": 17.2582,
+    "std": 0.2486,
+    "min": 16.9165,
+    "max": 17.5007
+  },
+  "fit_mean_ms": {
+    "mean": 6.3767,
+    "std": 0.2311,
+    "min": 6.05,
+    "max": 6.55
+  },
+  "composite_mean_ms": {
+    "mean": 12.1233,
+    "std": 0.2745,
+    "min": 11.9,
+    "max": 12.51
+  },
+  "write_video_s": {
+    "mean": 1.5492,
+    "std": 0.0984,
+    "min": 1.4231,
+    "max": 1.6631
+  },
+  "total_s": {
+    "mean": 22.5442,
+    "std": 0.1683,
+    "min": 22.3065,
+    "max": 22.6734
+  },
+  "run_total_s": {
+    "mean": 25.2689,
+    "std": 0.169,
+    "min": 25.0302,
+    "max": 25.3991
+  },
+  "output_fps": {
+    "mean": 8.9633,
+    "std": 0.0685,
+    "min": 8.91,
+    "max": 9.06
+  }
+}

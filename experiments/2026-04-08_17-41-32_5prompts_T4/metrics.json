@@ -1,0 +1,59 @@
+{
+  "runs": 3,
+  "gpu": "Tesla T4",
+  "gpu_memory_gb": 14.6,
+  "mode": "video",
+  "num_prompts": 5,
+  "num_prompt_points": 30,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpsysx5j0b/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "segment_total_s": {
+    "mean": 275.023,
+    "std": 1.1931,
+    "min": 273.6546,
+    "max": 276.562
+  },
+  "fit_mean_ms": {
+    "mean": 99.3033,
+    "std": 25.3942,
+    "min": 67.37,
+    "max": 129.5
+  },
+  "composite_mean_ms": {
+    "mean": 100.2033,
+    "std": 17.9469,
+    "min": 78.3,
+    "max": 122.26
+  },
+  "write_video_s": {
+    "mean": 3.3621,
+    "std": 1.8692,
+    "min": 1.747,
+    "max": 5.9819
+  },
+  "total_s": {
+    "mean": 318.6851,
+    "std": 11.6815,
+    "min": 304.8258,
+    "max": 333.401
+  },
+  "run_total_s": {
+    "mean": 323.3616,
+    "std": 12.7936,
+    "min": 308.2752,
+    "max": 339.5543
+  },
+  "output_fps": {
+    "mean": 0.6367,
+    "std": 0.0205,
+    "min": 0.61,
+    "max": 0.66
+  }
+}
