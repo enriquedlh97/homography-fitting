@@ -23,7 +23,19 @@ from __future__ import annotations
 
 import sys
 
-import modal
+try:
+    import modal
+except ModuleNotFoundError as exc:
+    if exc.name in {"modal", "pkg_resources", "setuptools"}:
+        raise SystemExit(
+            "Missing runtime dependency while importing Modal.\n"
+            "Run this command from the repository root with the project environment:\n"
+            "  UV_CACHE_DIR=.uv-cache uv run modal run "
+            "scripts/modal_run.py --config configs/default.yaml --gpu T4\n"
+            "If the environment is out of date, refresh it with:\n"
+            "  UV_CACHE_DIR=.uv-cache uv sync"
+        ) from exc
+    raise
 
 # ---------------------------------------------------------------------------
 # Parse --gpu from CLI before decorators run (Modal evaluates decorators at
@@ -40,37 +52,110 @@ for i, arg in enumerate(sys.argv):
 # Modal image: Linux + CUDA torch + SAM2 + our pipeline code
 # ---------------------------------------------------------------------------
 
-image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "git", "build-essential")
-    .pip_install(
-        # SAM 3.1 requires torch >= 2.7 + CUDA 12.6
-        "torch==2.7.0",
-        "torchvision",
-        "torchaudio",
-        extra_index_url="https://download.pytorch.org/whl/cu126",
+FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB"}
+FA3_GPUS = {"H100", "H200"}
+FA4_GPUS = {"B200"}
+
+
+def _base_cuda_image() -> modal.Image:
+    return (
+        modal.Image.from_registry(
+            "nvidia/cuda:12.8.0-devel-ubuntu22.04",
+            add_python="3.11",
+        )
+        .apt_install("git", "ffmpeg", "libgl1", "libglib2.0-0", "build-essential")
+        .run_commands(
+            "python -m pip install --upgrade pip 'setuptools<82' wheel",
+            "python -m pip install --no-cache-dir "
+            "'torch==2.7.1' 'torchvision==0.22.1' 'torchaudio==2.7.1' "
+            "--index-url https://download.pytorch.org/whl/cu128",
+        )
+        .pip_install(
+            "opencv-python-headless>=4.8",
+            "numpy>=1.24",
+            "matplotlib>=3.7",
+            "Pillow>=10.0",
+            "scipy>=1.11",
+            "pyyaml>=6.0",
+            "huggingface_hub>=0.23",
+            "einops",
+            "packaging",
+            "pycocotools",
+            "ninja",
+            "tqdm",
+            "psutil",
+        )
     )
-    .pip_install(
-        "opencv-python-headless>=4.8",
-        "numpy>=1.24",
-        "matplotlib>=3.7",
-        "Pillow>=10.0",
-        "scipy>=1.11",
-        "pyyaml>=6.0",
-        "huggingface_hub>=0.23",
+
+
+def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image:
+    return (
+        image.run_commands(*extra_commands)
+        .run_commands(
+            "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
+            "cd /tmp/sam2 && pip install -e '.[all]'",
+        )
+        .run_commands(
+            "python -m pip install --no-cache-dir 'git+https://github.com/facebookresearch/sam3.git'",
+        )
+        .add_local_dir("src", remote_path="/root/src")
     )
-    # Install SAM2 from source (still needed for sam2_video fallback).
-    .run_commands(
-        "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
-        "cd /tmp/sam2 && pip install -e '.[all]'",
+
+
+def _build_t4_image() -> modal.Image:
+    return _install_sam_models(_base_cuda_image())
+
+
+def _build_fa2_image() -> modal.Image:
+    return _install_sam_models(
+        _base_cuda_image(),
+        "python -m pip install --no-cache-dir flash-attn --no-build-isolation",
     )
-    # Install SAM3 from source.
-    .run_commands(
-        "git clone https://github.com/facebookresearch/sam3.git /tmp/sam3",
-        "cd /tmp/sam3 && pip install -e '.[all]'",
+
+
+def _build_fa3_image() -> modal.Image:
+    return _install_sam_models(
+        _base_cuda_image(),
+        "git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention",
+        "cd /tmp/flash-attention/hopper && MAX_JOBS=4 python setup.py install",
     )
-    .add_local_dir("src", remote_path="/root/src")
-)
+
+
+def _build_fa4_image() -> modal.Image:
+    return _install_sam_models(
+        _base_cuda_image(),
+        "python -m pip install --no-cache-dir flash-attn-4",
+    )
+
+
+t4_image = _build_t4_image()
+fa2_image = _build_fa2_image()
+fa3_image = _build_fa3_image()
+fa4_image = _build_fa4_image()
+
+
+def _select_image_for_gpu(gpu: str) -> modal.Image:
+    if gpu == "T4":
+        return t4_image
+    if gpu in FA2_GPUS:
+        return fa2_image
+    if gpu in FA3_GPUS:
+        return fa3_image
+    if gpu in FA4_GPUS:
+        return fa4_image
+    raise SystemExit(f"Unsupported GPU '{gpu}'. Update the image routing in scripts/modal_run.py.")
+
+
+def _validate_gpu_config(config_dict: dict, gpu: str) -> None:
+    segmenter_type = config_dict.get("pipeline", {}).get("segmenter", {}).get("type", "")
+    if segmenter_type == "sam3_video" and gpu == "T4":
+        raise SystemExit(
+            "SAM3 requires FlashAttention and is not supported on T4.\n"
+            "Use SAM2 on T4, or switch this SAM3 run to L4/A10G/L40S/A100/H100/H200/B200."
+        )
+
+
+image = _select_image_for_gpu(_GPU)
 
 app = modal.App("banner-pipeline", image=image)
 
@@ -89,6 +174,7 @@ checkpoints_volume = modal.Volume.from_name(
 @app.function(
     gpu=_GPU,
     volumes={"/checkpoints": checkpoints_volume},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=86400,  # 24h — Modal's max
 )
 def run_on_gpu(
@@ -280,10 +366,14 @@ def _download_checkpoint(filename: str, dest: str) -> None:
                 "huggingface_hub is required to download SAM3 checkpoints.\n"
                 "Run: pip install huggingface_hub"
             ) from exc
-        print(f"  Downloading SAM3 checkpoint from HuggingFace: {filename} …")
+        # SAM 3.1 checkpoints (sam3.1_*) live on facebook/sam3.1;
+        # base SAM 3 checkpoints (sam3.pt) live on facebook/sam3.
+        repo_id = "facebook/sam3.1" if "sam3.1" in filename else "facebook/sam3"
+        print(f"  Downloading SAM3 checkpoint from HuggingFace: {repo_id}/{filename} …")
         tmp_path = hf_hub_download(
-            repo_id="facebook/sam3",
+            repo_id=repo_id,
             filename=filename,
+            token=os.environ.get("HF_TOKEN"),
         )
         import shutil
 
@@ -323,6 +413,8 @@ def main(
     # Override mode if specified via CLI.
     if mode:
         config_dict.setdefault("pipeline", {})["mode"] = mode
+
+    _validate_gpu_config(config_dict, gpu)
 
     # Read input files as bytes.
     video_path = config_dict["input"]["video"]

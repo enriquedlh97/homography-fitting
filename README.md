@@ -1,6 +1,6 @@
 # Banner Pipeline
 
-Video banner/logo replacement using SAM2 segmentation. Detects billboard regions in video frames, tracks them across all frames, fits perspective-aware quadrilaterals, and composites new logos with correct aspect ratio and luminosity matching.
+Video banner/logo replacement using SAM2 or SAM3.1 segmentation. Detects billboard regions in video frames, tracks them across all frames, fits perspective-aware quadrilaterals, and composites new logos with correct aspect ratio and luminosity matching.
 
 ## Setup
 
@@ -35,19 +35,25 @@ Two-step process: collect clicks locally, then run on a remote GPU.
 
 ```bash
 uv run python scripts/collect_prompts.py --config configs/default.yaml
+uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml
 ```
 
-This opens the first frame of the video. Click on the banner region(s) you want to track. The coordinates are saved into the config file automatically.
+This opens the first frame of the video. Click on the banner region(s) you want to track. The coordinates are saved into the config file automatically. This workflow is the same for SAM2 and SAM3 video configs.
 
 ### Step 2: Run on a GPU via Modal
 
 ```bash
 # Video mode (processes all frames, outputs .mp4)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode video
+uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
 
 # Image mode (processes single frame, outputs .png)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode image
 ```
+
+`configs/sam3_default.yaml` must not be run on `T4`. The launcher rejects
+that combination locally before any remote build starts because SAM3 requires
+FlashAttention and `T4` is not supported for that path.
 
 ### Available GPUs
 
@@ -65,6 +71,13 @@ Pass any of these to `--gpu`:
 | `H200` | 141 GB | $4.54 |
 | `B200` | 192 GB | $6.25 |
 
+SAM3 GPU support:
+
+- `T4`: `SAM2` only
+- `L4`, `A10G`, `L40S`, `A100`, `A100-80GB`: `SAM3` via FlashAttention-2
+- `H100`, `H200`: `SAM3` via FlashAttention-3
+- `B200`: `SAM3` via FlashAttention-4
+
 ### Benchmarking across GPUs
 
 Single config, single GPU, multiple averaged runs:
@@ -80,17 +93,18 @@ For systematic comparison, use the matrix runner. It executes every (config, GPU
 
 **Step 1: Set up configs in `configs/matrix/`**
 
-The repo ships with three templates that use the same input video but different numbers of tracked objects:
+The repo ships with SAM2 and SAM3 templates that use the same input video but different numbers of tracked objects:
 
-- `configs/matrix/1prompt.yaml` — single object (FPS ceiling)
-- `configs/matrix/5prompts.yaml` — typical load
-- `configs/matrix/11prompts.yaml` — heavy load
+- `configs/matrix/1prompt.yaml`, `configs/matrix/5prompts.yaml`, `configs/matrix/11prompts.yaml`
+- `configs/matrix/sam3_1prompt.yaml`, `configs/matrix/sam3_5prompts.yaml`, `configs/matrix/sam3_11prompts.yaml`
 
-For 1prompt and 5prompts, you need to collect the click coordinates first (11prompts ships pre-populated):
+You can reuse the shipped prompts as-is, or recollect them from the first frame for either SAM2 or SAM3:
 
 ```bash
 uv run python scripts/collect_prompts.py --config configs/matrix/1prompt.yaml
 uv run python scripts/collect_prompts.py --config configs/matrix/5prompts.yaml
+uv run python scripts/collect_prompts.py --config configs/matrix/sam3_1prompt.yaml
+uv run python scripts/collect_prompts.py --config configs/matrix/sam3_5prompts.yaml
 ```
 
 You can also create your own matrix configs (different videos, fitters, compositors, etc.) — just `cp` an existing one and edit.
@@ -105,9 +119,16 @@ Two options:
 
 # Parallel — runs all combinations simultaneously, ~10x faster
 uv run python scripts/run_matrix_parallel.py
+
+# SAM3 matrix example
+uv run python scripts/run_matrix_parallel.py \
+  --configs configs/matrix/sam3_1prompt.yaml configs/matrix/sam3_5prompts.yaml configs/matrix/sam3_11prompts.yaml \
+  --gpus A100 H100 B200
 ```
 
 Defaults: `T4 A100 H100 B200` × 3 configs × `--benchmark 3` = 12 jobs.
+
+If a config uses `sam3_video`, any `T4` pairing is skipped before remote execution starts. The valid SAM3 jobs still run.
 
 **Modal concurrency limit:** Starter accounts have a limit of 10 concurrent GPUs. Throttle the parallel runner accordingly:
 
@@ -156,7 +177,7 @@ Each run produces a `metrics.json` in the experiment directory. Example output (
 |--------|-------------|
 | `num_frames` | Total frames in the video |
 | `input_fps` | Original video framerate |
-| `segment_total_s` | Time for SAM2 to track objects across all frames |
+| `segment_total_s` | Time for the configured SAM video tracker to segment and track objects across all frames |
 | `fit_mean_ms` | Average time to fit a quad per frame |
 | `composite_mean_ms` | Average time to composite logo per frame |
 | `write_video_s` | Time to encode the output video |

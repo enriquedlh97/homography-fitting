@@ -1,11 +1,18 @@
-"""Torch device detection and SAM2 model loading."""
+"""Torch device detection and SAM2/SAM3 model loading."""
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import os
 import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import torch
+
+from banner_pipeline.sam3_attention import configure_sam3_attention_backend
 
 # Apple MPS compatibility: fall back to CPU for unsupported ops.
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -107,9 +114,12 @@ def _ensure_sam3_importable() -> None:
         import sam3  # noqa: F401
 
         return
-    except ImportError:
-        pass
+    except ModuleNotFoundError as exc:
+        if "sam3" not in str(exc):
+            # sam3 is installed but has a missing dependency — re-raise as-is
+            raise
 
+    # sam3 genuinely not found — try local directory fallback
     repo = os.path.join(os.getcwd(), "sam3")
     if os.path.isdir(repo) and repo not in sys.path:
         sys.path.insert(0, repo)
@@ -124,20 +134,109 @@ def _ensure_sam3_importable() -> None:
         ) from exc
 
 
+def _get_sam3_video_builder(model_builder: object) -> tuple[Callable[..., Any], bool]:
+    """Return the best available SAM3 video builder and whether it is multiplex."""
+    multiplex_builder = getattr(model_builder, "build_sam3_multiplex_video_predictor", None)
+    if callable(multiplex_builder):
+        return multiplex_builder, True
+
+    legacy_builder = getattr(model_builder, "build_sam3_video_predictor", None)
+    if callable(legacy_builder):
+        return legacy_builder, False
+
+    raise ImportError(
+        "sam3.model_builder does not expose a supported video builder. "
+        "Expected build_sam3_multiplex_video_predictor or build_sam3_video_predictor."
+    )
+
+
+def _get_builder_signature(
+    builder: Callable[..., Any],
+) -> tuple[inspect.Signature, set[str], set[str]]:
+    """Inspect *builder* and return its signature, kwarg params, and required params."""
+    try:
+        signature = inspect.signature(builder)
+    except (TypeError, ValueError) as exc:
+        name = getattr(builder, "__name__", repr(builder))
+        raise TypeError(f"Could not inspect SAM3 builder signature for {name}.") from exc
+
+    kwarg_params = {
+        name
+        for name, param in signature.parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    required_params = {
+        name
+        for name, param in signature.parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        and param.default is inspect.Signature.empty
+    }
+    return signature, kwarg_params, required_params
+
+
+def _raise_unsupported_sam3_builder(
+    builder: Callable[..., Any],
+    signature: inspect.Signature,
+    message: str,
+) -> None:
+    name = getattr(builder, "__name__", repr(builder))
+    raise TypeError(f"Unsupported SAM3 builder signature for {name}{signature}: {message}")
+
+
 def load_sam3_video_predictor(
     checkpoint: str,
     device: torch.device | None = None,
 ):
     """Build and return a SAM 3 video predictor ready for inference.
 
-    SAM 3 does not take a separate model_cfg argument — the architecture
-    is baked into the package and selected by the checkpoint file.
+    Upstream SAM3 has changed its builder API across releases:
+    older builds expose ``build_sam3_video_predictor`` with a checkpoint
+    argument, while newer multiplex builds expose
+    ``build_sam3_multiplex_video_predictor`` and discover checkpoints via
+    environment or alternate keyword names. This loader keeps the repo's
+    ``checkpoint`` config stable and adapts to the installed SAM3 version.
     """
     _ensure_sam3_importable()
-    from sam3.model_builder import build_sam3_video_predictor
+    model_builder = importlib.import_module("sam3.model_builder")
+    builder, is_multiplex = _get_sam3_video_builder(model_builder)
+    signature, kwarg_params, required_params = _get_builder_signature(builder)
 
     if device is None:
         device = detect_device()
     setup_torch_backend(device)
+    configure_sam3_attention_backend(device)
 
-    return build_sam3_video_predictor(checkpoint=checkpoint, device=str(device))
+    checkpoint_path = os.fspath(Path(checkpoint).expanduser())
+    checkpoint_dir = os.path.dirname(checkpoint_path) or "."
+    device_str = str(device)
+
+    kwargs: dict[str, str] = {}
+    if "checkpoint_dir" in kwarg_params:
+        kwargs["checkpoint_dir"] = checkpoint_dir
+    elif "checkpoint_path" in kwarg_params:
+        kwargs["checkpoint_path"] = checkpoint_path
+    elif "checkpoint" in kwarg_params:
+        kwargs["checkpoint"] = checkpoint_path
+    elif not is_multiplex:
+        _raise_unsupported_sam3_builder(
+            builder,
+            signature,
+            "expected one of checkpoint_dir, checkpoint_path, or checkpoint parameters.",
+        )
+
+    if "device" in kwarg_params:
+        kwargs["device"] = device_str
+
+    if is_multiplex:
+        # Newer multiplex builders discover the checkpoint from the environment.
+        os.environ["SAM31_CKPT_PATH"] = checkpoint_path
+
+    missing_required = sorted(required_params - kwargs.keys())
+    if missing_required:
+        _raise_unsupported_sam3_builder(
+            builder,
+            signature,
+            f"requires unsupported parameters: {', '.join(missing_required)}.",
+        )
+
+    return builder(**kwargs)

@@ -3,8 +3,8 @@
 
 Usage
 -----
-    python scripts/run_pipeline.py --config configs/default.yaml
-    python scripts/run_pipeline.py --config configs/default.yaml --override fitter.type=lp
+    uv run python scripts/run_pipeline.py --config configs/default.yaml
+    uv run python scripts/run_pipeline.py --config configs/default.yaml --override fitter.type=lp
 """
 
 from __future__ import annotations

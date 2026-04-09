@@ -3,8 +3,9 @@
 
 Usage
 -----
-    python scripts/run_experiment.py --config configs/default.yaml
-    python scripts/run_experiment.py --config configs/experiments/lp_oriented.yaml --name lp_test
+    uv run python scripts/run_experiment.py --config configs/default.yaml
+    uv run python scripts/run_experiment.py \
+        --config configs/experiments/lp_oriented.yaml --name lp_test
 """
 
 from __future__ import annotations
