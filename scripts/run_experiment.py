@@ -68,7 +68,13 @@ def main():
         if results.get("output_path"):
             print(f"  Video: {results['output_path']}")
     else:
-        if results.get("composited") is not None:
+        preview_artifacts = results.get("preview_artifacts", {})
+        if preview_artifacts:
+            for name, image in preview_artifacts.items():
+                out_path = os.path.join(outputs_dir, f"{name}.png")
+                cv2.imwrite(out_path, image)
+                print(f"  Saved: {out_path}")
+        elif results.get("composited") is not None:
             out_path = os.path.join(outputs_dir, "composited.png")
             cv2.imwrite(out_path, results["composited"])
             print(f"  Saved: {out_path}")

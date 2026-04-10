@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 import torch
@@ -11,7 +13,7 @@ from banner_pipeline.segment.base import ObjectPrompt
 class _FakePredictor:
     def __init__(
         self,
-        stream_responses: list[dict],
+        stream_responses: list[dict] | list[list[dict]],
         *,
         add_prompt_response: dict | None = None,
         add_prompt_responses: list[dict] | None = None,
@@ -21,13 +23,17 @@ class _FakePredictor:
         self.requests: list[dict] = []
         self.stream_requests: list[dict] = []
         self.events: list[str] = []
-        self._stream_responses = stream_responses
+        if stream_responses and isinstance(stream_responses[0], list):
+            self._stream_response_batches = list(stream_responses)
+        else:
+            self._stream_response_batches = [cast(list[dict], stream_responses)]
         self._add_prompt_response = add_prompt_response
         self._add_prompt_responses = list(add_prompt_responses or [])
         self._start_error = start_error
         self._propagate_error = propagate_error
         self._started = False
         self._prompt_count = 0
+        self._stream_call_count = 0
 
     def handle_request(self, request: dict) -> dict:
         self.requests.append(request)
@@ -61,12 +67,18 @@ class _FakePredictor:
         assert self._prompt_count > 0, "SAM3 propagation requires at least one prompt"
         if self._propagate_error is not None:
             raise self._propagate_error
-        yield from self._stream_responses
+        if self._stream_call_count >= len(self._stream_response_batches):
+            return
+        batch = self._stream_response_batches[self._stream_call_count]
+        self._stream_call_count += 1
+        yield from batch
 
 
 def _build_segmenter(
     monkeypatch: pytest.MonkeyPatch,
     predictor: _FakePredictor,
+    *,
+    frame_names: list[str] | None = None,
 ) -> sam3_video_mod.SAM3VideoSegmenter:
     monkeypatch.setattr(sam3_video_mod, "detect_device", lambda _device="auto": "cpu")
     monkeypatch.setattr(
@@ -77,7 +89,7 @@ def _build_segmenter(
     monkeypatch.setattr(
         sam3_video_mod,
         "extract_all_frames",
-        lambda _video_path, _frame_dir: ["00000.jpg", "00001.jpg"],
+        lambda _video_path, _frame_dir: frame_names or ["00000.jpg", "00001.jpg"],
     )
     monkeypatch.setattr(
         sam3_video_mod.cv2,
@@ -217,7 +229,10 @@ def test_sam3_video_segmenter_previews_prompt_stage_masks_without_propagation(
         frame_idx=1,
     )
 
-    frame, masks, frame_idx = segmenter.preview_frame("/tmp/video.mp4", [prompt])
+    frame, masks, frame_idx, prompt_diagnostics = segmenter.preview_frame(
+        "/tmp/video.mp4",
+        [prompt],
+    )
 
     assert frame.shape == (100, 200, 3)
     assert frame_idx == 1
@@ -225,6 +240,73 @@ def test_sam3_video_segmenter_previews_prompt_stage_masks_without_propagation(
     assert predictor.stream_requests == []
     assert set(masks) == {4}
     assert masks[4].shape == (100, 200)
+    mask_area_px = prompt_diagnostics[4]["mask_area_px"]
+    assert isinstance(mask_area_px, int)
+    assert mask_area_px > 0
+
+
+def test_sam3_video_segmenter_retries_empty_preview_seed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor(
+        [],
+        add_prompt_responses=[
+            {"outputs": {}},
+            {
+                "outputs": {
+                    "out_obj_ids": torch.tensor([4]),
+                    "out_binary_masks": torch.tensor([[[True, False], [False, True]]]),
+                }
+            },
+        ],
+    )
+    segmenter = _build_segmenter(monkeypatch, predictor)
+    prompt = ObjectPrompt(
+        obj_id=4,
+        points=np.array([[20.0, 25.0], [24.0, 25.0], [22.0, 30.0]], dtype=np.float32),
+        labels=np.array([1, 1, 0], dtype=np.int32),
+        frame_idx=1,
+    )
+
+    _frame, masks, _frame_idx, prompt_diagnostics = segmenter.preview_frame(
+        "/tmp/video.mp4",
+        [prompt],
+    )
+
+    assert predictor.events == ["start_session", "add_prompt", "add_prompt", "close_session"]
+    assert set(masks) == {4}
+    assert prompt_diagnostics[4]["seed_retry_attempted"] is True
+    assert prompt_diagnostics[4]["seed_retry_succeeded"] is True
+    assert prompt_diagnostics[4]["seed_retry_exhausted"] is False
+
+
+def test_sam3_video_segmenter_marks_seed_retry_exhaustion_in_preview_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor(
+        [],
+        add_prompt_responses=[
+            {"outputs": {}},
+            {"outputs": {}},
+        ],
+    )
+    segmenter = _build_segmenter(monkeypatch, predictor)
+    prompt = ObjectPrompt(
+        obj_id=4,
+        points=np.array([[20.0, 25.0], [24.0, 25.0], [22.0, 30.0]], dtype=np.float32),
+        labels=np.array([1, 1, 0], dtype=np.int32),
+        frame_idx=1,
+    )
+
+    _frame, masks, _frame_idx, prompt_diagnostics = segmenter.preview_frame(
+        "/tmp/video.mp4",
+        [prompt],
+    )
+
+    assert masks == {}
+    assert prompt_diagnostics[4]["seed_retry_attempted"] is True
+    assert prompt_diagnostics[4]["seed_retry_succeeded"] is False
+    assert prompt_diagnostics[4]["seed_retry_exhausted"] is True
 
 
 def test_sam3_video_segmenter_preview_rejects_mixed_prompt_frames(
@@ -362,6 +444,85 @@ def test_sam3_video_segmenter_rejects_box_prompts(
 
     with pytest.raises(RuntimeError, match="point prompts only"):
         segmenter.segment_video("/tmp/video.mp4", [prompt])
+
+
+def test_sam3_video_segmenter_reanchors_after_tracking_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor(
+        [
+            [
+                {
+                    "frame_index": 0,
+                    "outputs": {
+                        "obj_ids": torch.tensor([1]),
+                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                    },
+                },
+                {
+                    "frame_index": 1,
+                    "outputs": {
+                        "obj_ids": torch.tensor([1]),
+                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                    },
+                },
+                {
+                    "frame_index": 2,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": torch.empty((0, 2, 2)),
+                    },
+                },
+                {
+                    "frame_index": 3,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": torch.empty((0, 2, 2)),
+                    },
+                },
+            ],
+            [
+                {
+                    "frame_index": 3,
+                    "outputs": {
+                        "obj_ids": torch.tensor([1]),
+                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                    },
+                }
+            ],
+        ]
+    )
+    segmenter = _build_segmenter(
+        monkeypatch,
+        predictor,
+        frame_names=["00000.jpg", "00001.jpg", "00002.jpg", "00003.jpg"],
+    )
+    prompt = ObjectPrompt(
+        obj_id=1,
+        points=np.array([[20.0, 25.0]], dtype=np.float32),
+        labels=np.array([1], dtype=np.int32),
+    )
+
+    video_segments, _, _ = segmenter.segment_video("/tmp/video.mp4", [prompt])
+
+    assert predictor.events == [
+        "start_session",
+        "add_prompt",
+        "propagate_in_video",
+        "add_prompt",
+        "propagate_in_video",
+        "close_session",
+    ]
+    refresh_request = predictor.requests[2]
+    assert refresh_request["type"] == "add_prompt"
+    assert torch.equal(
+        refresh_request["point_labels"],
+        torch.tensor([1, 1, 0, 0], dtype=torch.int32),
+    )
+    assert video_segments[3][1].shape == (100, 200)
+    assert segmenter.last_tracking_stats["sam3_reanchor_events"] == [
+        {"obj_id": 1, "frame_idx": 3, "refresh_count": 1}
+    ]
 
 
 def test_parse_frame_outputs_accepts_dict_of_masks() -> None:

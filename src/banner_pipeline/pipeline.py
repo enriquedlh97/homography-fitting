@@ -44,6 +44,18 @@ COMPOSITORS: dict[str, type[Compositor]] = {
     "alpha": AlphaCompositor,
 }
 
+MIN_PREVIEW_PRIMARY_FIT_AREA_RATIO = 5e-4
+MIN_PREVIEW_MASK_AREA_PX = 16
+MIN_PREVIEW_SMALL_BBOX_EDGE_PX = 8
+MIN_PREVIEW_SMALL_MASK_COMPACTNESS = 0.12
+MAX_PREVIEW_QUAD_AREA_RATIO = 0.55
+MAX_PREVIEW_QUAD_ASPECT_RATIO = 80.0
+MIN_PREVIEW_QUAD_EDGE_PX = 4.0
+MIN_PREVIEW_QUAD_AREA_PX = 16.0
+MIN_PREVIEW_QUAD_MASK_IOU = 0.03
+MIN_PREVIEW_MASK_COVERAGE = 0.08
+MIN_PREVIEW_QUAD_COVERAGE = 0.08
+
 # ---------------------------------------------------------------------------
 # Factory functions
 # ---------------------------------------------------------------------------
@@ -149,6 +161,41 @@ def _warn_if_legacy_sam3_prompts(segmenter_type: str, prompts: list[ObjectPrompt
     )
 
 
+def _validate_prompt_points(segmenter_type: str, prompts: list[ObjectPrompt]) -> None:
+    if segmenter_type != "sam3_video":
+        return
+
+    for prompt in prompts:
+        points = np.asarray(prompt.points, dtype=np.float32)
+        labels = np.asarray(prompt.labels, dtype=np.int32)
+        ambiguous_foreground_background = False
+        for idx in range(len(points)):
+            for jdx in range(idx + 1, len(points)):
+                dist_px = float(np.linalg.norm(points[idx] - points[jdx]))
+                if dist_px <= 1.5:
+                    raise RuntimeError(
+                        "SAM3 prompt loading rejected duplicate clicks for "
+                        f"obj_id={prompt.obj_id} at frame={prompt.frame_idx}. "
+                        "Re-collect the prompt set without double-clicking the same location."
+                    )
+                if labels[idx] == labels[jdx] and dist_px < 4.0:
+                    raise RuntimeError(
+                        "SAM3 prompt loading rejected near-identical clicks for "
+                        f"obj_id={prompt.obj_id} at frame={prompt.frame_idx}. "
+                        "Spread repeated positive/negative clicks farther apart."
+                    )
+                if labels[idx] != labels[jdx] and dist_px <= 12.0:
+                    ambiguous_foreground_background = True
+        if ambiguous_foreground_background:
+            print(
+                "[SAM3Video] Warning: "
+                f"obj_id={prompt.obj_id} mixes positive/negative clicks very close together. "
+                "That usually means ambiguous foreground/background geometry and can hurt "
+                "tracking on thin or painted banners.",
+                flush=True,
+            )
+
+
 def _load_or_collect_prompts(
     *,
     config: dict,
@@ -172,6 +219,7 @@ def _load_or_collect_prompts(
             _save_prompts_to_config(config, prompts, config_path)
 
     _warn_if_legacy_sam3_prompts(segmenter_type, prompts)
+    _validate_prompt_points(segmenter_type, prompts)
     return prompts
 
 
@@ -264,6 +312,357 @@ def _annotate_preview_frame(
         )
 
     return preview
+
+
+def _annotate_prompt_markers(
+    frame: np.ndarray,
+    prompts: list[ObjectPrompt],
+) -> np.ndarray:
+    preview = frame.copy()
+    for idx, prompt in enumerate(prompts):
+        color = OBJ_COLORS_UI[idx % len(OBJ_COLORS_UI)]
+        for point_idx, (point, label) in enumerate(
+            zip(prompt.points, prompt.labels, strict=True),
+            start=1,
+        ):
+            x = int(round(float(point[0])))
+            y = int(round(float(point[1])))
+            marker = cv2.MARKER_STAR if int(label) == 1 else cv2.MARKER_TILTED_CROSS
+            suffix = "+" if int(label) == 1 else "-"
+            cv2.drawMarker(preview, (x, y), color, marker, 18, 2)
+            cv2.putText(
+                preview,
+                f"{prompt.obj_id}.{point_idx}{suffix}",
+                (x + 10, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+    return preview
+
+
+def _mask_area_and_bbox(mask: np.ndarray | None) -> tuple[int, list[int] | None]:
+    if mask is None:
+        return 0, None
+    mask_2d = np.asarray(mask).squeeze()
+    if mask_2d.ndim != 2 or not mask_2d.any():
+        return 0, None
+    ys, xs = np.nonzero(mask_2d)
+    return int(len(xs)), [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+
+
+def _bbox_dims(mask_bbox: list[int] | None) -> tuple[int, int]:
+    if mask_bbox is None:
+        return 0, 0
+    x0, y0, x1, y1 = mask_bbox
+    return x1 - x0 + 1, y1 - y0 + 1
+
+
+def _polygon_area(corners: np.ndarray) -> float:
+    pts = np.asarray(corners, dtype=np.float32).reshape(-1, 2)
+    x = pts[:, 0]
+    y = pts[:, 1]
+    return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+
+def _quad_edge_lengths(corners: np.ndarray) -> np.ndarray:
+    pts = np.asarray(corners, dtype=np.float32).reshape(4, 2)
+    return np.linalg.norm(np.roll(pts, -1, axis=0) - pts, axis=1)
+
+
+def _quad_mask_overlap(mask: np.ndarray, corners: np.ndarray) -> dict[str, float]:
+    mask_2d = np.asarray(mask).squeeze().astype(bool)
+    quad_mask = np.zeros(mask_2d.shape, dtype=np.uint8)
+    polygon = np.asarray(corners, dtype=np.int32).reshape(-1, 1, 2)
+    cv2.fillConvexPoly(quad_mask, polygon, 255)
+    quad_bool = quad_mask.astype(bool)
+    intersection = int(np.logical_and(mask_2d, quad_bool).sum())
+    union = int(np.logical_or(mask_2d, quad_bool).sum())
+    quad_area = int(quad_bool.sum())
+    mask_area = int(mask_2d.sum())
+    return {
+        "iou": 0.0 if union == 0 else intersection / union,
+        "mask_coverage": 0.0 if mask_area == 0 else intersection / mask_area,
+        "quad_coverage": 0.0 if quad_area == 0 else intersection / quad_area,
+    }
+
+
+def _preview_geometry_flags(
+    mask: np.ndarray,
+    corners: np.ndarray,
+    frame_shape: tuple[int, int],
+) -> tuple[list[str], dict[str, float]]:
+    height, width = frame_shape[:2]
+    frame_area = float(height * width)
+    edges = _quad_edge_lengths(corners)
+    quad_area = _polygon_area(corners)
+    aspect_ratio = float(edges.max() / max(edges.min(), 1e-6))
+    overlap = _quad_mask_overlap(mask, corners)
+
+    stats = {
+        "quad_area_px": round(quad_area, 2),
+        "quad_aspect_ratio": round(aspect_ratio, 2),
+        "quad_mask_iou": round(overlap["iou"], 4),
+        "mask_coverage": round(overlap["mask_coverage"], 4),
+        "quad_coverage": round(overlap["quad_coverage"], 4),
+    }
+    flags: list[str] = []
+    if quad_area < MIN_PREVIEW_QUAD_AREA_PX:
+        flags.append("quad_area_too_small")
+    if quad_area > frame_area * MAX_PREVIEW_QUAD_AREA_RATIO:
+        flags.append("quad_area_too_large")
+    if float(edges.min()) < MIN_PREVIEW_QUAD_EDGE_PX:
+        flags.append("quad_edge_too_short")
+    if aspect_ratio > MAX_PREVIEW_QUAD_ASPECT_RATIO:
+        flags.append("quad_aspect_ratio_too_high")
+    if overlap["iou"] < MIN_PREVIEW_QUAD_MASK_IOU:
+        flags.append("quad_mask_iou_low")
+    if overlap["mask_coverage"] < MIN_PREVIEW_MASK_COVERAGE:
+        flags.append("mask_coverage_low")
+    if overlap["quad_coverage"] < MIN_PREVIEW_QUAD_COVERAGE:
+        flags.append("quad_coverage_low")
+
+    corners_np = np.asarray(corners, dtype=np.float32).reshape(4, 2)
+    if (
+        (corners_np[:, 0] < -0.05 * width).any()
+        or (corners_np[:, 0] > 1.05 * width).any()
+        or (corners_np[:, 1] < -0.05 * height).any()
+        or (corners_np[:, 1] > 1.05 * height).any()
+    ):
+        flags.append("quad_outside_frame")
+    return flags, stats
+
+
+def _fit_min_area_rect_quad(mask: np.ndarray) -> np.ndarray | None:
+    mask_u8 = (np.asarray(mask).squeeze() > 0).astype(np.uint8) * 255
+    if mask_u8.ndim != 2 or not mask_u8.any():
+        return None
+    nonzero = cv2.findNonZero(mask_u8)
+    if nonzero is None or len(nonzero) < 4:
+        return None
+    rect = cv2.minAreaRect(nonzero)
+    width, height = rect[1]
+    if min(width, height) < 2.0:
+        return None
+    box = cv2.boxPoints(rect).astype(np.float32)
+    sums = box.sum(axis=1)
+    diffs = (box[:, 0] - box[:, 1]).reshape(-1)
+    return np.array(
+        [
+            box[np.argmin(sums)],
+            box[np.argmax(diffs)],
+            box[np.argmax(sums)],
+            box[np.argmin(diffs)],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _fit_preview_corners(
+    *,
+    mask: np.ndarray,
+    mask_area_px: int,
+    mask_bbox: list[int] | None,
+    frame_shape: tuple[int, int],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+) -> tuple[np.ndarray | None, str, str | None]:
+    bbox_w, bbox_h = _bbox_dims(mask_bbox)
+    bbox_area = max(bbox_w * bbox_h, 1)
+    compactness = mask_area_px / bbox_area
+    primary_area_px = max(
+        64,
+        int(frame_shape[0] * frame_shape[1] * MIN_PREVIEW_PRIMARY_FIT_AREA_RATIO),
+    )
+
+    if mask_area_px < MIN_PREVIEW_MASK_AREA_PX or min(bbox_w, bbox_h) < MIN_PREVIEW_QUAD_EDGE_PX:
+        return None, "not_run", "mask_area_too_small"
+
+    if mask_area_px < primary_area_px:
+        if (
+            min(bbox_w, bbox_h) < MIN_PREVIEW_SMALL_BBOX_EDGE_PX
+            or compactness < MIN_PREVIEW_SMALL_MASK_COMPACTNESS
+        ):
+            return None, "not_run", "small_mask_not_compact"
+        fallback = _fit_min_area_rect_quad(mask)
+        if fallback is None:
+            return None, "min_area_rect_fallback", "fit_failed"
+        return fallback, "min_area_rect_fallback", None
+
+    primary = fitter.fit(mask, **fitter_params)
+    if primary is not None:
+        return primary, "primary", None
+
+    fallback = _fit_min_area_rect_quad(mask)
+    if fallback is None:
+        return None, "primary", "fit_failed"
+    return fallback, "min_area_rect_fallback", None
+
+
+def _composite_preview_with_diagnostics(
+    *,
+    frame: np.ndarray,
+    overlay: np.ndarray | None,
+    compositor_cfg: dict,
+    masks: dict[int, np.ndarray],
+    corners_map: dict[int, np.ndarray],
+    preview_object_diagnostics: dict[str, dict[str, Any]],
+    focal_length: float | None,
+) -> tuple[np.ndarray, float | None, list[str]]:
+    preview = frame.copy()
+    if overlay is None:
+        for diag in preview_object_diagnostics.values():
+            diag["composite_status"] = "skipped"
+            diag["composite_failure_reason"] = "no_logo_configured"
+        return preview, None, []
+
+    compositor = build_compositor(compositor_cfg)
+    compositor_params = compositor_cfg.get("params", {})
+    K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
+    t0 = time.perf_counter()
+    failures: list[str] = []
+
+    for obj_id_text, diag in preview_object_diagnostics.items():
+        obj_id = int(obj_id_text)
+        diag.setdefault("background_fill_color_bgr", None)
+        diag.setdefault("background_fill_spread_bgr", None)
+        if obj_id not in corners_map:
+            diag["composite_status"] = "skipped"
+            diag["composite_failure_reason"] = "fit_unavailable"
+            continue
+
+        extra_kw = dict(compositor_params)
+        debug_info: dict[str, object] = {}
+
+        try:
+            if compositor.name == "alpha":
+                extra_kw["homo"] = compute_oriented_homography(corners_map[obj_id], K)
+                extra_kw["debug_info"] = debug_info
+            preview = compositor.composite(
+                preview,
+                corners_map[obj_id],
+                overlay,
+                mask=masks.get(obj_id),
+                **extra_kw,
+            )
+        except Exception as exc:
+            diag["composite_status"] = "failed"
+            diag["composite_failure_reason"] = f"{type(exc).__name__}: {exc}"
+            diag["failure_stage"] = "composite"
+            failures.append(f"obj {obj_id}: composite failure ({diag['composite_failure_reason']})")
+            continue
+
+        diag["background_fill_color_bgr"] = debug_info.get("fill_color_bgr")
+        diag["background_fill_spread_bgr"] = debug_info.get("fill_spread_bgr")
+        if debug_info.get("fill_unstable"):
+            diag["composite_status"] = "warning"
+            diag["composite_failure_reason"] = str(debug_info.get("fill_warning_reason"))
+            diag["failure_stage"] = "composite"
+            failures.append(f"obj {obj_id}: composite failure ({diag['composite_failure_reason']})")
+        else:
+            diag["composite_status"] = "ok"
+            diag["composite_failure_reason"] = None
+
+    return preview, time.perf_counter() - t0, failures
+
+
+def _build_preview_diagnostics(
+    *,
+    frame: np.ndarray,
+    prompts: list[ObjectPrompt],
+    masks: dict[int, np.ndarray],
+    prompt_diagnostics: dict[int, dict[str, object]],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+) -> tuple[dict[int, np.ndarray], dict[str, dict[str, Any]], list[str]]:
+    diagnostics: dict[str, dict[str, Any]] = {}
+    valid_corners_map: dict[int, np.ndarray] = {}
+    invalid_objects: list[str] = []
+    frame_shape = frame.shape[:2]
+
+    for prompt in prompts:
+        obj_id = int(prompt.obj_id)
+        mask = masks.get(obj_id)
+        mask_area_px, mask_bbox = _mask_area_and_bbox(mask)
+        base_diag = dict(prompt_diagnostics.get(obj_id, {}))
+        base_diag.update(
+            {
+                "mask_area_px": mask_area_px,
+                "mask_bbox": mask_bbox,
+                "fit_status": "not_run",
+                "fit_method": "not_run",
+                "fit_geometry_flags": [],
+                "seed_ok": False,
+                "failure_stage": "mask",
+                "composite_status": "not_run",
+                "composite_failure_reason": None,
+                "background_fill_color_bgr": None,
+                "background_fill_spread_bgr": None,
+            }
+        )
+
+        if mask_area_px == 0:
+            retry_exhausted = bool(base_diag.get("seed_retry_exhausted"))
+            base_diag["fit_geometry_flags"] = (
+                ["seed_retry_exhausted"] if retry_exhausted else ["empty_mask"]
+            )
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        assert mask is not None
+        corners, fit_method, fit_failure_flag = _fit_preview_corners(
+            mask=mask,
+            mask_area_px=mask_area_px,
+            mask_bbox=mask_bbox,
+            frame_shape=frame_shape,
+            fitter=fitter,
+            fitter_params=fitter_params,
+        )
+        base_diag["fit_method"] = fit_method
+        if corners is None:
+            base_diag["fit_status"] = "failed"
+            base_diag["failure_stage"] = "fit"
+            base_diag["fit_geometry_flags"] = [fit_failure_flag or "fit_failed"]
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        flags, geometry_stats = _preview_geometry_flags(mask, corners, frame_shape)
+        base_diag["fit_status"] = "ok" if not flags else "rejected"
+        base_diag["failure_stage"] = None if not flags else "fit"
+        base_diag["fit_geometry_flags"] = flags
+        base_diag.update(geometry_stats)
+        if flags:
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        base_diag["seed_ok"] = True
+        diagnostics[str(obj_id)] = base_diag
+        valid_corners_map[obj_id] = corners
+
+    return valid_corners_map, diagnostics, invalid_objects
+
+
+def _summarize_preview_failures(
+    diagnostics: dict[str, dict[str, Any]],
+    invalid_objects: list[str],
+) -> list[str]:
+    failures: list[str] = []
+    for obj_id in invalid_objects:
+        diag = diagnostics[obj_id]
+        flags = diag.get("fit_geometry_flags", [])
+        if diag.get("failure_stage") == "mask":
+            failures.append(f"obj {obj_id}: mask failure ({', '.join(flags)})")
+        elif diag.get("failure_stage") == "composite":
+            reason = diag.get("composite_failure_reason") or "unknown_composite_failure"
+            failures.append(f"obj {obj_id}: composite failure ({reason})")
+        else:
+            failures.append(f"obj {obj_id}: fit failure ({', '.join(flags)})")
+    return failures
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +817,11 @@ def _run_sam3_image_preview(
     video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
     if not hasattr(video_segmenter, "preview_frame"):
         raise RuntimeError("SAM3 image preview requires the sam3_video segmenter.")
-    frame, masks, preview_frame_idx = video_segmenter.preview_frame(video_path, prompts)
+    frame, masks, preview_frame_idx, prompt_diagnostics = video_segmenter.preview_frame(
+        video_path,
+        prompts,
+    )
     metrics["segment_s"] = time.perf_counter() - t0
-    metrics["preview_frame_idx"] = preview_frame_idx
-    metrics["preview_objects_with_masks"] = len(masks)
     metrics["num_prompts"] = len(prompts)
     metrics["num_prompt_points"] = sum(len(prompt.points) for prompt in prompts)
     metrics["video_path"] = video_path
@@ -429,29 +829,50 @@ def _run_sam3_image_preview(
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
-
-    if prompts and not masks:
-        raise RuntimeError(
-            "SAM3 preview produced no prompt-stage masks. Adjust the clicks and rerun --mode image."
-        )
+    metrics["preview_frame_idx"] = preview_frame_idx
 
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
     t0 = time.perf_counter()
-    corners_map = _fit_corners(masks, fitter, fitter_params)
+    corners_map, preview_object_diagnostics, invalid_objects = _build_preview_diagnostics(
+        frame=frame,
+        prompts=prompts,
+        masks=masks,
+        prompt_diagnostics=prompt_diagnostics,
+        fitter=fitter,
+        fitter_params=fitter_params,
+    )
     metrics["fit_s"] = time.perf_counter() - t0
+    metrics["preview_objects_with_masks"] = sum(
+        1 for diag in preview_object_diagnostics.values() if int(diag.get("mask_area_px", 0)) > 0
+    )
     metrics["preview_objects_with_quads"] = len(corners_map)
 
     overlay = _load_overlay(input_cfg.get("logo"))
-    composited, composite_s = _composite_preview_frame(
-        frame,
-        corners_map,
-        overlay,
-        pipeline_cfg["compositor"],
-        masks,
+    composited, composite_s, composite_failures = _composite_preview_with_diagnostics(
+        frame=frame,
+        overlay=overlay,
+        compositor_cfg=pipeline_cfg["compositor"],
+        masks=masks,
+        corners_map=corners_map,
+        preview_object_diagnostics=preview_object_diagnostics,
         focal_length=pipeline_cfg.get("camera", {}).get("focal_length"),
     )
     composited = _annotate_preview_frame(composited, masks, corners_map)
+    preview_failure_reasons = _summarize_preview_failures(
+        preview_object_diagnostics,
+        invalid_objects,
+    )
+    preview_failure_reasons.extend(composite_failures)
+    metrics["preview_object_diagnostics"] = preview_object_diagnostics
+    metrics["preview_ok"] = len(preview_failure_reasons) == 0 and len(corners_map) > 0
+    metrics["preview_failure_reasons"] = preview_failure_reasons
+
+    preview_artifacts = {
+        "preview_prompts": _annotate_prompt_markers(frame, prompts),
+        "preview_masks": _annotate_preview_frame(frame, masks, {}),
+        "composited": composited,
+    }
     if composite_s is not None:
         metrics["composite_s"] = composite_s
 
@@ -461,12 +882,18 @@ def _run_sam3_image_preview(
         f"{metrics['preview_objects_with_masks']} object mask(s), "
         f"{metrics['preview_objects_with_quads']} fitted quad(s)"
     )
+    if metrics["preview_failure_reasons"]:
+        print(
+            "[pipeline] Preview failures: " + "; ".join(metrics["preview_failure_reasons"]),
+            flush=True,
+        )
 
     return {
         "frame": frame,
         "masks": masks,
         "corners_map": corners_map,
         "composited": composited,
+        "preview_artifacts": preview_artifacts,
         "metrics": metrics,
     }
 
@@ -515,6 +942,55 @@ def _count_nonempty_frame_masks(
             object_masks_total += nonempty_masks
 
     return frames_with_masks, object_masks_total
+
+
+def _summarize_video_coverage(
+    video_segments: dict[int, dict[int, np.ndarray]],
+    num_frames: int,
+    tracked_obj_ids: list[int],
+) -> dict[str, Any]:
+    frames_with_masks, object_masks_total = _count_nonempty_frame_masks(video_segments, num_frames)
+    first_frame_with_mask: int | None = None
+    last_frame_with_mask: int | None = None
+    max_gap = 0
+    current_gap = 0
+    object_frame_coverage = {
+        str(obj_id): {"frames_with_masks": 0, "coverage_ratio": 0.0} for obj_id in tracked_obj_ids
+    }
+
+    for frame_idx in range(num_frames):
+        masks_by_obj = video_segments.get(frame_idx, {})
+        frame_has_mask = False
+        for obj_id in tracked_obj_ids:
+            mask = masks_by_obj.get(obj_id)
+            mask_2d = np.asarray(mask).squeeze() if mask is not None else np.array([])
+            if mask_2d.size and mask_2d.any():
+                frame_has_mask = True
+                object_frame_coverage[str(obj_id)]["frames_with_masks"] = (
+                    int(object_frame_coverage[str(obj_id)]["frames_with_masks"]) + 1
+                )
+
+        if frame_has_mask:
+            if first_frame_with_mask is None:
+                first_frame_with_mask = frame_idx
+            last_frame_with_mask = frame_idx
+            current_gap = 0
+        else:
+            current_gap += 1
+            max_gap = max(max_gap, current_gap)
+
+    for obj_id in tracked_obj_ids:
+        frames = int(object_frame_coverage[str(obj_id)]["frames_with_masks"])
+        object_frame_coverage[str(obj_id)]["coverage_ratio"] = round(frames / max(num_frames, 1), 4)
+
+    return {
+        "frames_with_masks": frames_with_masks,
+        "object_masks_total": object_masks_total,
+        "first_frame_with_mask": first_frame_with_mask,
+        "last_frame_with_mask": last_frame_with_mask,
+        "max_consecutive_mask_gap": max_gap,
+        "object_frame_coverage": object_frame_coverage,
+    }
 
 
 def _raise_video_coverage_error(
@@ -600,16 +1076,29 @@ def run_pipeline_video(
         f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s",
     )
 
-    frames_with_masks, object_masks_total = _count_nonempty_frame_masks(
+    coverage = _summarize_video_coverage(
         video_segments,
         len(frame_names),
+        tracked_obj_ids=sorted({int(prompt.obj_id) for prompt in prompts}),
     )
+    tracker_stats = getattr(video_segmenter, "last_tracking_stats", {})
+    if isinstance(tracker_stats, dict):
+        coverage.update({key: value for key, value in tracker_stats.items() if key not in coverage})
+
+    frames_with_masks = int(coverage["frames_with_masks"])
+    object_masks_total = int(coverage["object_masks_total"])
     frames_with_quads = 0
     frames_composited = 0
     metrics["frames_with_masks"] = frames_with_masks
     metrics["frames_with_quads"] = frames_with_quads
     metrics["frames_composited"] = frames_composited
     metrics["object_masks_total"] = object_masks_total
+    metrics["first_frame_with_mask"] = coverage["first_frame_with_mask"]
+    metrics["last_frame_with_mask"] = coverage["last_frame_with_mask"]
+    metrics["max_consecutive_mask_gap"] = coverage["max_consecutive_mask_gap"]
+    metrics["object_frame_coverage"] = coverage["object_frame_coverage"]
+    if "sam3_reanchor_events" in coverage:
+        metrics["sam3_reanchor_events"] = coverage["sam3_reanchor_events"]
 
     if prompts and frames_with_masks == 0:
         _raise_video_coverage_error(

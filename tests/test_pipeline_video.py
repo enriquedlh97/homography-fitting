@@ -14,10 +14,13 @@ class _FakeVideoSegmenter:
         video_segments: dict[int, dict[int, np.ndarray]],
         frame_dir: str,
         frame_names: list[str],
+        *,
+        last_tracking_stats: dict | None = None,
     ) -> None:
         self.video_segments = video_segments
         self.frame_dir = frame_dir
         self.frame_names = frame_names
+        self.last_tracking_stats = last_tracking_stats or {}
 
     def segment_video(
         self,
@@ -162,3 +165,49 @@ def test_run_pipeline_video_fails_when_logo_is_configured_but_nothing_is_composi
     assert len(_FakeWriter.instances) == 1
     assert _FakeWriter.instances[0].writes == 2
     assert _FakeWriter.instances[0].closed is True
+
+
+class _QuadFitter:
+    def fit(self, _mask: np.ndarray, **_kwargs) -> np.ndarray:
+        return np.array([[1, 1], [6, 1], [6, 6], [1, 6]], dtype=np.float32)
+
+
+def test_run_pipeline_video_records_coverage_stats(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={
+            0: {1: np.ones((4, 4), dtype=np.uint8) * 255},
+            1: {},
+            2: {1: np.ones((4, 4), dtype=np.uint8) * 255},
+        },
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg", "00002.jpg"],
+        last_tracking_stats={
+            "sam3_reanchor_events": [{"obj_id": 1, "frame_idx": 2, "refresh_count": 1}]
+        },
+    )
+    _FakeWriter.instances = []
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    results = pipeline_mod.run_pipeline_video(
+        _video_config(),
+        output_path=str(tmp_path / "output.mp4"),
+    )
+
+    metrics = results["metrics"]
+    assert metrics["frames_with_masks"] == 2
+    assert metrics["object_masks_total"] == 2
+    assert metrics["first_frame_with_mask"] == 0
+    assert metrics["last_frame_with_mask"] == 2
+    assert metrics["max_consecutive_mask_gap"] == 1
+    assert metrics["object_frame_coverage"] == {
+        "1": {"frames_with_masks": 2, "coverage_ratio": 0.6667}
+    }
+    assert metrics["sam3_reanchor_events"] == [{"obj_id": 1, "frame_idx": 2, "refresh_count": 1}]
