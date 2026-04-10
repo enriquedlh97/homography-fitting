@@ -125,6 +125,8 @@ SAM3 GPU support:
 - `H100`, `H200`: `SAM3` via FlashAttention-3
 - `B200`: `SAM3` via FlashAttention-4
 
+As of April 10, 2026, PyPI only publishes `flash-attn-4` as prereleases, so the Modal B200 image pins `flash-attn-4==4.0.0b8` instead of relying on pip to resolve a final release. See [PyPI](https://pypi.org/project/flash-attn-4/) and the [upstream README](https://github.com/Dao-AILab/flash-attention).
+
 ### Benchmarking across GPUs
 
 Single config, single GPU, multiple averaged runs:

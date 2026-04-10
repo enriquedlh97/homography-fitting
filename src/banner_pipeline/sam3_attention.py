@@ -94,8 +94,28 @@ def _make_fa2_wrapper(
     return wrapper
 
 
+def _coerce_fa4_output_tensor(result: object) -> torch.Tensor:
+    if isinstance(result, torch.Tensor):
+        return result
+    if isinstance(result, tuple | list):
+        if not result:
+            raise RuntimeError(
+                "FlashAttention-4 returned an empty tuple/list instead of an output tensor."
+            )
+        output = result[0]
+        if isinstance(output, torch.Tensor):
+            return output
+        raise RuntimeError(
+            "FlashAttention-4 returned a tuple/list whose first element is not a tensor: "
+            f"{type(output).__name__}."
+        )
+    raise RuntimeError(
+        f"FlashAttention-4 returned an unexpected result type: {type(result).__name__}."
+    )
+
+
 def _make_fa4_wrapper(
-    flash_attn_func: Callable[..., torch.Tensor],
+    flash_attn_func: Callable[..., object],
 ) -> Callable[..., torch.Tensor]:
     def wrapper(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         causal = bool(kwargs.get("causal", False))
@@ -110,7 +130,8 @@ def _make_fa4_wrapper(
         call_kwargs = {"causal": causal}
         if softmax_scale is not None:
             call_kwargs["softmax_scale"] = softmax_scale
-        return flash_attn_func(q, k, v, **call_kwargs).to(target_dtype)
+        output = _coerce_fa4_output_tensor(flash_attn_func(q, k, v, **call_kwargs))
+        return output.to(target_dtype)
 
     return wrapper
 

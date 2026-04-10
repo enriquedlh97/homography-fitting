@@ -99,6 +99,18 @@ def test_modal_run_selects_image_for_gpu(
     assert module._select_image_for_gpu(gpu) is getattr(module, image_attr)
 
 
+def test_modal_run_b200_image_pins_flash_attn_4_beta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_modal_run_module(monkeypatch, "B200")
+
+    assert module._select_image_for_gpu("B200") is module.fa4_image
+    assert (
+        "run_commands",
+        ("python -m pip install --no-cache-dir 'flash-attn-4==4.0.0b8'",),
+    ) in module.fa4_image.steps
+
+
 def test_modal_run_rejects_sam3_on_t4(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_modal_run_module(monkeypatch, "T4")
     config_dict = {"pipeline": {"segmenter": {"type": "sam3_video"}}}

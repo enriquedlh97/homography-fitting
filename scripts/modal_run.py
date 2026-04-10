@@ -55,6 +55,7 @@ for i, arg in enumerate(sys.argv):
 FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB"}
 FA3_GPUS = {"H100", "H200"}
 FA4_GPUS = {"B200"}
+FA4_VERSION = "4.0.0b8"
 
 
 def _base_cuda_image() -> modal.Image:
@@ -124,7 +125,9 @@ def _build_fa3_image() -> modal.Image:
 def _build_fa4_image() -> modal.Image:
     return _install_sam_models(
         _base_cuda_image(),
-        "python -m pip install --no-cache-dir flash-attn-4",
+        # Pin the FA4 beta explicitly because Modal's pip install
+        # will not resolve prerelease-only packages.
+        f"python -m pip install --no-cache-dir 'flash-attn-4=={FA4_VERSION}'",
     )
 
 

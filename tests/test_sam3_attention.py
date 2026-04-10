@@ -120,11 +120,12 @@ def test_configure_sam3_attention_backend_selects_fa4_on_b200(
     flash_attn_pkg = cast(Any, types.ModuleType("flash_attn"))
     flash_attn_pkg.__path__ = []
     flash_attn_cute_mod = cast(Any, types.ModuleType("flash_attn.cute"))
+    aux = torch.randn(2, 3, 4, dtype=torch.float32)
 
     def fake_flash_attn_func(q, k, v, causal, softmax_scale=None):
         recorded["causal"] = causal
         recorded["softmax_scale"] = softmax_scale
-        return q + k + v
+        return q + k + v, aux
 
     flash_attn_cute_mod.flash_attn_func = fake_flash_attn_func
     flash_attn_pkg.cute = flash_attn_cute_mod
@@ -144,6 +145,43 @@ def test_configure_sam3_attention_backend_selects_fa4_on_b200(
     assert recorded == {"causal": False, "softmax_scale": 0.25}
     assert fa3_mod.flash_attn_func is vitdet_mod.flash_attn_func
     assert fa2_mod.flash_attn_func is vitdet_mod.flash_attn_func
+
+
+def test_make_fa4_wrapper_accepts_tensor_only_return() -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_flash_attn_func(q, k, v, causal, softmax_scale=None):
+        recorded["causal"] = causal
+        recorded["softmax_scale"] = softmax_scale
+        return q + k + v
+
+    wrapper = attn_mod._make_fa4_wrapper(fake_flash_attn_func)
+    q = torch.randn(2, 3, 4, 5, dtype=torch.float16)
+
+    wrapper_out = wrapper(q, q, q, causal=True, softmax_scale=0.5)
+
+    assert wrapper_out.shape == q.shape
+    assert wrapper_out.dtype == q.dtype
+    assert recorded == {"causal": True, "softmax_scale": 0.5}
+
+
+@pytest.mark.parametrize(
+    ("bad_result", "expected_message"),
+    [
+        ((), "empty tuple/list"),
+        ((None,), "first element is not a tensor"),
+        ("not-a-tensor", "unexpected result type"),
+    ],
+)
+def test_make_fa4_wrapper_rejects_invalid_return_shapes(
+    bad_result: object,
+    expected_message: str,
+) -> None:
+    wrapper = attn_mod._make_fa4_wrapper(lambda q, k, v, causal, softmax_scale=None: bad_result)
+    q = torch.randn(2, 3, 4, 5, dtype=torch.bfloat16)
+
+    with pytest.raises(RuntimeError, match=expected_message):
+        wrapper(q, q, q, causal=False)
 
 
 def test_configure_sam3_attention_backend_is_idempotent_for_same_gpu(
