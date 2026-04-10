@@ -10,6 +10,16 @@ from banner_pipeline.segment import sam3_video as sam3_video_mod
 from banner_pipeline.segment.base import ObjectPrompt
 
 
+def _valid_banner_mask_3d() -> np.ndarray:
+    mask = np.zeros((1, 100, 200), dtype=np.float32)
+    mask[0, 20:40, 40:160] = 1.0
+    return mask
+
+
+def _empty_banner_masks_3d() -> np.ndarray:
+    return np.empty((0, 100, 200), dtype=np.float32)
+
+
 class _FakePredictor:
     def __init__(
         self,
@@ -456,46 +466,81 @@ def test_sam3_video_segmenter_reanchors_after_tracking_gap(
                     "frame_index": 0,
                     "outputs": {
                         "obj_ids": torch.tensor([1]),
-                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                        "video_res_masks": _valid_banner_mask_3d(),
                     },
                 },
                 {
                     "frame_index": 1,
                     "outputs": {
                         "obj_ids": torch.tensor([1]),
-                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                        "video_res_masks": _valid_banner_mask_3d(),
                     },
                 },
                 {
                     "frame_index": 2,
                     "outputs": {
                         "obj_ids": torch.tensor([]),
-                        "video_res_masks": torch.empty((0, 2, 2)),
+                        "video_res_masks": _empty_banner_masks_3d(),
                     },
                 },
                 {
                     "frame_index": 3,
                     "outputs": {
                         "obj_ids": torch.tensor([]),
-                        "video_res_masks": torch.empty((0, 2, 2)),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 4,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 5,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
                     },
                 },
             ],
             [
                 {
-                    "frame_index": 3,
+                    "frame_index": 5,
                     "outputs": {
                         "obj_ids": torch.tensor([1]),
-                        "video_res_masks": torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]),
+                        "video_res_masks": _valid_banner_mask_3d(),
                     },
                 }
             ],
-        ]
+        ],
+        add_prompt_responses=[
+            {
+                "outputs": {
+                    "obj_ids": torch.tensor([1]),
+                    "video_res_masks": _valid_banner_mask_3d(),
+                }
+            },
+            {
+                "outputs": {
+                    "obj_ids": torch.tensor([1]),
+                    "video_res_masks": _valid_banner_mask_3d(),
+                }
+            },
+        ],
     )
     segmenter = _build_segmenter(
         monkeypatch,
         predictor,
-        frame_names=["00000.jpg", "00001.jpg", "00002.jpg", "00003.jpg"],
+        frame_names=[
+            "00000.jpg",
+            "00001.jpg",
+            "00002.jpg",
+            "00003.jpg",
+            "00004.jpg",
+            "00005.jpg",
+        ],
     )
     prompt = ObjectPrompt(
         obj_id=1,
@@ -519,10 +564,90 @@ def test_sam3_video_segmenter_reanchors_after_tracking_gap(
         refresh_request["point_labels"],
         torch.tensor([1, 1, 0, 0], dtype=torch.int32),
     )
-    assert video_segments[3][1].shape == (100, 200)
+    assert video_segments[5][1].shape == (100, 200)
     assert segmenter.last_tracking_stats["sam3_reanchor_events"] == [
-        {"obj_id": 1, "frame_idx": 3, "refresh_count": 1}
+        {"obj_id": 1, "frame_idx": 5, "refresh_count": 1}
     ]
+
+
+def test_sam3_video_segmenter_does_not_reanchor_from_invalid_early_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor(
+        [
+            [
+                {
+                    "frame_index": 0,
+                    "outputs": {
+                        "obj_ids": torch.tensor([1]),
+                        "video_res_masks": torch.tensor([[[1.0, 1.0], [1.0, 1.0]]]),
+                    },
+                },
+                {
+                    "frame_index": 1,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 2,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 3,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 4,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+                {
+                    "frame_index": 5,
+                    "outputs": {
+                        "obj_ids": torch.tensor([]),
+                        "video_res_masks": _empty_banner_masks_3d(),
+                    },
+                },
+            ]
+        ]
+    )
+    segmenter = _build_segmenter(
+        monkeypatch,
+        predictor,
+        frame_names=[
+            "00000.jpg",
+            "00001.jpg",
+            "00002.jpg",
+            "00003.jpg",
+            "00004.jpg",
+            "00005.jpg",
+        ],
+    )
+    prompt = ObjectPrompt(
+        obj_id=1,
+        points=np.array([[20.0, 25.0]], dtype=np.float32),
+        labels=np.array([1], dtype=np.int32),
+    )
+
+    segmenter.segment_video("/tmp/video.mp4", [prompt])
+
+    assert predictor.events == [
+        "start_session",
+        "add_prompt",
+        "propagate_in_video",
+        "close_session",
+    ]
+    assert segmenter.last_tracking_stats["sam3_reanchor_events"] == []
 
 
 def test_parse_frame_outputs_accepts_dict_of_masks() -> None:

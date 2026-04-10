@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 import torch
 
+from banner_pipeline import quality as quality_mod
 from banner_pipeline.device import detect_device, load_sam3_video_predictor
 from banner_pipeline.io import extract_all_frames
 from banner_pipeline.segment.base import ObjectPrompt
@@ -35,10 +36,9 @@ from banner_pipeline.segment.base import ObjectPrompt
 # and configures the GPU-family FlashAttention backend before model creation.
 DEFAULT_CHECKPOINT = "sam3/checkpoints/sam3.1_multiplex.pt"
 
-MIN_TRACKABLE_MASK_AREA_RATIO = 5e-4
 MAX_REANCHOR_EVENTS_PER_OBJECT = 3
 REANCHOR_COOLDOWN_FRAMES = 8
-REANCHOR_BAD_STREAK_THRESHOLD = 2
+REANCHOR_BAD_STREAK_THRESHOLD = 4
 
 OBJECT_ID_KEYS = ("out_obj_ids", "obj_ids", "object_ids", "instance_ids")
 MASK_KEYS = (
@@ -566,6 +566,7 @@ def _build_seed_retry_prompt(
         points=retry_points_np.astype(np.float32),
         labels=retry_labels_np,
         frame_idx=int(prompt.frame_idx),
+        surface_type=prompt.surface_type,
     )
 
 
@@ -645,6 +646,7 @@ def _recover_tracking_with_reanchors(
                 frame_idx=frame_idx,
                 quad=np.asarray(last_good_quad, dtype=np.float32),
                 frame_shape=frame_shape,
+                surface_type=prompt.surface_type,
             )
             refresh_request = _build_add_prompt_request(
                 refresh_prompt,
@@ -657,7 +659,9 @@ def _recover_tracking_with_reanchors(
             parsed_masks = _parse_frame_outputs(response.get("outputs"), frame_shape)
             if parsed_masks:
                 video_segments.setdefault(frame_idx, {}).update(parsed_masks)
-            if not diagnostics["usable_outputs"]:
+            refreshed_mask = parsed_masks.get(obj_id)
+            refreshed_ok, refreshed_quad = _evaluate_tracking_mask(refreshed_mask, frame_shape)
+            if not diagnostics["usable_outputs"] or not refreshed_ok or refreshed_quad is None:
                 continue
 
             print(
@@ -674,6 +678,7 @@ def _recover_tracking_with_reanchors(
                 frame_shape=frame_shape,
             )
             _merge_video_segments(video_segments, refreshed_segments, start_frame_idx=frame_idx)
+            state.last_good_quad = refreshed_quad
             state.last_refresh_frame = frame_idx
             state.refresh_count += 1
             state.bad_streak = 0
@@ -708,6 +713,7 @@ def _build_refresh_prompt_from_quad(
     frame_idx: int,
     quad: np.ndarray,
     frame_shape: tuple[int, int],
+    surface_type: str = "banner",
 ) -> ObjectPrompt:
     """Create banner-specific refresh clicks from the last good quad."""
     ordered_quad = _order_quad_corners(quad)
@@ -747,6 +753,7 @@ def _build_refresh_prompt_from_quad(
         points=points.astype(np.float32),
         labels=labels,
         frame_idx=frame_idx,
+        surface_type=surface_type,
     )
 
 
@@ -754,30 +761,19 @@ def _evaluate_tracking_mask(
     mask: np.ndarray | None,
     frame_shape: tuple[int, int],
 ) -> tuple[bool, np.ndarray | None]:
-    mask_area_px, _mask_bbox = _mask_area_and_bbox(mask)
-    min_area_px = max(64, int(frame_shape[0] * frame_shape[1] * MIN_TRACKABLE_MASK_AREA_RATIO))
-    if mask_area_px < min_area_px:
-        return False, None
-    quad = _fit_reanchor_quad_from_mask(mask)
-    if quad is None:
-        return False, None
-    return True, quad
+    is_valid, quad, _flags, _stats = quality_mod.validate_tracking_mask(mask, frame_shape)
+    return is_valid, quad
 
 
 def _fit_reanchor_quad_from_mask(mask: np.ndarray | None) -> np.ndarray | None:
     if mask is None:
         return None
-    mask_2d = np.asarray(mask).squeeze().astype(np.uint8)
+    mask_2d = np.asarray(mask).squeeze()
     if mask_2d.ndim != 2 or not mask_2d.any():
         return None
-    nonzero = cv2.findNonZero(mask_2d)
-    if nonzero is None or len(nonzero) < 4:
+    quad = quality_mod.fit_min_area_rect_quad(mask_2d)
+    if quad is None:
         return None
-    rect = cv2.minAreaRect(nonzero)
-    width, height = rect[1]
-    if min(width, height) < 2.0:
-        return None
-    quad = cv2.boxPoints(rect).astype(np.float32)
     return _order_quad_corners(quad)
 
 

@@ -8,6 +8,12 @@ import pytest
 from banner_pipeline import pipeline as pipeline_mod
 
 
+def _banner_mask() -> np.ndarray:
+    mask = np.zeros((24, 32), dtype=np.uint8)
+    mask[4:12, 4:12] = 255
+    return mask
+
+
 class _FakeVideoSegmenter:
     def __init__(
         self,
@@ -51,7 +57,7 @@ class _NullFitter:
 
 
 class _FakeCompositor:
-    name = "alpha"
+    name = "inpaint"
 
     def composite(
         self,
@@ -70,7 +76,7 @@ def _video_config() -> dict:
             "mode": "video",
             "segmenter": {"type": "sam3_video"},
             "fitter": {"type": "pca", "params": {}},
-            "compositor": {"type": "alpha", "params": {}},
+            "compositor": {"type": "inpaint", "params": {}},
             "camera": {"focal_length": None},
         },
         "input": {
@@ -169,7 +175,12 @@ def test_run_pipeline_video_fails_when_logo_is_configured_but_nothing_is_composi
 
 class _QuadFitter:
     def fit(self, _mask: np.ndarray, **_kwargs) -> np.ndarray:
-        return np.array([[1, 1], [6, 1], [6, 6], [1, 6]], dtype=np.float32)
+        return np.array([[4, 4], [11, 4], [11, 11], [4, 11]], dtype=np.float32)
+
+
+class _BadQuadFitter:
+    def fit(self, _mask: np.ndarray, **_kwargs) -> np.ndarray:
+        return np.array([[0, 0], [80, 0], [80, 8], [0, 8]], dtype=np.float32)
 
 
 def test_run_pipeline_video_records_coverage_stats(
@@ -180,9 +191,9 @@ def test_run_pipeline_video_records_coverage_stats(
     frame_dir.mkdir()
     segmenter = _FakeVideoSegmenter(
         video_segments={
-            0: {1: np.ones((4, 4), dtype=np.uint8) * 255},
+            0: {1: _banner_mask()},
             1: {},
-            2: {1: np.ones((4, 4), dtype=np.uint8) * 255},
+            2: {1: _banner_mask()},
         },
         frame_dir=str(frame_dir),
         frame_names=["00000.jpg", "00001.jpg", "00002.jpg"],
@@ -203,6 +214,7 @@ def test_run_pipeline_video_records_coverage_stats(
 
     metrics = results["metrics"]
     assert metrics["frames_with_masks"] == 2
+    assert metrics["frames_with_valid_objects"] == 2
     assert metrics["object_masks_total"] == 2
     assert metrics["first_frame_with_mask"] == 0
     assert metrics["last_frame_with_mask"] == 2
@@ -210,4 +222,87 @@ def test_run_pipeline_video_records_coverage_stats(
     assert metrics["object_frame_coverage"] == {
         "1": {"frames_with_masks": 2, "coverage_ratio": 0.6667}
     }
+    assert metrics["object_valid_frame_coverage"] == {
+        "1": {"frames_valid": 2, "coverage_ratio": 0.6667}
+    }
+    assert metrics["object_rejection_counts"] == {"1": 1}
+    assert metrics["object_rejection_reasons"] == {"1": {"empty_mask": 1}}
     assert metrics["sam3_reanchor_events"] == [{"obj_id": 1, "frame_idx": 2, "refresh_count": 1}]
+
+
+def test_run_pipeline_video_rejects_persistent_bad_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={
+            0: {1: _banner_mask()},
+            1: {1: _banner_mask()},
+        },
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _FakeWriter.instances = []
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _BadQuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    with pytest.raises(RuntimeError, match="frames_with_valid_objects=0"):
+        pipeline_mod.run_pipeline_video(
+            _video_config(),
+            output_path=str(tmp_path / "output.mp4"),
+        )
+
+
+def test_run_pipeline_video_skips_court_marking_prompts_but_keeps_banner_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={
+            0: {1: np.ones((24, 32), dtype=np.uint8) * 255},
+            1: {1: np.ones((24, 32), dtype=np.uint8) * 255},
+        },
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _FakeWriter.instances = []
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    config = _video_config()
+    config["input"]["prompts"] = [
+        {"obj_id": 1, "points": [[10, 10]], "labels": [1]},
+        {
+            "obj_id": 2,
+            "points": [[20, 20], [24, 20], [20, 16]],
+            "labels": [1, 1, 0],
+            "surface_type": "court_marking",
+        },
+    ]
+
+    results = pipeline_mod.run_pipeline_video(
+        config,
+        output_path=str(tmp_path / "output.mp4"),
+    )
+
+    metrics = results["metrics"]
+    assert metrics["frames_with_valid_objects"] == 2
+    assert metrics["object_frame_coverage"]["2"] == {"frames_with_masks": 0, "coverage_ratio": 0.0}
+    assert metrics["object_valid_frame_coverage"]["1"] == {
+        "frames_valid": 2,
+        "coverage_ratio": 1.0,
+    }
+    assert metrics["object_valid_frame_coverage"]["2"] == {
+        "frames_valid": 0,
+        "coverage_ratio": 0.0,
+    }
+    assert metrics["object_rejection_counts"]["2"] == 2
+    assert metrics["object_rejection_reasons"]["2"] == {"unsupported_surface_type:court_marking": 2}

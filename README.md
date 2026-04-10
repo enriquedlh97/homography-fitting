@@ -57,6 +57,7 @@ uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A
 ```
 
 For SAM3, use `--mode image` first to preview the prompt-stage masks and fitted quads on the selected frame. If the preview looks wrong, adjust the clicks before running `--mode video`.
+The shipped SAM3 parity configs use `inpaint`, which is the same compositor family as the stronger SAM2 baseline.
 
 `configs/sam3_default.yaml` must not be run on `T4`. The launcher rejects
 that combination locally before any remote build starts because SAM3 requires
@@ -86,6 +87,7 @@ Inspect that PNG before running `--mode video`.
 - Add 1 negative click on adjacent background if the mask bleeds.
 - Do not outline the whole banner perimeter with many positive points.
 - When validating a new setup, start with one banner before adding more objects.
+- This branch treats only banner-like surfaces as supported for SAM3 parity. Court markings should not be part of `configs/sam3_default.yaml`.
 
 ### If SAM3 Preview Fails
 
@@ -94,6 +96,7 @@ Inspect that PNG before running `--mode video`.
 - Reduce the test to one object and verify that first.
 - If the log shows `usable_outputs=False parsed_nonempty_masks=0`, interpret it as:
   the prompt request was accepted, but SAM3 returned no usable mask for that preview frame.
+- If the preview reports `unsupported_surface_type:court_marking`, that object is intentionally skipped in this branch rather than being forced through the banner fitter.
 
 ### Current SAM3 Preview Limitation
 

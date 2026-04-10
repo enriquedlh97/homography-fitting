@@ -18,6 +18,7 @@ class ObjectPrompt:
     points:    (N, 2) float32 array of (x, y) click coordinates.
     labels:    (N,) int32 array; 1 = positive, 0 = negative click.
     frame_idx: Frame index these prompts apply to (default 0).
+    surface_type: Semantic surface type for downstream routing.
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
     """
 
@@ -25,6 +26,7 @@ class ObjectPrompt:
     points: np.ndarray
     labels: np.ndarray
     frame_idx: int = 0
+    surface_type: str = "banner"
     box: np.ndarray | None = None
 
 

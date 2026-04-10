@@ -25,6 +25,9 @@ _PASSTHROUGH_KEYS = [
     "preview_failure_reasons",
     "preview_object_diagnostics",
     "object_frame_coverage",
+    "object_valid_frame_coverage",
+    "object_rejection_counts",
+    "object_rejection_reasons",
     "sam3_reanchor_events",
 ]
 
@@ -43,6 +46,7 @@ _NUMERIC_KEYS = [
     "run_total_s",
     "output_fps",
     "frames_with_masks",
+    "frames_with_valid_objects",
     "frames_with_quads",
     "frames_composited",
     "object_masks_total",

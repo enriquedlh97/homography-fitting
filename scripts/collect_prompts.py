@@ -77,6 +77,8 @@ def main():
         }
         if prompt.frame_idx != 0:
             entry["frame_idx"] = int(prompt.frame_idx)
+        if getattr(prompt, "surface_type", "banner") != "banner":
+            entry["surface_type"] = str(prompt.surface_type)
         config["input"]["prompts"].append(entry)
 
     with open(args.config, "w") as f:

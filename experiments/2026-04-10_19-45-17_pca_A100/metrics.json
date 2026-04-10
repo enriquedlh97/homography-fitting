@@ -1,0 +1,106 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "gpu_memory_gb": 39.5,
+  "mode": "video",
+  "num_prompts": 3,
+  "num_prompt_points": 8,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmp6l3fzb22/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "object_frame_coverage": {
+    "2": {
+      "frames_with_masks": 199,
+      "coverage_ratio": 0.9851
+    },
+    "3": {
+      "frames_with_masks": 199,
+      "coverage_ratio": 0.9851
+    },
+    "4": {
+      "frames_with_masks": 198,
+      "coverage_ratio": 0.9802
+    }
+  },
+  "object_valid_frame_coverage": {
+    "2": {
+      "frames_valid": 199,
+      "coverage_ratio": 0.9851
+    },
+    "3": {
+      "frames_valid": 188,
+      "coverage_ratio": 0.9307
+    },
+    "4": {
+      "frames_valid": 196,
+      "coverage_ratio": 0.9703
+    }
+  },
+  "object_rejection_counts": {
+    "2": 3,
+    "3": 14,
+    "4": 6
+  },
+  "object_rejection_reasons": {
+    "2": {
+      "empty_mask": 3
+    },
+    "3": {
+      "empty_mask": 3,
+      "quad_edge_too_short": 10,
+      "quad_aspect_ratio_too_high": 10,
+      "small_mask_not_compact": 1
+    },
+    "4": {
+      "quad_edge_too_short": 1,
+      "quad_aspect_ratio_too_high": 1,
+      "empty_mask": 4,
+      "small_mask_not_compact": 1
+    }
+  },
+  "sam3_reanchor_events": [
+    {
+      "obj_id": 2,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 4,
+      "frame_idx": 6,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 138,
+      "refresh_count": 2
+    }
+  ],
+  "segment_total_s": 190.703116457,
+  "fit_mean_ms": 56.55,
+  "fit_std_ms": 7.83,
+  "composite_mean_ms": 29.86,
+  "composite_std_ms": 8.34,
+  "write_video_s": 0.9039,
+  "total_s": 208.9729,
+  "run_total_s": 211.778941863,
+  "output_fps": 0.97,
+  "frames_with_masks": 199,
+  "frames_with_valid_objects": 199,
+  "frames_with_quads": 199,
+  "frames_composited": 199,
+  "object_masks_total": 596,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 201,
+  "max_consecutive_mask_gap": 3
+}

@@ -142,3 +142,14 @@ def test_shipped_sam3_matrix_templates_preserve_prompt_shape(template_name: str)
         len(prompt["labels"]) == len(prompt["points"]) for prompt in sam3_cfg["input"]["prompts"]
     )
     assert any(0 in prompt["labels"] for prompt in sam3_cfg["input"]["prompts"])
+
+
+def test_sam3_default_config_uses_inpaint_and_banner_only_prompts() -> None:
+    sam3_cfg = yaml.safe_load((ROOT / "configs" / "sam3_default.yaml").read_text())
+    fast_cfg = yaml.safe_load((ROOT / "configs" / "matrix" / "1prompt_fast.yaml").read_text())
+
+    assert sam3_cfg["pipeline"]["compositor"]["type"] == "inpaint"
+    assert fast_cfg["pipeline"]["compositor"]["type"] == "alpha"
+    assert all(
+        prompt.get("surface_type", "banner") == "banner" for prompt in sam3_cfg["input"]["prompts"]
+    )

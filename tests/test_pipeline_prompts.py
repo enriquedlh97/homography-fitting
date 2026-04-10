@@ -174,7 +174,9 @@ class _ExhaustedRetryPreviewSegmenter(_FakePreviewSegmenter):
         )
 
 
-def test_prompt_config_round_trip_preserves_labels_and_frame_idx(tmp_path: Path) -> None:
+def test_prompt_config_round_trip_preserves_labels_frame_idx_and_surface_type(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "config.yaml"
     config = {"input": {"video": "data/tennis-clip.mp4"}}
     prompts = [
@@ -183,6 +185,7 @@ def test_prompt_config_round_trip_preserves_labels_and_frame_idx(tmp_path: Path)
             points=np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
             labels=np.array([1, 0], dtype=np.int32),
             frame_idx=7,
+            surface_type="court_marking",
         )
     ]
 
@@ -195,6 +198,7 @@ def test_prompt_config_round_trip_preserves_labels_and_frame_idx(tmp_path: Path)
             "points": [[10.0, 20.0], [30.0, 40.0]],
             "labels": [1, 0],
             "frame_idx": 7,
+            "surface_type": "court_marking",
         }
     ]
 
@@ -203,6 +207,7 @@ def test_prompt_config_round_trip_preserves_labels_and_frame_idx(tmp_path: Path)
     np.testing.assert_allclose(round_trip[0].points, prompts[0].points)
     np.testing.assert_array_equal(round_trip[0].labels, prompts[0].labels)
     assert round_trip[0].frame_idx == 7
+    assert round_trip[0].surface_type == "court_marking"
 
 
 def test_load_prompts_warns_for_legacy_sam3_outline_configs(
@@ -289,6 +294,59 @@ def test_run_pipeline_uses_sam3_preview_mode(
     assert results["metrics"]["preview_objects_with_masks"] == 1
     assert results["metrics"]["preview_objects_with_quads"] == 1
     assert results["metrics"]["preview_ok"] is True
+
+
+def test_run_pipeline_skips_court_marking_prompts_in_sam3_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "pipeline": {
+            "mode": "image",
+            "segmenter": {"type": "sam3_video"},
+            "fitter": {"type": "pca", "params": {}},
+            "compositor": {"type": "inpaint", "params": {}},
+            "camera": {"focal_length": None},
+        },
+        "input": {
+            "video": "/tmp/input.mp4",
+            "prompts": [
+                {
+                    "obj_id": 9,
+                    "points": [[10, 10], [14, 10], [10, 4]],
+                    "labels": [1, 1, 0],
+                    "frame_idx": 5,
+                    "surface_type": "court_marking",
+                }
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        pipeline_mod,
+        "build_video_segmenter",
+        lambda _cfg: pytest.fail(
+            "court_marking preview prompts should be skipped before SAM3 loads"
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_mod,
+        "load_frame",
+        lambda _path, frame_idx=0: np.zeros((24, 32, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _PreviewFitter())
+
+    results = pipeline_mod.run_pipeline(config)
+
+    diag = results["metrics"]["preview_object_diagnostics"]["9"]
+    assert results["metrics"]["preview_ok"] is False
+    assert results["corners_map"] == {}
+    assert diag["surface_type"] == "court_marking"
+    assert diag["fit_status"] == "skipped"
+    assert diag["composite_status"] == "skipped"
+    assert diag["skip_reason"] == "unsupported_surface_type:court_marking"
+    assert (
+        "skipped (unsupported_surface_type:court_marking)"
+        in (results["metrics"]["preview_failure_reasons"][0])
+    )
 
 
 def test_run_pipeline_marks_degenerate_sam3_preview_masks_as_failures(

@@ -9,6 +9,7 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
             {
                 "num_prompts": 3,
                 "frames_with_masks": 12,
+                "frames_with_valid_objects": 8,
                 "frames_with_quads": 9,
                 "frames_composited": 7,
                 "object_masks_total": 21,
@@ -16,6 +17,9 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
                 "last_frame_with_mask": 17,
                 "max_consecutive_mask_gap": 4,
                 "object_frame_coverage": {"1": {"frames_with_masks": 12, "coverage_ratio": 0.6}},
+                "object_valid_frame_coverage": {"1": {"frames_valid": 8, "coverage_ratio": 0.4}},
+                "object_rejection_counts": {"1": 9},
+                "object_rejection_reasons": {"1": {"quad_mask_iou_low": 9}},
                 "segment_total_s": 10.0,
                 "run_total_s": 11.0,
                 "sam3_reanchor_events": [{"obj_id": 1, "frame_idx": 8, "refresh_count": 1}],
@@ -28,6 +32,7 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
     )
 
     assert report["frames_with_masks"] == 12
+    assert report["frames_with_valid_objects"] == 8
     assert report["frames_with_quads"] == 9
     assert report["frames_composited"] == 7
     assert report["object_masks_total"] == 21
@@ -37,4 +42,9 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
     assert report["object_frame_coverage"] == {
         "1": {"frames_with_masks": 12, "coverage_ratio": 0.6}
     }
+    assert report["object_valid_frame_coverage"] == {
+        "1": {"frames_valid": 8, "coverage_ratio": 0.4}
+    }
+    assert report["object_rejection_counts"] == {"1": 9}
+    assert report["object_rejection_reasons"] == {"1": {"quad_mask_iou_low": 9}}
     assert report["sam3_reanchor_events"] == [{"obj_id": 1, "frame_idx": 8, "refresh_count": 1}]
