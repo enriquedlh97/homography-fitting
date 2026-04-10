@@ -1,0 +1,19 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100 80GB PCIe",
+  "gpu_memory_gb": 79.3,
+  "mode": "image",
+  "num_prompts": 3,
+  "num_prompt_points": 14,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpm1v3kxke/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "alpha",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "segment_s": 22.996557702,
+  "fit_s": 0.025225862999999293,
+  "composite_s": 0.016943267000002038,
+  "total_s": 23.038726832000002,
+  "run_total_s": 23.063082295
+}

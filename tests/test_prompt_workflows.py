@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
+
+from banner_pipeline.segment.base import ObjectPrompt
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,6 +42,62 @@ def test_collect_prompts_keeps_t4_hint_for_sam2() -> None:
     command = collect_prompts_mod._next_modal_command("configs/default.yaml", "sam2_image")
 
     assert "--gpu T4" in command
+
+
+def test_collect_prompts_persists_labels_and_frame_idx(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "sam3.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "pipeline": {"segmenter": {"type": "sam3_video"}},
+                "input": {"video": "data/tennis-clip.mp4"},
+            },
+            sort_keys=False,
+        ),
+    )
+    monkeypatch.setattr(
+        collect_prompts_mod,
+        "load_frame",
+        lambda _video_path, frame_idx=0: np.zeros((24, 32, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(
+        collect_prompts_mod,
+        "collect_clicks",
+        lambda _frame, frame_idx=0: [
+            ObjectPrompt(
+                obj_id=1,
+                points=np.array([[10.0, 20.0], [15.0, 25.0]], dtype=np.float32),
+                labels=np.array([1, 0], dtype=np.int32),
+                frame_idx=frame_idx,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "collect_prompts.py",
+            "--config",
+            str(config_path),
+            "--frame",
+            "12",
+        ],
+    )
+
+    collect_prompts_mod.main()
+
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["input"]["prompts"] == [
+        {
+            "obj_id": 1,
+            "points": [[10, 20], [15, 25]],
+            "labels": [1, 0],
+            "frame_idx": 12,
+        }
+    ]
 
 
 def test_partition_supported_combinations_skips_sam3_t4(tmp_path: Path) -> None:
@@ -76,4 +136,9 @@ def test_shipped_sam3_matrix_templates_preserve_prompt_shape(template_name: str)
         "type": "sam3_video",
         "checkpoint": "sam3/checkpoints/sam3.1_multiplex.pt",
     }
-    assert sam3_cfg["input"]["prompts"] == sam2_cfg["input"]["prompts"]
+    assert len(sam3_cfg["input"]["prompts"]) == len(sam2_cfg["input"]["prompts"])
+    assert all("labels" in prompt for prompt in sam3_cfg["input"]["prompts"])
+    assert all(
+        len(prompt["labels"]) == len(prompt["points"]) for prompt in sam3_cfg["input"]["prompts"]
+    )
+    assert any(0 in prompt["labels"] for prompt in sam3_cfg["input"]["prompts"])

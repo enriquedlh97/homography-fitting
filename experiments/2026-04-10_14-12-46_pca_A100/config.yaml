@@ -1,5 +1,5 @@
 pipeline:
-  mode: video
+  mode: image
   segmenter:
     type: sam3_video
     checkpoint: sam3/checkpoints/sam3.1_multiplex.pt

@@ -38,7 +38,11 @@ uv run python scripts/collect_prompts.py --config configs/default.yaml
 uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml
 ```
 
-This opens the first frame of the video. Click on the banner region(s) you want to track. The coordinates are saved into the config file automatically. This workflow is the same for SAM2 and SAM3 video configs.
+This opens the selected frame of the video and saves the prompt points into the config automatically.
+
+- SAM2: left-click positive points as usual.
+- SAM3: left-click positive points, right-click negative points, `U` undo, `N` next object.
+- SAM3 prompting works best with 1 to 2 positive clicks inside the banner plus negative clicks on nearby background. Do not outline the whole perimeter.
 
 ### Step 2: Run on a GPU via Modal
 
@@ -49,11 +53,51 @@ uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A
 
 # Image mode (processes single frame, outputs .png)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode image
+uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
 ```
+
+For SAM3, use `--mode image` first to preview the prompt-stage masks and fitted quads on the selected frame. If the preview looks wrong, adjust the clicks before running `--mode video`.
 
 `configs/sam3_default.yaml` must not be run on `T4`. The launcher rejects
 that combination locally before any remote build starts because SAM3 requires
 FlashAttention and `T4` is not supported for that path.
+
+### SAM3 Quick Check
+
+Use this loop to validate that SAM3 is working before launching a full video run:
+
+```bash
+# 1. Collect or recollect prompts on a chosen frame
+uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml --frame 0
+
+# 2. Preview the selected frame
+uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
+
+# 3. If the preview looks good, run the full video
+uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
+```
+
+The preview run writes a single composited image to `experiments/.../outputs/composited.png`.
+Inspect that PNG before running `--mode video`.
+
+### SAM3 Prompting Rules
+
+- Use 1 to 2 positive clicks inside each banner.
+- Add 1 negative click on adjacent background if the mask bleeds.
+- Do not outline the whole banner perimeter with many positive points.
+- When validating a new setup, start with one banner before adding more objects.
+
+### If SAM3 Preview Fails
+
+- Try a different seed frame with `--frame 10`, `--frame 20`, or another clearer frame.
+- Use 2 positive clicks plus 1 negative click instead of a single positive click.
+- Reduce the test to one object and verify that first.
+- If the log shows `usable_outputs=False parsed_nonempty_masks=0`, interpret it as:
+  the prompt request was accepted, but SAM3 returned no usable mask for that preview frame.
+
+### Current SAM3 Preview Limitation
+
+`--mode image` returns a single composited preview image, but the current SAM3 implementation still loads the extracted frame set to initialize the predictor session. In other words, it is a preview of the selected frame's output, not yet a truly cheap first-frame-only execution path.
 
 ### Available GPUs
 
@@ -98,7 +142,7 @@ The repo ships with SAM2 and SAM3 templates that use the same input video but di
 - `configs/matrix/1prompt.yaml`, `configs/matrix/5prompts.yaml`, `configs/matrix/11prompts.yaml`
 - `configs/matrix/sam3_1prompt.yaml`, `configs/matrix/sam3_5prompts.yaml`, `configs/matrix/sam3_11prompts.yaml`
 
-You can reuse the shipped prompts as-is, or recollect them from the first frame for either SAM2 or SAM3:
+You can reuse the shipped prompts as-is, or recollect them for either SAM2 or SAM3:
 
 ```bash
 uv run python scripts/collect_prompts.py --config configs/matrix/1prompt.yaml
@@ -106,6 +150,8 @@ uv run python scripts/collect_prompts.py --config configs/matrix/5prompts.yaml
 uv run python scripts/collect_prompts.py --config configs/matrix/sam3_1prompt.yaml
 uv run python scripts/collect_prompts.py --config configs/matrix/sam3_5prompts.yaml
 ```
+
+The SAM3 matrix templates now use sparse positive/negative click seeds instead of SAM2-style outline prompts. If you recollect SAM3 prompts, preview them with `--mode image` before launching the full matrix run.
 
 You can also create your own matrix configs (different videos, fitters, compositors, etc.) — just `cp` an existing one and edit.
 

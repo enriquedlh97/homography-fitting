@@ -14,6 +14,7 @@ compatibility-driven and FlashAttention backend selection stays in
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from collections.abc import Iterable
 from contextlib import suppress
@@ -33,8 +34,15 @@ from banner_pipeline.segment.base import ObjectPrompt
 # and configures the GPU-family FlashAttention backend before model creation.
 DEFAULT_CHECKPOINT = "sam3/checkpoints/sam3.1_multiplex.pt"
 
-OBJECT_ID_KEYS = ("obj_ids", "object_ids", "out_obj_ids", "instance_ids")
-MASK_KEYS = ("video_res_masks", "masks", "pred_masks", "out_mask_logits", "mask_logits")
+OBJECT_ID_KEYS = ("out_obj_ids", "obj_ids", "object_ids", "instance_ids")
+MASK_KEYS = (
+    "out_binary_masks",
+    "video_res_masks",
+    "masks",
+    "pred_masks",
+    "out_mask_logits",
+    "mask_logits",
+)
 
 Sam3Response = dict[str, object]
 
@@ -76,6 +84,63 @@ class SAM3VideoSegmenter:
     # Core propagation
     # ------------------------------------------------------------------
 
+    def preview_frame(
+        self,
+        video_path: str,
+        prompts: list[ObjectPrompt],
+    ) -> tuple[np.ndarray, dict[int, np.ndarray], int]:
+        """Return prompt-stage SAM3 masks for a single preview frame."""
+        preview_frame_idx = _require_single_prompt_frame_idx(prompts)
+        video_path = str(Path(video_path).expanduser().resolve())
+
+        frame_dir = tempfile.mkdtemp(prefix="sam3_preview_frames_")
+        print("[SAM3Video] Extracting frames for preview …", flush=True)
+        frame_names = extract_all_frames(video_path, frame_dir)
+        print(f"[SAM3Video] {len(frame_names)} frames → {frame_dir}")
+        if not frame_names:
+            raise RuntimeError("SAM3 frame extraction produced no frames.")
+        if preview_frame_idx < 0 or preview_frame_idx >= len(frame_names):
+            raise RuntimeError(
+                f"SAM3 preview frame {preview_frame_idx} is outside the extracted frame range "
+                f"(0..{len(frame_names) - 1})."
+            )
+
+        preview_frame = cv2.imread(str(Path(frame_dir) / frame_names[preview_frame_idx]))
+        if preview_frame is None:
+            raise RuntimeError(
+                "Could not read preview frame "
+                f"{preview_frame_idx}: {frame_names[preview_frame_idx]}"
+            )
+        frame_height, frame_width = preview_frame.shape[:2]
+
+        print("[SAM3Video] Starting preview session …", flush=True)
+        session_id = _start_session(self._predictor, frame_dir)
+        try:
+            usable_prompt_count, prompt_stage_segments = _seed_session_prompts(
+                self._predictor,
+                prompts=prompts,
+                session_id=session_id,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            masks = prompt_stage_segments.get(preview_frame_idx, {})
+            if not masks:
+                raise RuntimeError(
+                    "SAM3 add_prompt completed successfully but produced no parseable prompt-stage "
+                    f"masks on preview frame {preview_frame_idx}, even though "
+                    f"{usable_prompt_count} prompt response(s) contained usable outputs."
+                )
+            return preview_frame, masks, preview_frame_idx
+        finally:
+            with suppress(Exception):
+                self._predictor.handle_request(
+                    request=dict(
+                        type="close_session",
+                        session_id=session_id,
+                    )
+                )
+            shutil.rmtree(frame_dir, ignore_errors=True)
+
     def _propagate(
         self,
         video_path: str,
@@ -114,7 +179,7 @@ class SAM3VideoSegmenter:
         seed_frame_idx = min(int(prompt.frame_idx) for prompt in prompts)
 
         try:
-            usable_prompt_count = _seed_session_prompts(
+            usable_prompt_count, _prompt_stage_segments = _seed_session_prompts(
                 self._predictor,
                 prompts=prompts,
                 session_id=session_id,
@@ -208,9 +273,10 @@ def _seed_session_prompts(
     session_id: str,
     frame_width: int,
     frame_height: int,
-) -> int:
+) -> tuple[int, dict[int, dict[int, np.ndarray]]]:
     """Register all prompts for a SAM3 session with a clear failure mode."""
     usable_prompt_count = 0
+    prompt_stage_segments: dict[int, dict[int, np.ndarray]] = {}
     for prompt in prompts:
         req = _build_add_prompt_request(
             prompt,
@@ -226,15 +292,20 @@ def _seed_session_prompts(
                 "The predictor rejected an add_prompt request before propagation."
             ) from exc
         diagnostics = _summarize_prompt_response(response)
+        frame_idx = _coerce_prompt_frame_index(response, fallback=prompt.frame_idx)
+        parsed_masks = _parse_frame_outputs(response.get("outputs"), (frame_height, frame_width))
         if diagnostics["usable_outputs"]:
             usable_prompt_count += 1
+        if parsed_masks:
+            prompt_stage_segments.setdefault(frame_idx, {}).update(parsed_masks)
         print(
             "[SAM3Video] Prompt "
             f"obj_id={prompt.obj_id} frame={prompt.frame_idx} "
             f"response_keys={diagnostics['response_keys']} "
             f"outputs_present={diagnostics['outputs_present']} "
             f"known_output_keys={diagnostics['known_output_keys']} "
-            f"usable_outputs={diagnostics['usable_outputs']}",
+            f"usable_outputs={diagnostics['usable_outputs']} "
+            f"parsed_nonempty_masks={len(parsed_masks)}",
             flush=True,
         )
 
@@ -243,7 +314,7 @@ def _seed_session_prompts(
             "SAM3 add_prompt completed for all prompts but produced no usable outputs. "
             "Prompt registration may not have been accepted by the predictor."
         )
-    return usable_prompt_count
+    return usable_prompt_count, prompt_stage_segments
 
 
 def _summarize_prompt_response(response: object) -> dict[str, object]:
@@ -369,10 +440,24 @@ def _parse_stream_responses(
 ) -> dict[int, dict[int, np.ndarray]]:
     """Parse streamed SAM3 ``propagate_in_video`` responses."""
     video_segments: dict[int, dict[int, np.ndarray]] = {}
+    logged_first_response = False
     for response in responses:
         frame_idx = _coerce_frame_index(response["frame_index"])
         outputs = response.get("outputs")
-        video_segments[frame_idx] = _parse_frame_outputs(outputs, frame_shape)
+        masks_by_obj = _parse_frame_outputs(outputs, frame_shape)
+        if not logged_first_response:
+            output_keys = sorted(str(key) for key in outputs) if isinstance(outputs, dict) else []
+            print(
+                "[SAM3Video] First propagated response "
+                f"frame={frame_idx} output_keys={output_keys} "
+                f"parsed_nonempty_masks={len(masks_by_obj)}",
+                flush=True,
+            )
+            logged_first_response = True
+        video_segments[frame_idx] = masks_by_obj
+
+    if not logged_first_response:
+        print("[SAM3Video] Propagation returned no streamed frame outputs.", flush=True)
 
     for i in range(num_frames):
         video_segments.setdefault(i, {})
@@ -489,6 +574,8 @@ def _mask_to_uint8(mask: object, height: int, width: int) -> np.ndarray:
     if mask_np.ndim == 3:
         mask_np = mask_np[0]
     mask_np = np.squeeze(mask_np)
+    if mask_np.ndim == 0:
+        mask_np = mask_np.reshape(1, 1)
     if mask_np.ndim != 2:
         raise ValueError(f"Unsupported SAM3 mask shape: expected 2D mask, got {mask_np.shape}.")
     if mask_np.shape != (height, width):
@@ -518,3 +605,24 @@ def _coerce_frame_index(frame_idx: object) -> int:
     if text.isdigit():
         return int(text)
     raise ValueError(f"Unsupported SAM3 frame index: {frame_idx!r}")
+
+
+def _coerce_prompt_frame_index(response: Sam3Response, fallback: int) -> int:
+    """Use a response frame index when present, else fall back to the prompt frame."""
+    frame_idx = response.get("frame_index")
+    if frame_idx is None:
+        return int(fallback)
+    return _coerce_frame_index(frame_idx)
+
+
+def _require_single_prompt_frame_idx(prompts: list[ObjectPrompt]) -> int:
+    """Ensure preview prompts all target the same frame."""
+    if not prompts:
+        raise RuntimeError("SAM3 preview requires at least one prompt.")
+    frame_indices = sorted({int(prompt.frame_idx) for prompt in prompts})
+    if len(frame_indices) != 1:
+        raise RuntimeError(
+            "SAM3 preview requires all prompts to target a single frame. "
+            f"Found frame_idx values: {frame_indices}."
+        )
+    return frame_indices[0]

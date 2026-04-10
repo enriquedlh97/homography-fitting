@@ -14,6 +14,7 @@ class _FakePredictor:
         stream_responses: list[dict],
         *,
         add_prompt_response: dict | None = None,
+        add_prompt_responses: list[dict] | None = None,
         start_error: Exception | None = None,
         propagate_error: Exception | None = None,
     ) -> None:
@@ -22,6 +23,7 @@ class _FakePredictor:
         self.events: list[str] = []
         self._stream_responses = stream_responses
         self._add_prompt_response = add_prompt_response
+        self._add_prompt_responses = list(add_prompt_responses or [])
         self._start_error = start_error
         self._propagate_error = propagate_error
         self._started = False
@@ -38,6 +40,8 @@ class _FakePredictor:
         if request["type"] == "add_prompt":
             assert self._started, "SAM3 add_prompt must happen after start_session"
             self._prompt_count += 1
+            if self._add_prompt_responses:
+                return self._add_prompt_responses.pop(0)
             if self._add_prompt_response is not None:
                 return self._add_prompt_response
             return {
@@ -156,6 +160,97 @@ def test_sam3_video_segmenter_uses_point_labels_and_streamed_propagation(
     assert video_segments[1][1].shape == (100, 200)
     assert set(np.unique(video_segments[0][1])).issubset({0, 255})
     assert set(np.unique(video_segments[1][1])).issubset({0, 255})
+
+
+def test_sam3_video_segmenter_accepts_official_streamed_output_format(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    predictor = _FakePredictor(
+        [
+            {
+                "frame_index": 0,
+                "outputs": {
+                    "out_obj_ids": torch.tensor([7]),
+                    "out_binary_masks": torch.tensor([[[True, False], [False, True]]]),
+                },
+            }
+        ]
+    )
+    segmenter = _build_segmenter(monkeypatch, predictor)
+    prompt = ObjectPrompt(
+        obj_id=7,
+        points=np.array([[20.0, 25.0]], dtype=np.float32),
+        labels=np.array([1], dtype=np.int32),
+    )
+
+    video_segments, _, _ = segmenter.segment_video("/tmp/video.mp4", [prompt])
+
+    assert set(video_segments[0]) == {7}
+    assert video_segments[0][7].shape == (100, 200)
+    assert set(np.unique(video_segments[0][7])).issubset({0, 255})
+
+    captured = capsys.readouterr()
+    assert "First propagated response" in captured.out
+    assert "parsed_nonempty_masks=1" in captured.out
+
+
+def test_sam3_video_segmenter_previews_prompt_stage_masks_without_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor(
+        [],
+        add_prompt_responses=[
+            {
+                "outputs": {
+                    "out_obj_ids": torch.tensor([4]),
+                    "out_binary_masks": torch.tensor([[[True, False], [False, True]]]),
+                }
+            }
+        ],
+    )
+    segmenter = _build_segmenter(monkeypatch, predictor)
+    prompt = ObjectPrompt(
+        obj_id=4,
+        points=np.array([[20.0, 25.0]], dtype=np.float32),
+        labels=np.array([1], dtype=np.int32),
+        frame_idx=1,
+    )
+
+    frame, masks, frame_idx = segmenter.preview_frame("/tmp/video.mp4", [prompt])
+
+    assert frame.shape == (100, 200, 3)
+    assert frame_idx == 1
+    assert predictor.events == ["start_session", "add_prompt", "close_session"]
+    assert predictor.stream_requests == []
+    assert set(masks) == {4}
+    assert masks[4].shape == (100, 200)
+
+
+def test_sam3_video_segmenter_preview_rejects_mixed_prompt_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predictor = _FakePredictor([])
+    segmenter = _build_segmenter(monkeypatch, predictor)
+    prompts = [
+        ObjectPrompt(
+            obj_id=1,
+            points=np.array([[20.0, 25.0]], dtype=np.float32),
+            labels=np.array([1], dtype=np.int32),
+            frame_idx=0,
+        ),
+        ObjectPrompt(
+            obj_id=2,
+            points=np.array([[30.0, 35.0]], dtype=np.float32),
+            labels=np.array([1], dtype=np.int32),
+            frame_idx=3,
+        ),
+    ]
+
+    with pytest.raises(RuntimeError, match="single frame"):
+        segmenter.preview_frame("/tmp/video.mp4", prompts)
+
+    assert predictor.events == []
 
 
 def test_sam3_video_segmenter_wraps_start_session_failures(
@@ -281,3 +376,16 @@ def test_parse_frame_outputs_accepts_dict_of_masks() -> None:
     assert set(parsed) == {3}
     assert parsed[3].dtype == np.uint8
     assert parsed[3].tolist() == [[255, 0], [0, 255]]
+
+
+def test_parse_frame_outputs_accepts_official_sam31_output_format() -> None:
+    outputs = {
+        "out_obj_ids": torch.tensor([5]),
+        "out_binary_masks": torch.tensor([[[True, False], [False, True]]]),
+    }
+
+    parsed = sam3_video_mod._parse_frame_outputs(outputs, frame_shape=(2, 2))
+
+    assert set(parsed) == {5}
+    assert parsed[5].dtype == np.uint8
+    assert parsed[5].tolist() == [[255, 0], [0, 255]]
