@@ -52,8 +52,7 @@ for i, arg in enumerate(sys.argv):
 # Modal image: Linux + CUDA torch + SAM2 + our pipeline code
 # ---------------------------------------------------------------------------
 
-FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB"}
-FA3_GPUS = {"H100", "H200"}
+FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200"}
 FA4_GPUS = {"B200"}
 FA4_VERSION = "4.0.0b8"
 
@@ -114,14 +113,6 @@ def _build_fa2_image() -> modal.Image:
     )
 
 
-def _build_fa3_image() -> modal.Image:
-    return _install_sam_models(
-        _base_cuda_image(),
-        "git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention",
-        "cd /tmp/flash-attention/hopper && MAX_JOBS=4 python setup.py install",
-    )
-
-
 def _build_fa4_image() -> modal.Image:
     return _install_sam_models(
         _base_cuda_image(),
@@ -133,7 +124,6 @@ def _build_fa4_image() -> modal.Image:
 
 t4_image = _build_t4_image()
 fa2_image = _build_fa2_image()
-fa3_image = _build_fa3_image()
 fa4_image = _build_fa4_image()
 
 
@@ -142,8 +132,6 @@ def _select_image_for_gpu(gpu: str) -> modal.Image:
         return t4_image
     if gpu in FA2_GPUS:
         return fa2_image
-    if gpu in FA3_GPUS:
-        return fa3_image
     if gpu in FA4_GPUS:
         return fa4_image
     raise SystemExit(f"Unsupported GPU '{gpu}'. Update the image routing in scripts/modal_run.py.")

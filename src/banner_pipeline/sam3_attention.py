@@ -46,7 +46,7 @@ def _gpu_family_for_sam3(
     if "B200" in upper:
         return "fa4"
     if "H100" in upper or "H200" in upper:
-        return "fa3"
+        return "fa2"
     if any(marker in upper for marker in ("L4", "A10G", "L40S", "A100")):
         return "fa2"
     if "T4" in upper:
@@ -59,7 +59,7 @@ def _gpu_family_for_sam3(
     if major >= 10:
         return "fa4"
     if major >= 9:
-        return "fa3"
+        return "fa2"
     if major >= 8:
         return "fa2"
     if (major, minor) == (7, 5):
@@ -193,13 +193,6 @@ def configure_sam3_attention_backend(device: torch.device | None = None) -> str:
         wrapper = _make_fa2_wrapper(flash_attn_mod.flash_attn_func)
         _patch_sam3_attention_modules(wrapper)
         backend = "fa2"
-    elif gpu_family == "fa3":
-        flash_attn_interface = _import_flash_attn_module("flash_attn_interface")
-        fa3_mod = _import_sam3_flash_module("sam3.perflib.fa3")
-        fa3_mod.flash_attn_func_op = flash_attn_interface.flash_attn_func
-        vitdet_mod = _import_vitdet_module()
-        vitdet_mod.flash_attn_func = fa3_mod.flash_attn_func
-        backend = "fa3"
     else:
         flash_attn_cute_mod = _import_flash_attn_module("flash_attn.cute")
         wrapper = _make_fa4_wrapper(flash_attn_cute_mod.flash_attn_func)

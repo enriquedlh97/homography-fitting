@@ -84,7 +84,8 @@ def _load_modal_run_module(monkeypatch: pytest.MonkeyPatch, gpu: str):
     [
         ("T4", "t4_image"),
         ("A100", "fa2_image"),
-        ("H100", "fa3_image"),
+        ("H100", "fa2_image"),
+        ("H200", "fa2_image"),
         ("B200", "fa4_image"),
     ],
 )
@@ -124,3 +125,17 @@ def test_modal_run_accepts_sam2_on_t4(monkeypatch: pytest.MonkeyPatch) -> None:
     config_dict = {"pipeline": {"segmenter": {"type": "sam2_image"}}}
 
     assert module._validate_gpu_config(config_dict, "T4") is None
+
+
+@pytest.mark.parametrize("gpu", ["A100", "H100", "H200"])
+def test_modal_run_uses_fa2_image_for_supported_sam3_gpus(
+    monkeypatch: pytest.MonkeyPatch,
+    gpu: str,
+) -> None:
+    module = _load_modal_run_module(monkeypatch, gpu)
+
+    assert module._select_image_for_gpu(gpu) is module.fa2_image
+    assert (
+        "run_commands",
+        ("python -m pip install --no-cache-dir flash-attn --no-build-isolation",),
+    ) in module.fa2_image.steps

@@ -90,24 +90,42 @@ def test_configure_sam3_attention_backend_selects_fa2_on_a100(
 
 
 @pytest.mark.parametrize("gpu_name", ["NVIDIA H100", "NVIDIA H200"])
-def test_configure_sam3_attention_backend_selects_fa3_on_hopper(
+def test_configure_sam3_attention_backend_selects_fa2_on_hopper(
     monkeypatch: pytest.MonkeyPatch,
     gpu_name: str,
 ) -> None:
     _reset_attention_state(monkeypatch)
-    fa3_mod, _, vitdet_mod = _install_fake_sam3_attention_modules(monkeypatch)
+    fa3_mod, fa2_mod, vitdet_mod = _install_fake_sam3_attention_modules(monkeypatch)
+    recorded: dict[str, object] = {}
 
-    flash_attn_interface = cast(Any, types.ModuleType("flash_attn_interface"))
-    flash_attn_interface.flash_attn_func = lambda q, k, v, *args, **kwargs: q + k + v
-    monkeypatch.setitem(sys.modules, "flash_attn_interface", flash_attn_interface)
+    flash_attn_mod = cast(Any, types.ModuleType("flash_attn"))
+
+    def fake_flash_attn_func(q, k, v, dropout_p, softmax_scale, causal):
+        recorded["dropout_p"] = dropout_p
+        recorded["softmax_scale"] = softmax_scale
+        recorded["causal"] = causal
+        return q + k + v
+
+    flash_attn_mod.flash_attn_func = fake_flash_attn_func
+    monkeypatch.setitem(sys.modules, "flash_attn", flash_attn_mod)
     monkeypatch.setattr(attn_mod, "_current_cuda_gpu_name", lambda _device: gpu_name)
     monkeypatch.setattr(attn_mod, "_current_cuda_capability", lambda _device: (9, 0))
 
     backend = attn_mod.configure_sam3_attention_backend(torch.device("cuda"))
 
-    assert backend == "fa3"
-    assert fa3_mod.flash_attn_func_op is flash_attn_interface.flash_attn_func
-    assert vitdet_mod.flash_attn_func is fa3_mod.flash_attn_func
+    q = torch.randn(2, 3, 4, 5, dtype=torch.float16)
+    wrapper_out = vitdet_mod.flash_attn_func(q, q, q, causal=False, softmax_scale=0.25)
+
+    assert backend == "fa2"
+    assert wrapper_out.shape == q.shape
+    assert wrapper_out.dtype == q.dtype
+    assert recorded == {
+        "dropout_p": 0.0,
+        "softmax_scale": 0.25,
+        "causal": False,
+    }
+    assert fa3_mod.flash_attn_func is vitdet_mod.flash_attn_func
+    assert fa2_mod.flash_attn_func is vitdet_mod.flash_attn_func
 
 
 def test_configure_sam3_attention_backend_selects_fa4_on_b200(
