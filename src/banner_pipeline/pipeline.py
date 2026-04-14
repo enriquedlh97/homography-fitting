@@ -11,6 +11,7 @@ import yaml
 
 from banner_pipeline import _perf
 from banner_pipeline import quality as quality_mod
+from banner_pipeline import stabilization as stabilization_mod
 from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
@@ -1112,9 +1113,20 @@ def run_pipeline_video(
         video_path,
         active_prompts,
     )
+    stabilization_metrics: dict[str, Any] = {}
+    stabilization_cfg = pipeline_cfg.get("stabilization")
+    if stabilization_cfg:
+        video_segments, stabilization_metrics = stabilization_mod.stabilize_video_segments(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            video_segments=video_segments,
+            tracked_obj_ids=sorted({int(prompt.obj_id) for prompt in active_prompts}),
+            config=stabilization_cfg,
+        )
     metrics["segment_total_s"] = time.perf_counter() - t0
     metrics["num_frames"] = len(frame_names)
     metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
+    metrics.update(stabilization_metrics)
     print(
         f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s",
     )

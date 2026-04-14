@@ -183,6 +183,15 @@ class _BadQuadFitter:
         return np.array([[0, 0], [80, 0], [80, 8], [0, 8]], dtype=np.float32)
 
 
+class _RecordingFitter:
+    def __init__(self) -> None:
+        self.masks: list[np.ndarray] = []
+
+    def fit(self, mask: np.ndarray, **_kwargs) -> np.ndarray:
+        self.masks.append(mask.copy())
+        return np.array([[4, 4], [11, 4], [11, 11], [4, 11]], dtype=np.float32)
+
+
 def test_run_pipeline_video_records_coverage_stats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -306,3 +315,88 @@ def test_run_pipeline_video_skips_court_marking_prompts_but_keeps_banner_metrics
     }
     assert metrics["object_rejection_counts"]["2"] == 2
     assert metrics["object_rejection_reasons"]["2"] == {"unsupported_surface_type:court_marking": 2}
+
+
+def test_run_pipeline_video_uses_stabilized_masks_before_fitting_and_records_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    raw_mask = _banner_mask()
+    jittered_mask = np.zeros_like(raw_mask)
+    jittered_mask[4:12, 5:13] = 255
+    stabilized_mask = raw_mask.copy()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={
+            0: {1: raw_mask},
+            1: {1: jittered_mask},
+        },
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _FakeWriter.instances = []
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    recording_fitter = _RecordingFitter()
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: recording_fitter)
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    stabilize_calls: list[dict[str, object]] = []
+
+    def _fake_stabilize_video_segments(**kwargs):
+        stabilize_calls.append(kwargs)
+        return (
+            {
+                0: {1: stabilized_mask},
+                1: {1: stabilized_mask},
+            },
+            {
+                "stabilization_total_s": 0.1234,
+                "stabilization_static_frame_ratio": 1.0,
+                "stabilization_frames_held": 1,
+                "stabilization_frames_blended": 0,
+                "stabilization_frames_raw_accepted": 1,
+                "stabilization_object_stats": {
+                    "1": {
+                        "frames_held": 1,
+                        "frames_empty_reused": 0,
+                        "frames_blended": 0,
+                        "frames_raw_accepted": 1,
+                        "frames_dropped": 0,
+                        "max_empty_hold_streak": 0,
+                    }
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        pipeline_mod.stabilization_mod,
+        "stabilize_video_segments",
+        _fake_stabilize_video_segments,
+    )
+
+    config = _video_config()
+    config["pipeline"]["stabilization"] = {
+        "enabled": True,
+        "mode": "hybrid",
+    }
+
+    results = pipeline_mod.run_pipeline_video(
+        config,
+        output_path=str(tmp_path / "output.mp4"),
+    )
+
+    assert len(stabilize_calls) == 1
+    assert stabilize_calls[0]["tracked_obj_ids"] == [1]
+    assert len(recording_fitter.masks) == 2
+    assert np.array_equal(recording_fitter.masks[0], stabilized_mask)
+    assert np.array_equal(recording_fitter.masks[1], stabilized_mask)
+
+    metrics = results["metrics"]
+    assert metrics["stabilization_total_s"] == 0.1234
+    assert metrics["stabilization_static_frame_ratio"] == 1.0
+    assert metrics["stabilization_frames_held"] == 1
+    assert metrics["stabilization_frames_blended"] == 0
+    assert metrics["stabilization_frames_raw_accepted"] == 1
+    assert metrics["stabilization_object_stats"]["1"]["frames_held"] == 1
