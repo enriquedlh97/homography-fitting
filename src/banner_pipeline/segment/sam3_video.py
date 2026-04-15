@@ -567,6 +567,7 @@ def _build_seed_retry_prompt(
         labels=retry_labels_np,
         frame_idx=int(prompt.frame_idx),
         surface_type=prompt.surface_type,
+        geometry_model=prompt.geometry_model,
     )
 
 
@@ -647,6 +648,7 @@ def _recover_tracking_with_reanchors(
                 quad=np.asarray(last_good_quad, dtype=np.float32),
                 frame_shape=frame_shape,
                 surface_type=prompt.surface_type,
+                geometry_model=prompt.geometry_model,
             )
             refresh_request = _build_add_prompt_request(
                 refresh_prompt,
@@ -714,6 +716,7 @@ def _build_refresh_prompt_from_quad(
     quad: np.ndarray,
     frame_shape: tuple[int, int],
     surface_type: str = "banner",
+    geometry_model: str | None = None,
 ) -> ObjectPrompt:
     """Create banner-specific refresh clicks from the last good quad."""
     ordered_quad = _order_quad_corners(quad)
@@ -754,6 +757,7 @@ def _build_refresh_prompt_from_quad(
         labels=labels,
         frame_idx=frame_idx,
         surface_type=surface_type,
+        geometry_model=geometry_model,
     )
 
 

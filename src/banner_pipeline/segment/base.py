@@ -19,6 +19,7 @@ class ObjectPrompt:
     labels:    (N,) int32 array; 1 = positive, 0 = negative click.
     frame_idx: Frame index these prompts apply to (default 0).
     surface_type: Semantic surface type for downstream routing.
+    geometry_model: Optional geometry override for downstream quad construction.
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
     """
 
@@ -27,6 +28,7 @@ class ObjectPrompt:
     labels: np.ndarray
     frame_idx: int = 0
     surface_type: str = "banner"
+    geometry_model: str | None = None
     box: np.ndarray | None = None
 
 

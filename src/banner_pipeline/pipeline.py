@@ -10,6 +10,7 @@ import numpy as np
 import yaml
 
 from banner_pipeline import _perf
+from banner_pipeline import court_geometry as court_geometry_mod
 from banner_pipeline import quality as quality_mod
 from banner_pipeline import stabilization as stabilization_mod
 from banner_pipeline.composite.alpha import AlphaCompositor
@@ -95,8 +96,23 @@ def _surface_skip_reason(surface_type: str) -> str:
     return f"unsupported_surface_type:{surface_type}"
 
 
-def _is_supported_banner_surface(prompt: ObjectPrompt) -> bool:
-    return _normalize_surface_type(prompt.surface_type) in SUPPORTED_BANNER_SURFACE_TYPES
+def _normalize_geometry_model(geometry_model: object | None) -> str | None:
+    return court_geometry_mod.normalize_geometry_model(geometry_model)
+
+
+def _geometry_enabled(pipeline_cfg: dict[str, Any]) -> bool:
+    return court_geometry_mod.is_enabled(pipeline_cfg.get("geometry"))
+
+
+def _is_supported_banner_surface(
+    prompt: ObjectPrompt,
+    *,
+    geometry_enabled: bool = False,
+) -> bool:
+    return court_geometry_mod.supports_surface_type(
+        _normalize_surface_type(prompt.surface_type),
+        geometry_enabled=geometry_enabled,
+    )
 
 
 def _preview_frame_idx_from_prompts(prompts: list[ObjectPrompt]) -> int:
@@ -130,6 +146,7 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
                 labels=labels,
                 frame_idx=p.get("frame_idx", 0),
                 surface_type=_normalize_surface_type(p.get("surface_type", "banner")),
+                geometry_model=_normalize_geometry_model(p.get("geometry_model")),
             )
         )
     return out
@@ -145,6 +162,8 @@ def _prompt_to_config_entry(prompt: ObjectPrompt) -> dict[str, Any]:
         entry["frame_idx"] = int(prompt.frame_idx)
     if _normalize_surface_type(prompt.surface_type) != "banner":
         entry["surface_type"] = _normalize_surface_type(prompt.surface_type)
+    if _normalize_geometry_model(prompt.geometry_model) is not None:
+        entry["geometry_model"] = _normalize_geometry_model(prompt.geometry_model)
     return entry
 
 
@@ -499,16 +518,32 @@ def _build_preview_diagnostics(
     prompt_diagnostics: dict[int, dict[str, object]],
     fitter: QuadFitter,
     fitter_params: dict[str, Any],
+    geometry_engine: court_geometry_mod.GeometryFittingEngine | None = None,
 ) -> tuple[dict[int, np.ndarray], dict[str, dict[str, Any]], list[str]]:
     diagnostics: dict[str, dict[str, Any]] = {}
     valid_corners_map: dict[int, np.ndarray] = {}
     invalid_objects: list[str] = []
     frame_shape = frame.shape[:2]
+    geometry_corners_map: dict[int, np.ndarray] = {}
+    geometry_rejections: dict[int, list[str]] = {}
+    if geometry_engine is not None:
+        geometry_corners_map, geometry_rejections = geometry_engine.fit_frame(
+            frame_idx=0,
+            frame_bgr=frame,
+            masks_by_obj={
+                int(obj_id): np.asarray(mask).squeeze() for obj_id, mask in masks.items()
+            },
+            frame_shape=frame_shape,
+        )
 
     for prompt in prompts:
         obj_id = int(prompt.obj_id)
         surface_type = _normalize_surface_type(prompt.surface_type)
+        geometry_model = court_geometry_mod.resolve_geometry_model(prompt)
         mask = masks.get(obj_id)
+        corners: np.ndarray | None = None
+        fit_method = "not_run"
+        fit_failure_flag: str | None = None
         mask_area_px, mask_bbox = _mask_area_and_bbox(mask)
         base_diag = dict(prompt_diagnostics.get(obj_id, {}))
         base_diag.update(
@@ -516,6 +551,7 @@ def _build_preview_diagnostics(
                 "mask_area_px": mask_area_px,
                 "mask_bbox": mask_bbox,
                 "surface_type": surface_type,
+                "geometry_model": geometry_model,
                 "fit_status": "not_run",
                 "fit_method": "not_run",
                 "fit_geometry_flags": [],
@@ -527,8 +563,10 @@ def _build_preview_diagnostics(
                 "background_fill_spread_bgr": None,
             }
         )
+        if geometry_engine is not None and obj_id in geometry_engine.details:
+            base_diag["fit_method"] = geometry_engine.details[obj_id].fit_method
 
-        if surface_type not in SUPPORTED_BANNER_SURFACE_TYPES:
+        if geometry_engine is None and surface_type not in SUPPORTED_BANNER_SURFACE_TYPES:
             skip_reason = _surface_skip_reason(surface_type)
             base_diag["fit_status"] = "skipped"
             base_diag["failure_stage"] = "surface"
@@ -549,16 +587,32 @@ def _build_preview_diagnostics(
             continue
 
         assert mask is not None
-        corners, fit_method, fit_failure_flag = _fit_preview_corners(
-            mask=mask,
-            mask_area_px=mask_area_px,
-            mask_bbox=mask_bbox,
-            frame_shape=frame_shape,
-            fitter=fitter,
-            fitter_params=fitter_params,
-        )
-        base_diag["fit_method"] = fit_method
+        if geometry_engine is not None:
+            corners = geometry_corners_map.get(obj_id)
+            fit_failure_reasons = geometry_rejections.get(obj_id, [])
+            fit_failure_flag = fit_failure_reasons[0] if fit_failure_reasons else "fit_failed"
+        else:
+            corners, fit_method, fit_failure_flag = _fit_preview_corners(
+                mask=mask,
+                mask_area_px=mask_area_px,
+                mask_bbox=mask_bbox,
+                frame_shape=frame_shape,
+                fitter=fitter,
+                fitter_params=fitter_params,
+            )
+            base_diag["fit_method"] = fit_method
         if corners is None:
+            if fit_failure_flag is not None and fit_failure_flag.startswith(
+                "unsupported_surface_type:"
+            ):
+                base_diag["fit_status"] = "skipped"
+                base_diag["failure_stage"] = "surface"
+                base_diag["skip_reason"] = fit_failure_flag
+                base_diag["composite_status"] = "skipped"
+                base_diag["composite_failure_reason"] = fit_failure_flag
+                diagnostics[str(obj_id)] = base_diag
+                invalid_objects.append(str(obj_id))
+                continue
             base_diag["fit_status"] = "failed"
             base_diag["failure_stage"] = "fit"
             base_diag["fit_geometry_flags"] = [fit_failure_flag or "fit_failed"]
@@ -610,7 +664,20 @@ def _fit_and_validate_video_objects(
     frame_shape: tuple[int, int],
     fitter: QuadFitter,
     fitter_params: dict[str, Any],
+    geometry_engine: court_geometry_mod.GeometryFittingEngine | None = None,
+    frame_idx: int = 0,
+    frame_bgr: np.ndarray | None = None,
 ) -> tuple[dict[int, np.ndarray], dict[int, list[str]]]:
+    if geometry_engine is not None:
+        if frame_bgr is None:
+            raise ValueError("frame_bgr is required when geometry_engine is provided")
+        return geometry_engine.fit_frame(
+            frame_idx=frame_idx,
+            frame_bgr=frame_bgr,
+            masks_by_obj=masks_by_obj,
+            frame_shape=frame_shape,
+        )
+
     valid_corners_map: dict[int, np.ndarray] = {}
     rejection_reasons: dict[int, list[str]] = {}
 
@@ -723,8 +790,30 @@ def run_pipeline(
     t0 = time.perf_counter()
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
-    corners_map = _fit_corners(masks, fitter, fitter_params)
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if _geometry_enabled(pipeline_cfg):
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
+        corners_map, _rejection_reasons = geometry_engine.fit_frame(
+            frame_idx=0,
+            frame_bgr=frame,
+            masks_by_obj={
+                int(obj_id): np.asarray(mask).squeeze() for obj_id, mask in masks.items()
+            },
+            frame_shape=frame.shape[:2],
+        )
+    else:
+        corners_map = _fit_corners(masks, fitter, fitter_params)
     metrics["fit_s"] = time.perf_counter() - t0
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
+        metrics.update(geometry_metrics)
     print(f"[pipeline] Fitted {len(corners_map)} quads in {metrics['fit_s']:.2f}s")
 
     # --- Composite ---
@@ -798,7 +887,12 @@ def _run_sam3_image_preview(
         }
 
     t0 = time.perf_counter()
-    active_prompts = [prompt for prompt in prompts if _is_supported_banner_surface(prompt)]
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    active_prompts = [
+        prompt
+        for prompt in prompts
+        if _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
+    ]
     if active_prompts:
         video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
         if not hasattr(video_segmenter, "preview_frame"):
@@ -824,6 +918,15 @@ def _run_sam3_image_preview(
 
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if geometry_enabled:
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
     t0 = time.perf_counter()
     corners_map, preview_object_diagnostics, invalid_objects = _build_preview_diagnostics(
         frame=frame,
@@ -832,8 +935,13 @@ def _run_sam3_image_preview(
         prompt_diagnostics=prompt_diagnostics,
         fitter=fitter,
         fitter_params=fitter_params,
+        geometry_engine=geometry_engine,
     )
     metrics["fit_s"] = time.perf_counter() - t0
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
+        metrics.update(geometry_metrics)
     metrics["preview_objects_with_masks"] = sum(
         1 for diag in preview_object_diagnostics.values() if int(diag.get("mask_area_px", 0)) > 0
     )
@@ -1081,10 +1189,12 @@ def run_pipeline_video(
     if not prompts:
         print("[video] No clicks — exiting.")
         return {"output_path": None, "metrics": metrics}
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
     active_prompts = [
         prompt
         for prompt in prompts
-        if segmenter_type != "sam3_video" or _is_supported_banner_surface(prompt)
+        if segmenter_type != "sam3_video"
+        or _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
     ]
 
     # --- Input video info ---
@@ -1171,6 +1281,15 @@ def run_pipeline_video(
     # --- Per-frame: fit + composite ---
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if geometry_enabled:
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
 
     overlay = None
     logo_path = input_cfg.get("logo")
@@ -1228,6 +1347,9 @@ def run_pipeline_video(
                 frame_shape=frame_bgr.shape[:2],
                 fitter=fitter,
                 fitter_params=fitter_params,
+                geometry_engine=geometry_engine,
+                frame_idx=frame_idx,
+                frame_bgr=frame_bgr,
             )
             fit_times.append(time.perf_counter() - t_fit)
             _record_frame_rejections(
@@ -1276,6 +1398,10 @@ def run_pipeline_video(
     metrics["frames_with_valid_objects"] = frames_with_valid_objects
     metrics["frames_with_quads"] = frames_with_quads
     metrics["frames_composited"] = frames_composited
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(sum(fit_times), 4)
+        metrics.update(geometry_metrics)
     (
         metrics["object_valid_frame_coverage"],
         metrics["object_rejection_counts"],
