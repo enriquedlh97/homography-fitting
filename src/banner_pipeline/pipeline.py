@@ -1067,6 +1067,8 @@ def _run_sam3_image_preview(
         "preview_masks": _annotate_preview_frame(frame, masks, {}),
         "composited": composited,
     }
+    if geometry_engine is not None and hasattr(geometry_engine, "render_debug_overlay"):
+        preview_artifacts["preview_geometry"] = geometry_engine.render_debug_overlay(frame)
     if composite_s is not None:
         metrics["composite_s"] = composite_s
 

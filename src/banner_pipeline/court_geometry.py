@@ -12,18 +12,20 @@ import numpy as np
 
 from banner_pipeline import quality as quality_mod
 from banner_pipeline.fitting.base import QuadFitter
+from banner_pipeline.fitting.fronto_parallel import FrontoParallelBannerFitter
 from banner_pipeline.fitting.vp_constrained import VPConstrainedBannerFitter
-from banner_pipeline.geometry import intersect_parametric, line_from_points, sort_corners_tlbr
+from banner_pipeline.geometry import line_from_points, sort_corners_tlbr
 from banner_pipeline.segment.base import ObjectPrompt
 
 SUPPORTED_GEOMETRY_MODELS = {
     "mask_free_quad",
+    "fronto_parallel_wall_banner",
     "vp_constrained_horizontal_banner",
     "vp_constrained_vertical_banner",
     "court_plane",
 }
 SURFACE_TO_GEOMETRY_MODEL = {
-    "back_wall_banner": "vp_constrained_horizontal_banner",
+    "back_wall_banner": "fronto_parallel_wall_banner",
     "side_wall_banner": "vp_constrained_vertical_banner",
     "court_marking": "court_plane",
 }
@@ -69,8 +71,16 @@ class CourtGeometryEstimate:
     dir_depth: np.ndarray | None
     court_homography: np.ndarray | None
     geometry_confidence: float
+    width_family_confidence: float
+    depth_family_confidence: float
     vp_width_confidence: float
     vp_depth_confidence: float
+    width_candidate_count: int = 0
+    depth_candidate_count: int = 0
+    top_width_line: np.ndarray | None = None
+    bottom_width_line: np.ndarray | None = None
+    left_depth_line: np.ndarray | None = None
+    right_depth_line: np.ndarray | None = None
     cut_reset: bool = False
 
 
@@ -87,6 +97,7 @@ class FitDetail:
 @dataclass
 class _ObjectState:
     support_offsets: tuple[float, float] | None = None
+    lateral_offsets: tuple[float, float] | None = None
     ray_angles: tuple[float, float] | None = None
     last_quad: np.ndarray | None = None
     last_corners_local: np.ndarray | None = None
@@ -167,6 +178,48 @@ def _segment_midpoint(segment: np.ndarray) -> np.ndarray:
     ) / 2.0
 
 
+def _segment_length(segment: np.ndarray) -> float:
+    return float(np.linalg.norm(np.asarray(segment[1]) - np.asarray(segment[0])))
+
+
+def _segment_angle_deg(segment: np.ndarray) -> float:
+    direction = np.asarray(segment[1], dtype=np.float64) - np.asarray(segment[0], dtype=np.float64)
+    angle = float(np.degrees(np.arctan2(direction[1], direction[0])))
+    while angle < 0.0:
+        angle += 180.0
+    while angle >= 180.0:
+        angle -= 180.0
+    return angle
+
+
+def _median_angle(angles: list[float]) -> float:
+    if not angles:
+        return 0.0
+    return float(np.median(np.asarray(angles, dtype=np.float64)))
+
+
+def _angle_distance_deg(angle_a: float, angle_b: float) -> float:
+    delta = abs(angle_a - angle_b) % 180.0
+    return min(delta, 180.0 - delta)
+
+
+def _filter_angle_inliers(
+    segments: list[np.ndarray],
+    *,
+    angle_window_deg: float,
+) -> list[np.ndarray]:
+    if len(segments) <= 2:
+        return segments
+    angles = [_segment_angle_deg(segment) for segment in segments]
+    center = _median_angle(angles)
+    filtered = [
+        segment
+        for segment, angle in zip(segments, angles, strict=True)
+        if _angle_distance_deg(angle, center) <= angle_window_deg
+    ]
+    return filtered or segments
+
+
 def _detect_line_segments(frame_bgr: np.ndarray) -> list[np.ndarray]:
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -195,18 +248,36 @@ def _detect_line_segments(frame_bgr: np.ndarray) -> list[np.ndarray]:
     return out
 
 
-def _split_line_families(segments: list[np.ndarray]) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    width_family: list[np.ndarray] = []
-    depth_family: list[np.ndarray] = []
+def _classify_line_families(
+    segments: list[np.ndarray],
+) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+    width_candidates: list[np.ndarray] = []
+    depth_pos_candidates: list[np.ndarray] = []
+    depth_neg_candidates: list[np.ndarray] = []
+
     for segment in segments:
-        direction = _segment_direction(segment)
-        if direction is None:
+        angle = _segment_angle_deg(segment)
+        horizontal_delta = min(angle, 180.0 - angle)
+        vertical_delta = abs(angle - 90.0)
+        if horizontal_delta <= 24.0:
+            width_candidates.append(segment)
             continue
-        if abs(direction[0]) >= abs(direction[1]):
-            width_family.append(segment)
+        if vertical_delta <= 10.0:
+            continue
+        if angle < 90.0:
+            depth_pos_candidates.append(segment)
         else:
-            depth_family.append(segment)
-    return width_family, depth_family
+            depth_neg_candidates.append(segment)
+
+    width_family = _filter_angle_inliers(width_candidates, angle_window_deg=10.0)
+    depth_positive = _filter_angle_inliers(depth_pos_candidates, angle_window_deg=12.0)
+    depth_negative = _filter_angle_inliers(depth_neg_candidates, angle_window_deg=12.0)
+    return width_family, depth_positive, depth_negative
+
+
+def _split_line_families(segments: list[np.ndarray]) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    width_family, depth_positive, depth_negative = _classify_line_families(segments)
+    return width_family, depth_positive + depth_negative
 
 
 def _estimate_family_direction(
@@ -225,6 +296,31 @@ def _estimate_family_direction(
             direction = -direction
         accumulator += direction
     return _normalize_vec(accumulator)
+
+
+def _family_confidence(
+    family: list[np.ndarray],
+    *,
+    reference_angle: float | None = None,
+    reference_strength: float = 0.2,
+) -> float:
+    if not family:
+        return 0.0
+    angles = [_segment_angle_deg(segment) for segment in family]
+    center = reference_angle if reference_angle is not None else _median_angle(angles)
+    angle_errors = np.asarray(
+        [_angle_distance_deg(angle, center) for angle in angles],
+        dtype=np.float64,
+    )
+    angle_conf = max(0.0, 1.0 - float(np.median(angle_errors)) / 20.0)
+    count_conf = min(1.0, len(family) / 4.0)
+    if reference_angle is None:
+        return float(np.clip(count_conf * angle_conf, 0.0, 1.0))
+    return float(
+        np.clip(
+            count_conf * ((1.0 - reference_strength) * angle_conf + reference_strength), 0.0, 1.0
+        )
+    )
 
 
 def _estimate_family_vp(
@@ -257,6 +353,36 @@ def _estimate_family_vp(
     return vp.astype(np.float32), float(np.clip(confidence, 0.0, 1.0))
 
 
+def _estimate_cross_family_vp(
+    family_a: list[np.ndarray],
+    family_b: list[np.ndarray],
+    frame_shape: tuple[int, int],
+) -> tuple[np.ndarray | None, float]:
+    if not family_a or not family_b:
+        return None, 0.0
+
+    lines_a = [line_from_points(segment[0], segment[1]) for segment in family_a]
+    lines_b = [line_from_points(segment[0], segment[1]) for segment in family_b]
+    intersections: list[np.ndarray] = []
+    for line_a in lines_a:
+        for line_b in lines_b:
+            point = _intersect_implicit(line_a, line_b)
+            if point is None or not np.isfinite(point).all():
+                continue
+            intersections.append(point.astype(np.float64))
+
+    if not intersections:
+        return None, 0.0
+
+    points = np.vstack(intersections)
+    vp = np.median(points, axis=0)
+    spread = float(np.median(np.linalg.norm(points - vp, axis=1)))
+    frame_scale = float(max(frame_shape))
+    confidence = max(0.0, 1.0 - spread / max(frame_scale * 1.5, 1.0))
+    confidence *= min(1.0, (len(family_a) + len(family_b)) / 8.0)
+    return vp.astype(np.float32), float(np.clip(confidence, 0.0, 1.0))
+
+
 def _intersect_implicit(
     line_a: tuple[float, float, float],
     line_b: tuple[float, float, float],
@@ -271,50 +397,128 @@ def _intersect_implicit(
     return np.array([x, y], dtype=np.float32)
 
 
-def _family_support_offsets(
-    family: list[np.ndarray], family_dir: np.ndarray
-) -> tuple[float, float] | None:
-    if not family:
+def _line_x_at_y(segment: np.ndarray, y: float) -> float | None:
+    p0 = np.asarray(segment[0], dtype=np.float64)
+    p1 = np.asarray(segment[1], dtype=np.float64)
+    dy = float(p1[1] - p0[1])
+    if abs(dy) < 1e-6:
         return None
+    t = (y - float(p0[1])) / dy
+    return float(p0[0] + t * float(p1[0] - p0[0]))
+
+
+def _line_y_at_x(segment: np.ndarray, x: float) -> float | None:
+    p0 = np.asarray(segment[0], dtype=np.float64)
+    p1 = np.asarray(segment[1], dtype=np.float64)
+    dx = float(p1[0] - p0[0])
+    if abs(dx) < 1e-6:
+        return None
+    t = (x - float(p0[0])) / dx
+    return float(p0[1] + t * float(p1[1] - p0[1]))
+
+
+def _clip_segment_to_frame(
+    segment: np.ndarray,
+    frame_shape: tuple[int, int],
+) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    h, w = frame_shape
+    candidates: list[np.ndarray] = []
+
+    for x in (0.0, float(w - 1)):
+        y = _line_y_at_x(segment, x)
+        if y is not None and -1.0 <= y <= float(h):
+            candidates.append(np.array([x, y], dtype=np.float64))
+    for y in (0.0, float(h - 1)):
+        x_at_y = _line_x_at_y(segment, y)
+        if x_at_y is not None and -1.0 <= x_at_y <= float(w):
+            candidates.append(np.array([x_at_y, y], dtype=np.float64))
+
+    unique: list[np.ndarray] = []
+    for point in candidates:
+        if any(np.linalg.norm(point - existing) < 1.0 for existing in unique):
+            continue
+        unique.append(point)
+    if len(unique) < 2:
+        return None
+    p0, p1 = unique[:2]
+    return (
+        (int(round(float(p0[0]))), int(round(float(p0[1])))),
+        (int(round(float(p1[0]))), int(round(float(p1[1])))),
+    )
+
+
+def _select_width_boundaries(
+    family: list[np.ndarray],
+    family_dir: np.ndarray | None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if not family or family_dir is None:
+        return None, None
     normal = np.array([-family_dir[1], family_dir[0]], dtype=np.float64)
     offsets = [float(_segment_midpoint(segment) @ normal) for segment in family]
-    return min(offsets), max(offsets)
+    top_idx = int(np.argmin(offsets))
+    bottom_idx = int(np.argmax(offsets))
+    return family[top_idx], family[bottom_idx]
+
+
+def _select_depth_boundary(
+    family: list[np.ndarray],
+    *,
+    y_ref: float,
+    side: str,
+) -> np.ndarray | None:
+    if not family:
+        return None
+
+    best_segment: np.ndarray | None = None
+    best_metric: float | None = None
+    for segment in family:
+        x_at_y = _line_x_at_y(segment, y_ref)
+        if x_at_y is None:
+            continue
+        metric = x_at_y
+        if best_metric is None:
+            best_segment = segment
+            best_metric = metric
+            continue
+        if (side == "left" and metric < best_metric) or (side == "right" and metric > best_metric):
+            best_segment = segment
+            best_metric = metric
+    return best_segment
 
 
 def _estimate_court_homography(
     *,
-    width_family: list[np.ndarray],
-    depth_family: list[np.ndarray],
-    dir_width: np.ndarray | None,
-    dir_depth: np.ndarray | None,
-) -> np.ndarray | None:
-    if dir_width is None or dir_depth is None:
-        return None
-    width_offsets = _family_support_offsets(width_family, dir_width)
-    depth_offsets = _family_support_offsets(depth_family, dir_depth)
-    if width_offsets is None or depth_offsets is None:
-        return None
+    top_width_line: np.ndarray | None,
+    bottom_width_line: np.ndarray | None,
+    left_depth_line: np.ndarray | None,
+    right_depth_line: np.ndarray | None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if (
+        top_width_line is None
+        or bottom_width_line is None
+        or left_depth_line is None
+        or right_depth_line is None
+    ):
+        return None, None
 
-    width_normal = np.array([-dir_width[1], dir_width[0]], dtype=np.float64)
-    depth_normal = np.array([-dir_depth[1], dir_depth[0]], dtype=np.float64)
-    top_point = width_normal * width_offsets[0]
-    bottom_point = width_normal * width_offsets[1]
-    left_point = depth_normal * depth_offsets[0]
-    right_point = depth_normal * depth_offsets[1]
+    top_line = line_from_points(top_width_line[0], top_width_line[1])
+    bottom_line = line_from_points(bottom_width_line[0], bottom_width_line[1])
+    left_line = line_from_points(left_depth_line[0], left_depth_line[1])
+    right_line = line_from_points(right_depth_line[0], right_depth_line[1])
 
-    tl = intersect_parametric(top_point, dir_width, left_point, dir_depth)
-    tr = intersect_parametric(top_point, dir_width, right_point, dir_depth)
-    br = intersect_parametric(bottom_point, dir_width, right_point, dir_depth)
-    bl = intersect_parametric(bottom_point, dir_width, left_point, dir_depth)
+    tl = _intersect_implicit(top_line, left_line)
+    tr = _intersect_implicit(top_line, right_line)
+    br = _intersect_implicit(bottom_line, right_line)
+    bl = _intersect_implicit(bottom_line, left_line)
     if any(point is None for point in (tl, tr, br, bl)):
-        return None
+        return None, None
 
     corners = sort_corners_tlbr(np.array([tl, tr, br, bl], dtype=np.float32))
     src = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], dtype=np.float32)
     homography, _ = cv2.findHomography(src, corners)
     if homography is None or not np.isfinite(homography).all():
-        return None
-    return homography.astype(np.float32)
+        return None, None
+    return homography.astype(np.float32), corners.astype(np.float32)
 
 
 class CourtGeometryEstimator:
@@ -346,17 +550,49 @@ class CourtGeometryEstimator:
         self._prev_gray = gray
 
         segments = _detect_line_segments(frame_bgr)
-        width_family, depth_family = _split_line_families(segments)
+        width_family, depth_positive, depth_negative = _classify_line_families(segments)
+        depth_family = depth_positive + depth_negative
         raw_dir_width = _estimate_family_direction(width_family, reference=np.array([1.0, 0.0]))
-        raw_dir_depth = _estimate_family_direction(depth_family, reference=np.array([0.0, 1.0]))
-        raw_vp_width, vp_width_conf = _estimate_family_vp(width_family, frame_bgr.shape[:2])
-        raw_vp_depth, vp_depth_conf = _estimate_family_vp(depth_family, frame_bgr.shape[:2])
-        raw_h = _estimate_court_homography(
-            width_family=width_family,
-            depth_family=depth_family,
-            dir_width=raw_dir_width,
-            dir_depth=raw_dir_depth,
+        width_family_conf = _family_confidence(
+            width_family,
+            reference_angle=0.0,
+            reference_strength=0.35,
         )
+        depth_family_conf = min(
+            _family_confidence(depth_positive),
+            _family_confidence(depth_negative),
+        )
+
+        top_width_line, bottom_width_line = _select_width_boundaries(width_family, raw_dir_width)
+        y_ref = float(frame_bgr.shape[0]) * 0.92
+        left_depth_line = _select_depth_boundary(depth_positive, y_ref=y_ref, side="left")
+        right_depth_line = _select_depth_boundary(depth_negative, y_ref=y_ref, side="right")
+
+        raw_vp_width, vp_width_conf = _estimate_family_vp(width_family, frame_bgr.shape[:2])
+        raw_vp_depth, vp_depth_conf = _estimate_cross_family_vp(
+            depth_positive,
+            depth_negative,
+            frame_bgr.shape[:2],
+        )
+        raw_h, raw_corners = _estimate_court_homography(
+            top_width_line=top_width_line,
+            bottom_width_line=bottom_width_line,
+            left_depth_line=left_depth_line,
+            right_depth_line=right_depth_line,
+        )
+
+        raw_dir_depth = None
+        if raw_vp_depth is not None:
+            if raw_corners is not None:
+                bottom_mid = (
+                    raw_corners[2].astype(np.float64) + raw_corners[3].astype(np.float64)
+                ) / 2.0
+            else:
+                bottom_mid = np.array(
+                    [float(frame_bgr.shape[1]) * 0.5, float(frame_bgr.shape[0])],
+                    dtype=np.float64,
+                )
+            raw_dir_depth = _normalize_vec(raw_vp_depth.astype(np.float64) - bottom_mid)
 
         alpha = self.config.vp_smoothing_alpha
         self._dir_width = _blend_unit_vectors(self._dir_width, raw_dir_width, alpha)
@@ -365,7 +601,12 @@ class CourtGeometryEstimator:
         self._vp_depth = _blend_points(self._vp_depth, raw_vp_depth, alpha)
         self._court_homography = _blend_homographies(self._court_homography, raw_h, alpha)
 
-        geometry_confidence = max(vp_width_conf, vp_depth_conf)
+        geometry_confidence = max(
+            width_family_conf,
+            depth_family_conf,
+            vp_width_conf,
+            vp_depth_conf,
+        )
         return CourtGeometryEstimate(
             vp_width=self._vp_width,
             vp_depth=self._vp_depth,
@@ -373,8 +614,24 @@ class CourtGeometryEstimator:
             dir_depth=self._dir_depth.astype(np.float32) if self._dir_depth is not None else None,
             court_homography=self._court_homography,
             geometry_confidence=float(np.clip(geometry_confidence, 0.0, 1.0)),
+            width_family_confidence=float(np.clip(width_family_conf, 0.0, 1.0)),
+            depth_family_confidence=float(np.clip(depth_family_conf, 0.0, 1.0)),
             vp_width_confidence=vp_width_conf,
             vp_depth_confidence=vp_depth_conf,
+            width_candidate_count=len(width_family),
+            depth_candidate_count=len(depth_family),
+            top_width_line=top_width_line.astype(np.float32)
+            if top_width_line is not None
+            else None,
+            bottom_width_line=(
+                bottom_width_line.astype(np.float32) if bottom_width_line is not None else None
+            ),
+            left_depth_line=left_depth_line.astype(np.float32)
+            if left_depth_line is not None
+            else None,
+            right_depth_line=(
+                right_depth_line.astype(np.float32) if right_depth_line is not None else None
+            ),
             cut_reset=cut_reset,
         )
 
@@ -425,16 +682,30 @@ class GeometryFittingEngine:
         self.fallback_fitter = fallback_fitter
         self.fitter_params = fitter_params or {}
         self.estimator = CourtGeometryEstimator(self.config)
+        self.fronto_fitter = FrontoParallelBannerFitter()
         self.vp_fitter = VPConstrainedBannerFitter()
         self.states = {int(prompt.obj_id): _ObjectState() for prompt in prompts}
         self.details: dict[int, FitDetail] = {}
+        self.last_estimate: CourtGeometryEstimate | None = None
         self.frames_processed = 0
         self.frames_held = 0
         self.frames_fallback = 0
         self.vp_width_valid_frames = 0
         self.vp_depth_valid_frames = 0
+        self.width_candidate_total = 0
+        self.depth_candidate_total = 0
         self.object_geometry_model = {
             str(int(prompt.obj_id)): resolve_geometry_model(prompt) for prompt in prompts
+        }
+        self.back_wall_runtime_model = {
+            str(int(prompt.obj_id)): resolve_geometry_model(prompt)
+            for prompt in prompts
+            if (str(prompt.surface_type).strip().lower() or "banner") == "back_wall_banner"
+        }
+        self.side_wall_runtime_model = {
+            str(int(prompt.obj_id)): resolve_geometry_model(prompt)
+            for prompt in prompts
+            if (str(prompt.surface_type).strip().lower() or "banner") == "side_wall_banner"
         }
         self.geometry_active_objects = sorted(
             int(prompt.obj_id)
@@ -456,11 +727,14 @@ class GeometryFittingEngine:
     ) -> tuple[dict[int, np.ndarray], dict[int, list[str]]]:
         self.details = {}
         estimate = self.estimator.estimate(frame_bgr)
+        self.last_estimate = estimate
         self.frames_processed += 1
         if estimate.vp_width_confidence >= self.config.vp_confidence_min:
             self.vp_width_valid_frames += 1
         if estimate.vp_depth_confidence >= self.config.vp_confidence_min:
             self.vp_depth_valid_frames += 1
+        self.width_candidate_total += estimate.width_candidate_count
+        self.depth_candidate_total += estimate.depth_candidate_count
 
         corners_map: dict[int, np.ndarray] = {}
         rejection_reasons: dict[int, list[str]] = {}
@@ -520,9 +794,60 @@ class GeometryFittingEngine:
             "geometry_fallback_frames": self.frames_fallback,
             "vp_width_valid_ratio": round(self.vp_width_valid_frames / total_frames, 4),
             "vp_depth_valid_ratio": round(self.vp_depth_valid_frames / total_frames, 4),
+            "court_width_candidate_count": round(self.width_candidate_total / total_frames, 4),
+            "court_depth_candidate_count": round(self.depth_candidate_total / total_frames, 4),
             "object_geometry_model": self.object_geometry_model,
+            "back_wall_runtime_model": self.back_wall_runtime_model,
+            "side_wall_runtime_model": self.side_wall_runtime_model,
             "geometry_fit_method_counts": self.fit_method_counts,
         }
+
+    def render_debug_overlay(self, frame_bgr: np.ndarray) -> np.ndarray:
+        overlay = frame_bgr.copy()
+        estimate = self.last_estimate
+        if estimate is None:
+            return overlay
+
+        for segment, color in (
+            (estimate.top_width_line, (0, 220, 0)),
+            (estimate.bottom_width_line, (0, 160, 0)),
+            (estimate.left_depth_line, (0, 255, 255)),
+            (estimate.right_depth_line, (0, 255, 255)),
+        ):
+            if segment is None:
+                continue
+            clipped = _clip_segment_to_frame(segment, overlay.shape[:2])
+            if clipped is None:
+                continue
+            cv2.line(overlay, clipped[0], clipped[1], color, 2, cv2.LINE_AA)
+
+        if estimate.vp_depth is not None:
+            point = tuple(int(round(float(v))) for v in estimate.vp_depth)
+            cv2.circle(overlay, point, 7, (0, 255, 255), -1, cv2.LINE_AA)
+            cv2.putText(
+                overlay,
+                "VPd",
+                (point[0] + 8, point[1] - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        if estimate.vp_width is not None:
+            point = tuple(int(round(float(v))) for v in estimate.vp_width)
+            cv2.circle(overlay, point, 7, (255, 160, 0), -1, cv2.LINE_AA)
+            cv2.putText(
+                overlay,
+                "VPw",
+                (point[0] + 8, point[1] - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 160, 0),
+                2,
+                cv2.LINE_AA,
+            )
+        return overlay
 
     def _record_fit_method(self, obj_id: int, fit_method: str) -> None:
         counts = self.fit_method_counts.setdefault(str(int(obj_id)), {})
@@ -556,6 +881,15 @@ class GeometryFittingEngine:
             return corners
 
         if geometry_model == "court_plane":
+            if estimate.court_homography is None:
+                return self._hold_or_fallback(
+                    state=state,
+                    detail=detail,
+                    mask=mask,
+                    mask_area_px=mask_area_px,
+                    mask_bbox=mask_bbox,
+                    frame_shape=frame_shape,
+                )
             corners = self._fit_court_plane(
                 state=state,
                 mask=mask,
@@ -567,20 +901,82 @@ class GeometryFittingEngine:
             detail.fit_method = "court_plane" if corners is not None else "court_plane_failed"
             return corners
 
+        if geometry_model == "fronto_parallel_wall_banner":
+            parallel_dir = estimate.dir_width
+            if (
+                parallel_dir is None
+                or estimate.width_family_confidence < self.config.vp_confidence_min
+            ):
+                parallel_dir = np.array([1.0, 0.0], dtype=np.float32)
+            raw_fit = self.fronto_fitter.fit_with_params(
+                mask,
+                parallel_dir=parallel_dir,
+                margin_px=self.config.tangent_margin_px,
+            )
+            if (
+                raw_fit.corners is None
+                or raw_fit.support_offsets is None
+                or raw_fit.lateral_offsets is None
+            ):
+                return self._hold_or_fallback(
+                    state=state,
+                    detail=detail,
+                    mask=mask,
+                    mask_area_px=mask_area_px,
+                    mask_bbox=mask_bbox,
+                    frame_shape=frame_shape,
+                )
+
+            support_offsets = raw_fit.support_offsets
+            lateral_offsets = raw_fit.lateral_offsets
+            if state.support_offsets is not None and state.lateral_offsets is not None:
+                support_offsets, lateral_offsets = self.fronto_fitter.blend_params(
+                    prev_support_offsets=state.support_offsets,
+                    prev_lateral_offsets=state.lateral_offsets,
+                    support_offsets=support_offsets,
+                    lateral_offsets=lateral_offsets,
+                    alpha=self.config.line_smoothing_alpha,
+                )
+            corners = self.fronto_fitter.reconstruct_from_params(
+                parallel_dir=parallel_dir,
+                support_offsets=support_offsets,
+                lateral_offsets=lateral_offsets,
+            )
+            if corners is None:
+                return self._hold_or_fallback(
+                    state=state,
+                    detail=detail,
+                    mask=mask,
+                    mask_area_px=mask_area_px,
+                    mask_bbox=mask_bbox,
+                    frame_shape=frame_shape,
+                )
+
+            state.support_offsets = support_offsets
+            state.lateral_offsets = lateral_offsets
+            state.ray_angles = None
+            state.last_quad = corners
+            state.failure_streak = 0
+            state.hold_streak = 0
+            detail.fit_method = geometry_model
+            return corners
+
         if geometry_model == "vp_constrained_horizontal_banner":
             parallel_dir = estimate.dir_width
+            parallel_conf = estimate.width_family_confidence
             vp = estimate.vp_depth
             vp_conf = estimate.vp_depth_confidence
         else:
             parallel_dir = estimate.dir_depth
+            parallel_conf = estimate.depth_family_confidence
             vp = estimate.vp_width
             vp_conf = estimate.vp_width_confidence
 
         if (
             vp is None
             or parallel_dir is None
+            or parallel_conf < self.config.vp_confidence_min
             or vp_conf < self.config.vp_confidence_min
-            or estimate.geometry_confidence < self.config.vp_confidence_min
         ):
             return self._hold_or_fallback(
                 state=state,
@@ -591,13 +987,13 @@ class GeometryFittingEngine:
                 frame_shape=frame_shape,
             )
 
-        raw_fit = self.vp_fitter.fit_with_params(
+        vp_fit = self.vp_fitter.fit_with_params(
             mask,
             vp=vp,
             parallel_dir=parallel_dir,
             tangent_margin_px=self.config.tangent_margin_px,
         )
-        if raw_fit.corners is None or raw_fit.support_offsets is None or raw_fit.ray_angles is None:
+        if vp_fit.corners is None or vp_fit.support_offsets is None or vp_fit.ray_angles is None:
             return self._hold_or_fallback(
                 state=state,
                 detail=detail,
@@ -607,8 +1003,8 @@ class GeometryFittingEngine:
                 frame_shape=frame_shape,
             )
 
-        support_offsets = raw_fit.support_offsets
-        ray_angles = raw_fit.ray_angles
+        support_offsets = vp_fit.support_offsets
+        ray_angles = vp_fit.ray_angles
         if state.support_offsets is not None and state.ray_angles is not None:
             support_offsets, ray_angles = self.vp_fitter.blend_params(
                 prev_support_offsets=state.support_offsets,
@@ -634,6 +1030,7 @@ class GeometryFittingEngine:
             )
 
         state.support_offsets = support_offsets
+        state.lateral_offsets = None
         state.ray_angles = ray_angles
         state.last_quad = corners
         state.failure_streak = 0
@@ -651,14 +1048,7 @@ class GeometryFittingEngine:
         frame_shape: tuple[int, int],
         estimate: CourtGeometryEstimate,
     ) -> np.ndarray | None:
-        if estimate.court_homography is None:
-            return self._fit_free_quad(
-                mask=mask,
-                mask_area_px=mask_area_px,
-                mask_bbox=mask_bbox,
-                frame_shape=frame_shape,
-            )
-
+        assert estimate.court_homography is not None
         if state.last_corners_local is None:
             fallback_corners = self._fit_free_quad(
                 mask=mask,

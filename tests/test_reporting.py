@@ -24,9 +24,13 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
                 "geometry_config_enabled": True,
                 "geometry_runtime_enabled": True,
                 "geometry_active_objects": [1],
-                "object_geometry_model": {"1": "vp_constrained_horizontal_banner"},
-                "geometry_fit_method_counts": {"1": {"vp_constrained_horizontal_banner": 12}},
+                "object_geometry_model": {"1": "fronto_parallel_wall_banner"},
+                "back_wall_runtime_model": {"1": "fronto_parallel_wall_banner"},
+                "side_wall_runtime_model": {},
+                "geometry_fit_method_counts": {"1": {"fronto_parallel_wall_banner": 12}},
                 "geometry_total_s": 2.5,
+                "court_width_candidate_count": 3.0,
+                "court_depth_candidate_count": 4.0,
                 "stabilization_config_enabled": True,
                 "stabilization_runtime_enabled": True,
                 "stabilization_total_s": 0.5,
@@ -63,9 +67,13 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
     assert report["geometry_config_enabled"] is True
     assert report["geometry_runtime_enabled"] is True
     assert report["geometry_active_objects"] == [1]
-    assert report["object_geometry_model"] == {"1": "vp_constrained_horizontal_banner"}
-    assert report["geometry_fit_method_counts"] == {"1": {"vp_constrained_horizontal_banner": 12}}
+    assert report["object_geometry_model"] == {"1": "fronto_parallel_wall_banner"}
+    assert report["back_wall_runtime_model"] == {"1": "fronto_parallel_wall_banner"}
+    assert report["side_wall_runtime_model"] == {}
+    assert report["geometry_fit_method_counts"] == {"1": {"fronto_parallel_wall_banner": 12}}
     assert report["geometry_total_s"] == 2.5
+    assert report["court_width_candidate_count"] == 3.0
+    assert report["court_depth_candidate_count"] == 4.0
     assert report["stabilization_config_enabled"] is True
     assert report["stabilization_runtime_enabled"] is True
     assert report["stabilization_total_s"] == 0.5

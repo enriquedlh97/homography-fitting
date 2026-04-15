@@ -247,13 +247,20 @@ class _PreviewGeometryEngine:
             "geometry_fallback_frames": 0,
             "vp_width_valid_ratio": 1.0,
             "vp_depth_valid_ratio": 1.0,
+            "court_width_candidate_count": 3.0,
+            "court_depth_candidate_count": 4.0,
             "object_geometry_model": {
                 str(int(prompt.obj_id)): "court_plane" for prompt in self.prompts
             },
+            "back_wall_runtime_model": {},
+            "side_wall_runtime_model": {},
             "geometry_fit_method_counts": {
                 str(int(prompt.obj_id)): {"court_plane": 1} for prompt in self.prompts
             },
         }
+
+    def render_debug_overlay(self, frame_bgr: np.ndarray) -> np.ndarray:
+        return frame_bgr
 
 
 def test_load_prompts_warns_for_legacy_sam3_outline_configs(
@@ -437,6 +444,7 @@ def test_run_pipeline_uses_geometry_for_court_marking_prompts_in_sam3_preview(
     assert results["metrics"]["geometry_runtime_enabled"] is True
     assert results["metrics"]["geometry_active_objects"] == [9]
     assert results["metrics"]["object_geometry_model"] == {"9": "court_plane"}
+    assert "preview_geometry" in results["preview_artifacts"]
     assert diag["fit_method"] == "court_plane"
     assert diag["fit_status"] == "ok"
     assert diag["fit_held"] is False

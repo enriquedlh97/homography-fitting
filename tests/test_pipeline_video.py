@@ -205,7 +205,7 @@ class _FakeGeometryEngine:
             self.details[obj_id] = SimpleNamespace(
                 fit_method="court_plane"
                 if getattr(prompt, "surface_type", "banner") == "court_marking"
-                else "vp_constrained_horizontal_banner",
+                else "fronto_parallel_wall_banner",
                 held=False,
                 used_fallback=False,
             )
@@ -225,23 +225,38 @@ class _FakeGeometryEngine:
             "geometry_fallback_frames": 0,
             "vp_width_valid_ratio": 1.0,
             "vp_depth_valid_ratio": 1.0,
+            "court_width_candidate_count": 3.0,
+            "court_depth_candidate_count": 4.0,
             "object_geometry_model": {
                 str(int(prompt.obj_id)): (
                     "court_plane"
                     if getattr(prompt, "surface_type", "banner") == "court_marking"
-                    else "vp_constrained_horizontal_banner"
+                    else "fronto_parallel_wall_banner"
                 )
                 for prompt in self.prompts
+            },
+            "back_wall_runtime_model": {
+                str(int(prompt.obj_id)): "fronto_parallel_wall_banner"
+                for prompt in self.prompts
+                if getattr(prompt, "surface_type", "banner") == "back_wall_banner"
+            },
+            "side_wall_runtime_model": {
+                str(int(prompt.obj_id)): "vp_constrained_vertical_banner"
+                for prompt in self.prompts
+                if getattr(prompt, "surface_type", "banner") == "side_wall_banner"
             },
             "geometry_fit_method_counts": {
                 str(int(prompt.obj_id)): {
                     "court_plane"
                     if getattr(prompt, "surface_type", "banner") == "court_marking"
-                    else "vp_constrained_horizontal_banner": 2
+                    else "fronto_parallel_wall_banner": 2
                 }
                 for prompt in self.prompts
             },
         }
+
+    def render_debug_overlay(self, frame_bgr: np.ndarray) -> np.ndarray:
+        return frame_bgr
 
 
 def test_run_pipeline_video_records_coverage_stats(
@@ -423,7 +438,7 @@ def test_run_pipeline_video_uses_geometry_for_supported_non_banner_surfaces(
     assert metrics["geometry_runtime_enabled"] is True
     assert metrics["geometry_active_objects"] == [1, 2]
     assert metrics["object_geometry_model"] == {
-        "1": "vp_constrained_horizontal_banner",
+        "1": "fronto_parallel_wall_banner",
         "2": "court_plane",
     }
     assert metrics["geometry_fit_method_counts"]["2"] == {"court_plane": 2}

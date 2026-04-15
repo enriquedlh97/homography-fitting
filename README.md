@@ -36,6 +36,7 @@ Two-step process: collect clicks locally, then run on a remote GPU.
 ```bash
 uv run python scripts/collect_prompts.py --config configs/default.yaml
 uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml
+uv run python scripts/collect_prompts.py --config configs/sam3_court_eval.yaml
 ```
 
 This opens the selected frame of the video and saves the prompt points into the config automatically.
@@ -50,10 +51,12 @@ This opens the selected frame of the video and saves the prompt points into the 
 # Video mode (processes all frames, outputs .mp4)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode video
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
+uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode video
 
 # Image mode (processes single frame, outputs .png)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode image
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
+uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode image
 ```
 
 For SAM3, use `--mode image` first to preview the prompt-stage masks and geometry-constrained quads on the selected frame. If the preview looks wrong, or the preview metrics do not include `geometry_*`, adjust the clicks or config before running `--mode video`.
@@ -70,14 +73,19 @@ Use this loop to validate that SAM3 is working before launching a full video run
 ```bash
 # 1. Collect or recollect prompts on a chosen frame
 uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml --frame 0
+uv run python scripts/collect_prompts.py --config configs/sam3_court_eval.yaml --frame 0
 
-# 2. Preview the selected frame and inspect the metrics
+# 2. Preview the wall-banner config and inspect the metrics
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
 
-# 3. Confirm the preview metrics include geometry_* and show the intended fit method
+# 3. Preview the court-plane eval config and inspect the metrics
+uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode image
 
-# 4. If the preview looks good, run the full video
+# 4. Confirm the preview metrics include geometry_* and show the intended fit method
+
+# 5. If the previews look good, run the full video
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
+uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode video
 ```
 
 The preview run writes a single composited image to `experiments/.../outputs/composited.png`.
@@ -89,7 +97,8 @@ Inspect that PNG and the saved `metrics.json` before running `--mode video`.
 - Add 1 negative click on adjacent background if the mask bleeds.
 - Do not outline the whole banner perimeter with many positive points.
 - When validating a new setup, start with one banner before adding more objects.
-- `configs/sam3_default.yaml` now enables court-geometry constrained fitting for the shipped tennis banners. Keep the default `surface_type` metadata unless you are intentionally changing the geometry model.
+- `configs/sam3_default.yaml` is the wall-banner config. `back_wall_banner` objects now use a fronto-parallel wall solver, while `side_wall_banner` keeps the VP-constrained path when court geometry is confident.
+- `configs/sam3_court_eval.yaml` is the court-plane validation config for `court_marking` prompts. Use it to verify that `court_plane` is active before mixing court ads into a larger run.
 
 ### If SAM3 Preview Fails
 
