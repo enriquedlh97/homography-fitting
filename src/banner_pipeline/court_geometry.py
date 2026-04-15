@@ -436,6 +436,15 @@ class GeometryFittingEngine:
         self.object_geometry_model = {
             str(int(prompt.obj_id)): resolve_geometry_model(prompt) for prompt in prompts
         }
+        self.geometry_active_objects = sorted(
+            int(prompt.obj_id)
+            for prompt in prompts
+            if supports_surface_type(str(prompt.surface_type).strip().lower() or "banner", True)
+            and resolve_geometry_model(prompt) != "mask_free_quad"
+        )
+        self.fit_method_counts: dict[str, dict[str, int]] = {
+            str(int(prompt.obj_id)): {} for prompt in prompts
+        }
 
     def fit_frame(
         self,
@@ -485,6 +494,7 @@ class GeometryFittingEngine:
                 estimate=estimate,
             )
             if corners is None:
+                self._record_fit_method(obj_id, self.details[obj_id].fit_method)
                 reasons = rejection_reasons.setdefault(obj_id, [])
                 if not reasons:
                     reasons.append("fit_failed")
@@ -493,8 +503,10 @@ class GeometryFittingEngine:
             flags, _stats = quality_mod.geometry_flags(mask, corners, frame_shape)
             if flags:
                 rejection_reasons[obj_id] = flags
+                self._record_fit_method(obj_id, self.details[obj_id].fit_method)
                 continue
             corners_map[obj_id] = corners
+            self._record_fit_method(obj_id, self.details[obj_id].fit_method)
 
         return corners_map, rejection_reasons
 
@@ -502,12 +514,19 @@ class GeometryFittingEngine:
         total_frames = max(self.frames_processed, 1)
         return {
             "geometry_total_s": None,
+            "geometry_runtime_enabled": self.config.enabled and self.frames_processed > 0,
+            "geometry_active_objects": self.geometry_active_objects,
             "geometry_frames_held": self.frames_held,
             "geometry_fallback_frames": self.frames_fallback,
             "vp_width_valid_ratio": round(self.vp_width_valid_frames / total_frames, 4),
             "vp_depth_valid_ratio": round(self.vp_depth_valid_frames / total_frames, 4),
             "object_geometry_model": self.object_geometry_model,
+            "geometry_fit_method_counts": self.fit_method_counts,
         }
+
+    def _record_fit_method(self, obj_id: int, fit_method: str) -> None:
+        counts = self.fit_method_counts.setdefault(str(int(obj_id)), {})
+        counts[fit_method] = counts.get(fit_method, 0) + 1
 
     def _fit_for_prompt(
         self,

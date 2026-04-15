@@ -28,7 +28,7 @@ def _normalize_vec(vector: np.ndarray) -> np.ndarray | None:
 
 
 def _largest_component_contour(mask: np.ndarray) -> np.ndarray | None:
-    mask_u8 = (np.asarray(mask).squeeze() > 0).astype(np.uint8) * 255
+    mask_u8: np.ndarray = (np.asarray(mask).squeeze() > 0).astype(np.uint8) * 255
     if mask_u8.ndim != 2 or not mask_u8.any():
         return None
 

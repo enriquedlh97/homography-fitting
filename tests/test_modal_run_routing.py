@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -125,6 +126,17 @@ def test_modal_run_accepts_sam2_on_t4(monkeypatch: pytest.MonkeyPatch) -> None:
     config_dict = {"pipeline": {"segmenter": {"type": "sam2_image"}}}
 
     assert module._validate_gpu_config(config_dict, "T4") is None
+
+
+def test_modal_run_git_output_returns_trimmed_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_modal_run_module(monkeypatch, "A100")
+
+    def _fake_run(*_args, **_kwargs):
+        return SimpleNamespace(stdout="feat/court-geometry-stabilisation\n")
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    assert module._git_output("branch", "--show-current") == "feat/court-geometry-stabilisation"
 
 
 @pytest.mark.parametrize("gpu", ["A100", "H100", "H200"])

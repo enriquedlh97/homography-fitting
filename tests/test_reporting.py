@@ -21,6 +21,18 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
                 "object_rejection_counts": {"1": 9},
                 "object_rejection_reasons": {"1": {"quad_mask_iou_low": 9}},
                 "segment_total_s": 10.0,
+                "geometry_config_enabled": True,
+                "geometry_runtime_enabled": True,
+                "geometry_active_objects": [1],
+                "object_geometry_model": {"1": "vp_constrained_horizontal_banner"},
+                "geometry_fit_method_counts": {"1": {"vp_constrained_horizontal_banner": 12}},
+                "geometry_total_s": 2.5,
+                "stabilization_config_enabled": True,
+                "stabilization_runtime_enabled": True,
+                "stabilization_total_s": 0.5,
+                "stabilization_object_stats": {"1": {"frames_held": 2}},
+                "git_branch": "feat/court-geometry-stabilisation",
+                "git_commit_sha": "abc123",
                 "run_total_s": 11.0,
                 "sam3_reanchor_events": [{"obj_id": 1, "frame_idx": 8, "refresh_count": 1}],
             }
@@ -48,3 +60,15 @@ def test_build_metrics_report_preserves_video_coverage_fields() -> None:
     assert report["object_rejection_counts"] == {"1": 9}
     assert report["object_rejection_reasons"] == {"1": {"quad_mask_iou_low": 9}}
     assert report["sam3_reanchor_events"] == [{"obj_id": 1, "frame_idx": 8, "refresh_count": 1}]
+    assert report["geometry_config_enabled"] is True
+    assert report["geometry_runtime_enabled"] is True
+    assert report["geometry_active_objects"] == [1]
+    assert report["object_geometry_model"] == {"1": "vp_constrained_horizontal_banner"}
+    assert report["geometry_fit_method_counts"] == {"1": {"vp_constrained_horizontal_banner": 12}}
+    assert report["geometry_total_s"] == 2.5
+    assert report["stabilization_config_enabled"] is True
+    assert report["stabilization_runtime_enabled"] is True
+    assert report["stabilization_total_s"] == 0.5
+    assert report["stabilization_object_stats"] == {"1": {"frames_held": 2}}
+    assert report["git_branch"] == "feat/court-geometry-stabilisation"
+    assert report["git_commit_sha"] == "abc123"

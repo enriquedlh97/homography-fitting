@@ -79,6 +79,8 @@ def main():
             entry["frame_idx"] = int(prompt.frame_idx)
         if getattr(prompt, "surface_type", "banner") != "banner":
             entry["surface_type"] = str(prompt.surface_type)
+        if getattr(prompt, "geometry_model", None) is not None:
+            entry["geometry_model"] = str(prompt.geometry_model)
         config["input"]["prompts"].append(entry)
 
     with open(args.config, "w") as f:

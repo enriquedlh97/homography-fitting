@@ -56,7 +56,7 @@ uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --m
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
 ```
 
-For SAM3, use `--mode image` first to preview the prompt-stage masks and fitted quads on the selected frame. If the preview looks wrong, adjust the clicks before running `--mode video`.
+For SAM3, use `--mode image` first to preview the prompt-stage masks and geometry-constrained quads on the selected frame. If the preview looks wrong, or the preview metrics do not include `geometry_*`, adjust the clicks or config before running `--mode video`.
 The shipped SAM3 parity configs use `inpaint`, which is the same compositor family as the stronger SAM2 baseline.
 
 `configs/sam3_default.yaml` must not be run on `T4`. The launcher rejects
@@ -71,15 +71,17 @@ Use this loop to validate that SAM3 is working before launching a full video run
 # 1. Collect or recollect prompts on a chosen frame
 uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml --frame 0
 
-# 2. Preview the selected frame
+# 2. Preview the selected frame and inspect the metrics
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
 
-# 3. If the preview looks good, run the full video
+# 3. Confirm the preview metrics include geometry_* and show the intended fit method
+
+# 4. If the preview looks good, run the full video
 uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
 ```
 
 The preview run writes a single composited image to `experiments/.../outputs/composited.png`.
-Inspect that PNG before running `--mode video`.
+Inspect that PNG and the saved `metrics.json` before running `--mode video`.
 
 ### SAM3 Prompting Rules
 
@@ -87,7 +89,7 @@ Inspect that PNG before running `--mode video`.
 - Add 1 negative click on adjacent background if the mask bleeds.
 - Do not outline the whole banner perimeter with many positive points.
 - When validating a new setup, start with one banner before adding more objects.
-- This branch treats only banner-like surfaces as supported for SAM3 parity. Court markings should not be part of `configs/sam3_default.yaml`.
+- `configs/sam3_default.yaml` now enables court-geometry constrained fitting for the shipped tennis banners. Keep the default `surface_type` metadata unless you are intentionally changing the geometry model.
 
 ### If SAM3 Preview Fails
 
@@ -96,7 +98,7 @@ Inspect that PNG before running `--mode video`.
 - Reduce the test to one object and verify that first.
 - If the log shows `usable_outputs=False parsed_nonempty_masks=0`, interpret it as:
   the prompt request was accepted, but SAM3 returned no usable mask for that preview frame.
-- If the preview reports `unsupported_surface_type:court_marking`, that object is intentionally skipped in this branch rather than being forced through the banner fitter.
+- If the preview metrics are missing `geometry_*` or `stabilization_*` despite those features being enabled in the config, treat the run as invalid. The pipeline now fails loudly for that case instead of silently saving a contour-only experiment.
 
 ### Current SAM3 Preview Limitation
 

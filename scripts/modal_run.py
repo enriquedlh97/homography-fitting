@@ -21,7 +21,10 @@ Usage
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 import sys
+from pathlib import Path
 
 try:
     import modal
@@ -55,6 +58,7 @@ for i, arg in enumerate(sys.argv):
 FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200"}
 FA4_GPUS = {"B200"}
 FA4_VERSION = "4.0.0b8"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _base_cuda_image() -> modal.Image:
@@ -144,6 +148,21 @@ def _validate_gpu_config(config_dict: dict, gpu: str) -> None:
             "SAM3 requires FlashAttention and is not supported on T4.\n"
             "Use SAM2 on T4, or switch this SAM3 run to L4/A10G/L40S/A100/H100/H200/B200."
         )
+
+
+def _git_output(*args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    text = result.stdout.strip()
+    return text or None
 
 
 image = _select_image_for_gpu(_GPU)
@@ -396,11 +415,18 @@ def main(
 
     # Save frozen config.
     config_path = os.path.join(exp_dir, "config.yaml")
+    frozen_config_text = yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
     with open(config_path, "w") as f:
-        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+        f.write(frozen_config_text)
+    frozen_config_sha256 = hashlib.sha256(frozen_config_text.encode("utf-8")).hexdigest()
 
     # Save metrics.
     metrics = result["metrics"]
+    metrics["git_branch"] = _git_output("branch", "--show-current")
+    metrics["git_commit_sha"] = _git_output("rev-parse", "HEAD")
+    metrics["requested_config_path"] = os.path.abspath(config)
+    metrics["frozen_config_path"] = os.path.abspath(config_path)
+    metrics["frozen_config_sha256"] = frozen_config_sha256
     metrics_path = os.path.join(exp_dir, "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)

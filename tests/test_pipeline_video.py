@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -192,6 +193,57 @@ class _RecordingFitter:
         return np.array([[4, 4], [11, 4], [11, 11], [4, 11]], dtype=np.float32)
 
 
+class _FakeGeometryEngine:
+    def __init__(self, *, prompts, **_kwargs) -> None:
+        self.prompts = prompts
+        self.details: dict[int, SimpleNamespace] = {}
+
+    def fit_frame(self, *, masks_by_obj, **_kwargs):
+        corners_map = {}
+        for prompt in self.prompts:
+            obj_id = int(prompt.obj_id)
+            self.details[obj_id] = SimpleNamespace(
+                fit_method="court_plane"
+                if getattr(prompt, "surface_type", "banner") == "court_marking"
+                else "vp_constrained_horizontal_banner",
+                held=False,
+                used_fallback=False,
+            )
+            mask = masks_by_obj.get(obj_id)
+            if mask is not None and np.asarray(mask).any():
+                corners_map[obj_id] = np.array(
+                    [[4, 4], [11, 4], [11, 11], [4, 11]],
+                    dtype=np.float32,
+                )
+        return corners_map, {}
+
+    def finalize_metrics(self):
+        return {
+            "geometry_runtime_enabled": True,
+            "geometry_active_objects": [int(prompt.obj_id) for prompt in self.prompts],
+            "geometry_frames_held": 0,
+            "geometry_fallback_frames": 0,
+            "vp_width_valid_ratio": 1.0,
+            "vp_depth_valid_ratio": 1.0,
+            "object_geometry_model": {
+                str(int(prompt.obj_id)): (
+                    "court_plane"
+                    if getattr(prompt, "surface_type", "banner") == "court_marking"
+                    else "vp_constrained_horizontal_banner"
+                )
+                for prompt in self.prompts
+            },
+            "geometry_fit_method_counts": {
+                str(int(prompt.obj_id)): {
+                    "court_plane"
+                    if getattr(prompt, "surface_type", "banner") == "court_marking"
+                    else "vp_constrained_horizontal_banner": 2
+                }
+                for prompt in self.prompts
+            },
+        }
+
+
 def test_run_pipeline_video_records_coverage_stats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -266,7 +318,7 @@ def test_run_pipeline_video_rejects_persistent_bad_geometry(
         )
 
 
-def test_run_pipeline_video_skips_court_marking_prompts_but_keeps_banner_metrics(
+def test_run_pipeline_video_skips_court_marking_prompts_when_geometry_disabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -315,6 +367,70 @@ def test_run_pipeline_video_skips_court_marking_prompts_but_keeps_banner_metrics
     }
     assert metrics["object_rejection_counts"]["2"] == 2
     assert metrics["object_rejection_reasons"]["2"] == {"unsupported_surface_type:court_marking": 2}
+
+
+def test_run_pipeline_video_uses_geometry_for_supported_non_banner_surfaces(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={
+            0: {
+                1: np.ones((24, 32), dtype=np.uint8) * 255,
+                2: np.ones((24, 32), dtype=np.uint8) * 255,
+            },
+            1: {
+                1: np.ones((24, 32), dtype=np.uint8) * 255,
+                2: np.ones((24, 32), dtype=np.uint8) * 255,
+            },
+        },
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _FakeWriter.instances = []
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+    monkeypatch.setattr(
+        pipeline_mod.court_geometry_mod,
+        "GeometryFittingEngine",
+        _FakeGeometryEngine,
+    )
+
+    config = _video_config()
+    config["pipeline"]["geometry"] = {"enabled": True}
+    config["input"]["prompts"] = [
+        {"obj_id": 1, "points": [[10, 10]], "labels": [1], "surface_type": "back_wall_banner"},
+        {
+            "obj_id": 2,
+            "points": [[20, 20], [24, 20], [20, 16]],
+            "labels": [1, 1, 0],
+            "surface_type": "court_marking",
+        },
+    ]
+
+    results = pipeline_mod.run_pipeline_video(
+        config,
+        output_path=str(tmp_path / "output.mp4"),
+    )
+
+    metrics = results["metrics"]
+    assert metrics["frames_with_valid_objects"] == 2
+    assert metrics["geometry_config_enabled"] is True
+    assert metrics["geometry_runtime_enabled"] is True
+    assert metrics["geometry_active_objects"] == [1, 2]
+    assert metrics["object_geometry_model"] == {
+        "1": "vp_constrained_horizontal_banner",
+        "2": "court_plane",
+    }
+    assert metrics["geometry_fit_method_counts"]["2"] == {"court_plane": 2}
+    assert metrics["object_valid_frame_coverage"]["2"] == {
+        "frames_valid": 2,
+        "coverage_ratio": 1.0,
+    }
 
 
 def test_run_pipeline_video_uses_stabilized_masks_before_fitting_and_records_metrics(
@@ -400,3 +516,75 @@ def test_run_pipeline_video_uses_stabilized_masks_before_fitting_and_records_met
     assert metrics["stabilization_frames_blended"] == 0
     assert metrics["stabilization_frames_raw_accepted"] == 1
     assert metrics["stabilization_object_stats"]["1"]["frames_held"] == 1
+    assert metrics["stabilization_config_enabled"] is True
+    assert metrics["stabilization_runtime_enabled"] is True
+
+
+def test_run_pipeline_video_fails_when_stabilization_is_enabled_but_runtime_metrics_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={0: {1: _banner_mask()}, 1: {1: _banner_mask()}},
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+    monkeypatch.setattr(
+        pipeline_mod.stabilization_mod,
+        "stabilize_video_segments",
+        lambda **kwargs: (kwargs["video_segments"], {}),
+    )
+
+    config = _video_config()
+    config["pipeline"]["stabilization"] = {"enabled": True, "mode": "hybrid"}
+
+    with pytest.raises(RuntimeError, match="stabilization was enabled"):
+        pipeline_mod.run_pipeline_video(
+            config,
+            output_path=str(tmp_path / "output.mp4"),
+        )
+
+
+def test_run_pipeline_video_fails_when_geometry_is_enabled_but_runtime_metrics_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={0: {1: _banner_mask()}, 1: {1: _banner_mask()}},
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _FakeCompositor())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    class _BrokenGeometryEngine(_FakeGeometryEngine):
+        def finalize_metrics(self):
+            return {}
+
+    monkeypatch.setattr(
+        pipeline_mod.court_geometry_mod,
+        "GeometryFittingEngine",
+        _BrokenGeometryEngine,
+    )
+
+    config = _video_config()
+    config["pipeline"]["geometry"] = {"enabled": True}
+    config["input"]["prompts"] = [
+        {"obj_id": 1, "points": [[10, 10]], "labels": [1], "surface_type": "back_wall_banner"}
+    ]
+
+    with pytest.raises(RuntimeError, match="geometry was enabled"):
+        pipeline_mod.run_pipeline_video(
+            config,
+            output_path=str(tmp_path / "output.mp4"),
+        )

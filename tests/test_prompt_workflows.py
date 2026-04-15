@@ -44,7 +44,7 @@ def test_collect_prompts_keeps_t4_hint_for_sam2() -> None:
     assert "--gpu T4" in command
 
 
-def test_collect_prompts_persists_labels_and_frame_idx(
+def test_collect_prompts_persists_labels_frame_idx_and_geometry_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -72,6 +72,8 @@ def test_collect_prompts_persists_labels_and_frame_idx(
                 points=np.array([[10.0, 20.0], [15.0, 25.0]], dtype=np.float32),
                 labels=np.array([1, 0], dtype=np.int32),
                 frame_idx=frame_idx,
+                surface_type="back_wall_banner",
+                geometry_model="vp_constrained_horizontal_banner",
             )
         ],
     )
@@ -96,6 +98,8 @@ def test_collect_prompts_persists_labels_and_frame_idx(
             "points": [[10, 20], [15, 25]],
             "labels": [1, 0],
             "frame_idx": 12,
+            "surface_type": "back_wall_banner",
+            "geometry_model": "vp_constrained_horizontal_banner",
         }
     ]
 
@@ -144,12 +148,15 @@ def test_shipped_sam3_matrix_templates_preserve_prompt_shape(template_name: str)
     assert any(0 in prompt["labels"] for prompt in sam3_cfg["input"]["prompts"])
 
 
-def test_sam3_default_config_uses_inpaint_and_banner_only_prompts() -> None:
+def test_sam3_default_config_enables_geometry_for_tennis_banners() -> None:
     sam3_cfg = yaml.safe_load((ROOT / "configs" / "sam3_default.yaml").read_text())
     fast_cfg = yaml.safe_load((ROOT / "configs" / "matrix" / "1prompt_fast.yaml").read_text())
 
     assert sam3_cfg["pipeline"]["compositor"]["type"] == "inpaint"
+    assert sam3_cfg["pipeline"]["geometry"]["enabled"] is True
     assert fast_cfg["pipeline"]["compositor"]["type"] == "alpha"
-    assert all(
-        prompt.get("surface_type", "banner") == "banner" for prompt in sam3_cfg["input"]["prompts"]
-    )
+    assert [prompt["surface_type"] for prompt in sam3_cfg["input"]["prompts"]] == [
+        "back_wall_banner",
+        "side_wall_banner",
+        "back_wall_banner",
+    ]

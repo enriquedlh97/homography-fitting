@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -20,15 +21,16 @@ class _FakePreviewSegmenter:
         prompts: list[ObjectPrompt],
     ) -> tuple[np.ndarray, dict[int, np.ndarray], int, dict[int, dict[str, object]]]:
         self.calls.append((video_path, prompts))
+        obj_id = int(prompts[0].obj_id)
         frame = np.zeros((24, 32, 3), dtype=np.uint8)
-        masks = {1: np.ones((24, 32), dtype=np.uint8) * 255}
+        masks = {obj_id: np.ones((24, 32), dtype=np.uint8) * 255}
         diagnostics = {
-            1: {
-                "obj_id": 1,
+            obj_id: {
+                "obj_id": obj_id,
                 "frame_idx": 5,
                 "usable_outputs": True,
                 "parsed_nonempty_masks": 1,
-                "mask_area_px": int(masks[1].astype(bool).sum()),
+                "mask_area_px": int(masks[obj_id].astype(bool).sum()),
                 "mask_bbox": [0, 0, 31, 23],
             }
         }
@@ -87,16 +89,17 @@ class _TinyMaskPreviewSegmenter(_FakePreviewSegmenter):
         prompts: list[ObjectPrompt],
     ) -> tuple[np.ndarray, dict[int, np.ndarray], int, dict[int, dict[str, object]]]:
         self.calls.append((video_path, prompts))
+        obj_id = int(prompts[0].obj_id)
         frame = np.zeros((24, 32, 3), dtype=np.uint8)
         mask = np.zeros((24, 32), dtype=np.uint8)
         mask[0, 0] = 255
         return (
             frame,
-            {1: mask},
+            {obj_id: mask},
             5,
             {
-                1: {
-                    "obj_id": 1,
+                obj_id: {
+                    "obj_id": obj_id,
                     "frame_idx": 5,
                     "usable_outputs": True,
                     "parsed_nonempty_masks": 1,
@@ -114,6 +117,7 @@ class _CompactSmallMaskPreviewSegmenter(_FakePreviewSegmenter):
         prompts: list[ObjectPrompt],
     ) -> tuple[np.ndarray, dict[int, np.ndarray], int, dict[int, dict[str, object]]]:
         self.calls.append((video_path, prompts))
+        obj_id = int(prompts[0].obj_id)
         frame = np.zeros((24, 32, 3), dtype=np.uint8)
         mask = np.zeros((24, 32), dtype=np.uint8)
         mask[4:12, 4:12] = np.array(
@@ -131,11 +135,11 @@ class _CompactSmallMaskPreviewSegmenter(_FakePreviewSegmenter):
         )
         return (
             frame,
-            {1: mask},
+            {obj_id: mask},
             5,
             {
-                1: {
-                    "obj_id": 1,
+                obj_id: {
+                    "obj_id": obj_id,
                     "frame_idx": 5,
                     "usable_outputs": True,
                     "parsed_nonempty_masks": 1,
@@ -153,14 +157,15 @@ class _ExhaustedRetryPreviewSegmenter(_FakePreviewSegmenter):
         prompts: list[ObjectPrompt],
     ) -> tuple[np.ndarray, dict[int, np.ndarray], int, dict[int, dict[str, object]]]:
         self.calls.append((video_path, prompts))
+        obj_id = int(prompts[0].obj_id)
         frame = np.zeros((24, 32, 3), dtype=np.uint8)
         return (
             frame,
             {},
             5,
             {
-                1: {
-                    "obj_id": 1,
+                obj_id: {
+                    "obj_id": obj_id,
                     "frame_idx": 5,
                     "usable_outputs": False,
                     "parsed_nonempty_masks": 0,
@@ -186,6 +191,7 @@ def test_prompt_config_round_trip_preserves_labels_frame_idx_and_surface_type(
             labels=np.array([1, 0], dtype=np.int32),
             frame_idx=7,
             surface_type="court_marking",
+            geometry_model="court_plane",
         )
     ]
 
@@ -199,6 +205,7 @@ def test_prompt_config_round_trip_preserves_labels_frame_idx_and_surface_type(
             "labels": [1, 0],
             "frame_idx": 7,
             "surface_type": "court_marking",
+            "geometry_model": "court_plane",
         }
     ]
 
@@ -208,6 +215,45 @@ def test_prompt_config_round_trip_preserves_labels_frame_idx_and_surface_type(
     np.testing.assert_array_equal(round_trip[0].labels, prompts[0].labels)
     assert round_trip[0].frame_idx == 7
     assert round_trip[0].surface_type == "court_marking"
+    assert round_trip[0].geometry_model == "court_plane"
+
+
+class _PreviewGeometryEngine:
+    def __init__(self, *, prompts, **_kwargs) -> None:
+        self.prompts = prompts
+        self.details: dict[int, SimpleNamespace] = {}
+
+    def fit_frame(self, *, masks_by_obj, **_kwargs):
+        corners_map = {}
+        for prompt in self.prompts:
+            obj_id = int(prompt.obj_id)
+            self.details[obj_id] = SimpleNamespace(
+                fit_method="court_plane",
+                held=False,
+                used_fallback=False,
+            )
+            if obj_id in masks_by_obj:
+                corners_map[obj_id] = np.array(
+                    [[1, 1], [14, 1], [14, 10], [1, 10]],
+                    dtype=np.float32,
+                )
+        return corners_map, {}
+
+    def finalize_metrics(self):
+        return {
+            "geometry_runtime_enabled": True,
+            "geometry_active_objects": [int(prompt.obj_id) for prompt in self.prompts],
+            "geometry_frames_held": 0,
+            "geometry_fallback_frames": 0,
+            "vp_width_valid_ratio": 1.0,
+            "vp_depth_valid_ratio": 1.0,
+            "object_geometry_model": {
+                str(int(prompt.obj_id)): "court_plane" for prompt in self.prompts
+            },
+            "geometry_fit_method_counts": {
+                str(int(prompt.obj_id)): {"court_plane": 1} for prompt in self.prompts
+            },
+        }
 
 
 def test_load_prompts_warns_for_legacy_sam3_outline_configs(
@@ -296,7 +342,7 @@ def test_run_pipeline_uses_sam3_preview_mode(
     assert results["metrics"]["preview_ok"] is True
 
 
-def test_run_pipeline_skips_court_marking_prompts_in_sam3_preview(
+def test_run_pipeline_skips_court_marking_prompts_in_sam3_preview_when_geometry_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = {
@@ -347,6 +393,54 @@ def test_run_pipeline_skips_court_marking_prompts_in_sam3_preview(
         "skipped (unsupported_surface_type:court_marking)"
         in (results["metrics"]["preview_failure_reasons"][0])
     )
+
+
+def test_run_pipeline_uses_geometry_for_court_marking_prompts_in_sam3_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "pipeline": {
+            "mode": "image",
+            "segmenter": {"type": "sam3_video"},
+            "fitter": {"type": "pca", "params": {}},
+            "compositor": {"type": "inpaint", "params": {}},
+            "camera": {"focal_length": None},
+            "geometry": {"enabled": True},
+        },
+        "input": {
+            "video": "/tmp/input.mp4",
+            "prompts": [
+                {
+                    "obj_id": 9,
+                    "points": [[10, 10], [14, 10], [10, 4]],
+                    "labels": [1, 1, 0],
+                    "frame_idx": 5,
+                    "surface_type": "court_marking",
+                }
+            ],
+        },
+    }
+    preview_segmenter = _FakePreviewSegmenter()
+    monkeypatch.setattr(pipeline_mod, "build_video_segmenter", lambda _cfg: preview_segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _PreviewFitter())
+    monkeypatch.setattr(
+        pipeline_mod.court_geometry_mod,
+        "GeometryFittingEngine",
+        _PreviewGeometryEngine,
+    )
+
+    results = pipeline_mod.run_pipeline(config)
+
+    diag = results["metrics"]["preview_object_diagnostics"]["9"]
+    assert results["metrics"]["preview_ok"] is True
+    assert results["metrics"]["geometry_config_enabled"] is True
+    assert results["metrics"]["geometry_runtime_enabled"] is True
+    assert results["metrics"]["geometry_active_objects"] == [9]
+    assert results["metrics"]["object_geometry_model"] == {"9": "court_plane"}
+    assert diag["fit_method"] == "court_plane"
+    assert diag["fit_status"] == "ok"
+    assert diag["fit_held"] is False
+    assert diag["fit_used_fallback"] is False
 
 
 def test_run_pipeline_marks_degenerate_sam3_preview_masks_as_failures(

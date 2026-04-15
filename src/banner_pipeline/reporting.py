@@ -29,6 +29,19 @@ _PASSTHROUGH_KEYS = [
     "object_rejection_counts",
     "object_rejection_reasons",
     "sam3_reanchor_events",
+    "geometry_config_enabled",
+    "geometry_runtime_enabled",
+    "geometry_active_objects",
+    "object_geometry_model",
+    "geometry_fit_method_counts",
+    "stabilization_config_enabled",
+    "stabilization_runtime_enabled",
+    "stabilization_object_stats",
+    "git_branch",
+    "git_commit_sha",
+    "requested_config_path",
+    "frozen_config_path",
+    "frozen_config_sha256",
 ]
 
 _NUMERIC_KEYS = [
@@ -53,6 +66,16 @@ _NUMERIC_KEYS = [
     "first_frame_with_mask",
     "last_frame_with_mask",
     "max_consecutive_mask_gap",
+    "geometry_total_s",
+    "geometry_frames_held",
+    "geometry_fallback_frames",
+    "vp_width_valid_ratio",
+    "vp_depth_valid_ratio",
+    "stabilization_total_s",
+    "stabilization_static_frame_ratio",
+    "stabilization_frames_held",
+    "stabilization_frames_blended",
+    "stabilization_frames_raw_accepted",
 ]
 
 

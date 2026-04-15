@@ -104,6 +104,12 @@ def _geometry_enabled(pipeline_cfg: dict[str, Any]) -> bool:
     return court_geometry_mod.is_enabled(pipeline_cfg.get("geometry"))
 
 
+def _stabilization_enabled(pipeline_cfg: dict[str, Any]) -> bool:
+    return stabilization_mod.StabilizationConfig.from_dict(
+        pipeline_cfg.get("stabilization")
+    ).enabled
+
+
 def _is_supported_banner_surface(
     prompt: ObjectPrompt,
     *,
@@ -181,7 +187,9 @@ def _save_prompts_to_config(
 
 def _looks_like_legacy_sam2_outline_prompts(prompts: list[ObjectPrompt]) -> bool:
     """Heuristic warning for SAM2-style outline prompts reused with SAM3."""
-    banner_prompts = [prompt for prompt in prompts if _is_supported_banner_surface(prompt)]
+    banner_prompts = [
+        prompt for prompt in prompts if _is_supported_banner_surface(prompt, geometry_enabled=True)
+    ]
     if not banner_prompts:
         return False
     if not all(np.all(prompt.labels == 1) for prompt in banner_prompts):
@@ -210,7 +218,7 @@ def _validate_prompt_points(segmenter_type: str, prompts: list[ObjectPrompt]) ->
         return
 
     for prompt in prompts:
-        if not _is_supported_banner_surface(prompt):
+        if not _is_supported_banner_surface(prompt, geometry_enabled=True):
             continue
         points = np.asarray(prompt.points, dtype=np.float32)
         labels = np.asarray(prompt.labels, dtype=np.int32)
@@ -280,6 +288,62 @@ def _fit_corners(
         if corners is not None:
             corners_map[obj_id] = corners
     return corners_map
+
+
+def _geometry_active_object_ids(
+    prompts: list[ObjectPrompt],
+    *,
+    geometry_enabled: bool,
+) -> list[int]:
+    if not geometry_enabled:
+        return []
+    active_obj_ids: list[int] = []
+    for prompt in prompts:
+        if not _is_supported_banner_surface(prompt, geometry_enabled=True):
+            continue
+        if court_geometry_mod.resolve_geometry_model(prompt) == "mask_free_quad":
+            continue
+        active_obj_ids.append(int(prompt.obj_id))
+    return sorted(set(active_obj_ids))
+
+
+def _init_runtime_feature_metrics(
+    metrics: dict[str, Any],
+    *,
+    pipeline_cfg: dict[str, Any],
+    prompts: list[ObjectPrompt],
+) -> None:
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    metrics["geometry_config_enabled"] = geometry_enabled
+    metrics["geometry_runtime_enabled"] = False
+    metrics["geometry_active_objects"] = _geometry_active_object_ids(
+        prompts,
+        geometry_enabled=geometry_enabled,
+    )
+    metrics["stabilization_config_enabled"] = _stabilization_enabled(pipeline_cfg)
+    metrics["stabilization_runtime_enabled"] = False
+
+
+def _require_runtime_feature_metrics(
+    *,
+    feature_name: str,
+    metrics: dict[str, Any],
+    config_enabled: bool,
+    runtime_enabled: bool,
+    required_keys: list[str],
+) -> None:
+    if not config_enabled:
+        return
+    if not runtime_enabled:
+        raise RuntimeError(
+            f"{feature_name} was enabled in the config, but the runtime path did not execute."
+        )
+    missing_keys = [key for key in required_keys if key not in metrics]
+    if missing_keys:
+        raise RuntimeError(
+            f"{feature_name} was enabled in the config, but runtime metrics were missing: "
+            f"{missing_keys}."
+        )
 
 
 def _load_overlay(logo_path: str | None) -> np.ndarray | None:
@@ -554,6 +618,8 @@ def _build_preview_diagnostics(
                 "geometry_model": geometry_model,
                 "fit_status": "not_run",
                 "fit_method": "not_run",
+                "fit_held": False,
+                "fit_used_fallback": False,
                 "fit_geometry_flags": [],
                 "seed_ok": False,
                 "failure_stage": "mask",
@@ -565,6 +631,8 @@ def _build_preview_diagnostics(
         )
         if geometry_engine is not None and obj_id in geometry_engine.details:
             base_diag["fit_method"] = geometry_engine.details[obj_id].fit_method
+            base_diag["fit_held"] = geometry_engine.details[obj_id].held
+            base_diag["fit_used_fallback"] = geometry_engine.details[obj_id].used_fallback
 
         if geometry_engine is None and surface_type not in SUPPORTED_BANNER_SURFACE_TYPES:
             skip_reason = _surface_skip_reason(surface_type)
@@ -778,6 +846,7 @@ def run_pipeline(
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
 
     # --- Segment ---
     t0 = time.perf_counter()
@@ -814,6 +883,18 @@ def run_pipeline(
         geometry_metrics = geometry_engine.finalize_metrics()
         geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
         metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+        ],
+    )
     print(f"[pipeline] Fitted {len(corners_map)} quads in {metrics['fit_s']:.2f}s")
 
     # --- Composite ---
@@ -915,6 +996,7 @@ def _run_sam3_image_preview(
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
     metrics["preview_frame_idx"] = preview_frame_idx
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
 
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
@@ -942,6 +1024,19 @@ def _run_sam3_image_preview(
         geometry_metrics = geometry_engine.finalize_metrics()
         geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
         metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+            "geometry_fit_method_counts",
+        ],
+    )
     metrics["preview_objects_with_masks"] = sum(
         1 for diag in preview_object_diagnostics.values() if int(diag.get("mask_area_px", 0)) > 0
     )
@@ -1206,6 +1301,7 @@ def run_pipeline_video(
     metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
 
     # Read frame size from the first frame.
     first_frame = load_frame(video_path, frame_idx=0)
@@ -1237,6 +1333,19 @@ def run_pipeline_video(
     metrics["num_frames"] = len(frame_names)
     metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
     metrics.update(stabilization_metrics)
+    if stabilization_metrics:
+        metrics["stabilization_runtime_enabled"] = True
+    _require_runtime_feature_metrics(
+        feature_name="stabilization",
+        metrics=metrics,
+        config_enabled=bool(metrics["stabilization_config_enabled"]),
+        runtime_enabled=bool(metrics["stabilization_runtime_enabled"]),
+        required_keys=[
+            "stabilization_total_s",
+            "stabilization_static_frame_ratio",
+            "stabilization_object_stats",
+        ],
+    )
     print(
         f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s",
     )
@@ -1402,6 +1511,19 @@ def run_pipeline_video(
         geometry_metrics = geometry_engine.finalize_metrics()
         geometry_metrics["geometry_total_s"] = round(sum(fit_times), 4)
         metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+            "geometry_fit_method_counts",
+        ],
+    )
     (
         metrics["object_valid_frame_coverage"],
         metrics["object_rejection_counts"],
@@ -1454,7 +1576,9 @@ def run_pipeline_video(
         + metrics["write_video_s"],
         4,
     )
-    metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+    metrics["output_fps"] = (
+        round(len(frame_names) / metrics["total_s"], 2) if metrics["total_s"] > 0 else 0.0
+    )
 
     # Per-stage breakdown from _perf timers (empty dict if profiling disabled).
     if _perf.PERF_ENABLED:
