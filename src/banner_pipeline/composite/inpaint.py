@@ -104,20 +104,30 @@ class InpaintCompositor(Compositor):
                 mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
 
                 if inpaint_method == "black_fill":
-                    # Black fill: replace mask region with black.
-                    # LED banners are physically black panels, so this
-                    # matches the ground truth better than inpainting.
+                    # Black fill: replace the entire quad region with black.
+                    # Uses the fitted corners (not just the SAM mask) to get
+                    # a clean rectangular fill matching the physical LED panel.
                     inpainted_roi = frame_roi.copy()
-                    feather = int(kwargs.get("black_fill_feather_px", 3))
+                    feather = int(kwargs.get("black_fill_feather_px", 5))
+                    # Build a quad mask from the corners for a clean rectangle
+                    quad_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                    pts = corners_roi.astype(np.int32).reshape((-1, 1, 2))
+                    cv2.fillPoly(quad_mask, [pts], 255)
+                    # Optionally dilate the quad mask slightly
+                    if mask_dilate_px > 0:
+                        dk = cv2.getStructuringElement(
+                            cv2.MORPH_ELLIPSE, (mask_dilate_px, mask_dilate_px)
+                        )
+                        quad_mask = cv2.dilate(quad_mask, dk)
                     if feather > 0:
                         kf = feather * 2 + 1
-                        mask_soft = cv2.GaussianBlur(mask_u8_roi.astype(np.float32), (kf, kf), 0)
+                        mask_soft = cv2.GaussianBlur(quad_mask.astype(np.float32), (kf, kf), 0)
                         mask_soft = (mask_soft / 255.0)[..., None]
                         inpainted_roi = (
                             inpainted_roi.astype(np.float32) * (1.0 - mask_soft)
                         ).astype(np.uint8)
                     else:
-                        inpainted_roi[mask_u8_roi > 0] = 0
+                        inpainted_roi[quad_mask > 0] = 0
                 elif inpaint_method == "gradient_fill":
                     # Gradient fill: compute a smooth fill from border
                     # pixels using distance-weighted interpolation.
