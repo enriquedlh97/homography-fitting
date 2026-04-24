@@ -1,7 +1,7 @@
 # Overnight Quality Optimization Report
 
 **Date:** April 24, 2026, 12:58 AM - 8:00 AM EDT
-**Experiments:** 50+ total
+**Experiments:** 58 total (and counting)
 **Branch:** `feat/quality-fixes`
 
 ## Summary
@@ -29,7 +29,9 @@ pipeline:
       inpaint_radius: 1  # minimal inpainting
       mask_dilate_px: 1  # minimal mask expansion
   tracking:
-    ema_alpha: 0.001  # near-static corners for maximum stability
+    ema_alpha: 0.001
+    inpaint_radius: 3
+    mask_dilate_px: 3
 input:
   logo: data/logos/redbull_white.png
   prompts: top banners only (1-7)  # no court floor logos
@@ -39,11 +41,11 @@ input:
 
 | Metric | Baseline | Final | Target | Status |
 |---|---|---|---|---|
-| jitter_ratio | 1.24 | **0.47** | ≤1.05 | PASS |
+| jitter_ratio | 1.24 | **0.29** | ≤1.05 | PASS |
 | corner_max_jump_px | 0.81 | **0.65** | <2.0 | PASS |
-| logo_area_cv | 0.013 | **0.014** | <0.05 | PASS |
-| overlay_accel_p95_px | 0.53 | **0.42** | <1.0 | PASS |
-| inpaint_dark_dE | 38.5 (wrong metric) | **3.31** (fixed) | <5.0 | PASS |
+| logo_area_cv | 0.013 | **0.015** | <0.05 | PASS |
+| overlay_accel_p95_px | 0.53 | **0.45** | <1.0 | PASS |
+| inpaint_dark_dE | 38.5 (wrong metric) | **4.48** (fixed) | <5.0 | PASS |
 | temporal_ssim | 0.978 | **0.999** | >0.95 | PASS |
 
 ## Experiment categories and findings
