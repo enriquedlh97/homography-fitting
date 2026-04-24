@@ -13,7 +13,6 @@ pipeline:
     params:
       padding: 0.01
       lum_strength: 0.8
-      inpaint: false
   camera:
     focal_length: null
 input:
