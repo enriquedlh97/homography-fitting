@@ -184,6 +184,7 @@ checkpoints_volume = modal.Volume.from_name(
 @app.function(
     gpu=_GPU,
     volumes={"/checkpoints": checkpoints_volume},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=86400,  # 24h — Modal's max
 )
 def run_on_gpu(
