@@ -40,6 +40,7 @@
 | meta_seamless_A100 | A100 | 4.9 | hull | meta_white | ns | 1 | 1 | 1.698 | 0.734 | 0.9921 | 6/6 |
 | ferrari_seamless_A100 | A100 | 5.1 | hull | ferrari_white | ns | 1 | 1 | 1.699 | 0.729 | 0.9921 | 6/6 |
 | seamless_best_A100 | A100 | 4.1 | hull | redbull_white | ns | 1 | 1 | 1.700 | 0.734 | 0.9921 | 6/6 |
+| rbtight_seamless_A100 | A100 | 3.2 | hull | redbull_white_tight | ns | 1 | 1 | 1.700 | 0.734 | 0.9921 | 6/6 |
 | FINAL_ROLEX_H100_BEST | H100 | 4.5 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.723 | 0.9923 | 6/6 |
 | FINAL_FERRARI_H100_BEST | H100 | 5.9 | hull | ferrari_white | ns | 1 | 1 | 1.704 | 0.726 | 0.9936 | 6/6 |
 | rolex_hull_ns_d1_r1 | B200 | 5.8 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.709 | 0.9933 | 6/6 |
@@ -59,6 +60,7 @@
 | hull_ns_d1_r1 | B200 | 10.6 | hull | redbull_white | ns | 1 | 1 | 1.782 | 0.704 | 0.9950 | 6/6 |
 | rb_lum05_r1_d1 | B200 | 10.2 | hull | redbull_white | ns | 1 | 1 | 1.784 | 0.702 | 0.9947 | 6/6 |
 | meta_lum05_r1_d1 | B200 | 6.1 | hull | meta_white | ns | 1 | 1 | 1.810 | 0.708 | 0.9957 | 5/6 |
+| gemini_balanced_A100 | A100 | 3.1 | hull | gemini-logo | ns | 1 | 3 | 1.833 | 0.423 | 0.9963 | 6/6 |
 | ferrari_hull_ns_d1_r1 | B200 | 6.0 | hull | ferrari_white | ns | 1 | 1 | 1.834 | 0.707 | 0.9958 | 6/6 |
 | meta_hull_ns_d1_r1 | B200 | 10.1 | hull | meta_white | ns | 1 | 1 | 1.834 | 0.709 | 0.9961 | 6/6 |
 | ferrari_lum05_r1_d1 | B200 | 5.7 | hull | ferrari_white | ns | 1 | 1 | 1.856 | 0.706 | 0.9955 | 6/6 |
