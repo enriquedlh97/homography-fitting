@@ -52,6 +52,7 @@ class InpaintCompositor(Compositor):
     ) -> np.ndarray:
         padding: float = kwargs.get("padding", 0.05)
         lum_strength: float = kwargs.get("lum_strength", 1.0)
+        do_inpaint: bool = kwargs.get("inpaint", True)
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
@@ -85,8 +86,11 @@ class InpaintCompositor(Compositor):
             mask_roi = mask[y0:y1, x0:x1] if mask is not None else None
 
         # --- Step 1: inpaint (ROI only) ---
+        # When inpaint=False, skip Telea inpainting and just alpha-blend
+        # the new logo directly on top. This avoids the color mismatch
+        # artifact where the inpainted black differs from the banner tone.
         with Timer("inpaint.inpaint"):
-            if mask_roi is not None:
+            if do_inpaint and mask_roi is not None:
                 mask_u8_roi = (mask_roi > 0).astype(np.uint8) * 255
                 mask_u8_roi = cv2.dilate(mask_u8_roi, self._dilate_kern)
                 inpainted_roi = cv2.inpaint(

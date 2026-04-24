@@ -1,5 +1,5 @@
 pipeline:
-  mode: image
+  mode: video_tracking
   segmenter:
     type: sam2_image
     checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
@@ -11,9 +11,8 @@ pipeline:
   compositor:
     type: inpaint
     params:
-      padding: 0.01
+      padding: 0.05
       lum_strength: 0.8
-      inpaint: false
   camera:
     focal_length: null
 input:
