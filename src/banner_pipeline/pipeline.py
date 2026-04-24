@@ -1810,15 +1810,227 @@ def run_pipeline_video_tracking(
 # ---------------------------------------------------------------------------
 
 
+def run_pipeline_video_hybrid(
+    config: dict,
+    output_path: str = "output.mp4",
+    config_path: str | None = None,
+) -> dict:
+    """Hybrid video pipeline: SAM masks for inpainting + CornerTracker for placement.
+
+    Combines the best of both approaches:
+    - SAM2/SAM3 video propagation for per-frame masks (correct inpainting, no drift)
+    - CornerTracker optical flow for smooth logo placement (no jitter)
+
+    Flow:
+    1. SAM2/SAM3 video propagation produces per-frame masks
+    2. PCA fitter runs on frame 0 to get initial corners
+    3. CornerTracker propagates corners via optical flow + EMA
+    4. Per frame: use SAM mask for inpainting, use tracked corners for logo warp
+    """
+    import os
+    import shutil
+
+    metrics: dict[str, Any] = {}
+    pipeline_cfg = config["pipeline"]
+    input_cfg = config["input"]
+    video_path = input_cfg["video"]
+    segmenter_type = pipeline_cfg["segmenter"]["type"]
+
+    # --- Get prompts ---
+    prompts = _load_or_collect_prompts(
+        config=config,
+        config_path=config_path,
+        video_path=video_path,
+        segmenter_type=segmenter_type,
+        log_prefix="[hybrid]",
+        frame_idx=0,
+    )
+    if not prompts:
+        return {"output_path": None, "metrics": metrics}
+
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    active_prompts = [
+        prompt
+        for prompt in prompts
+        if segmenter_type != "sam3_video"
+        or _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
+    ]
+
+    input_fps = get_video_fps(video_path)
+    metrics["input_fps"] = input_fps
+    metrics["num_prompts"] = len(prompts)
+    metrics["video_path"] = video_path
+    metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
+    metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
+    metrics["mode"] = "video_hybrid"
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+
+    first_frame = load_frame(video_path, frame_idx=0)
+    metrics["frame_height"], metrics["frame_width"] = first_frame.shape[:2]
+
+    # --- Step 1: SAM video propagation for per-frame masks ---
+    t0 = time.perf_counter()
+    video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
+    video_segments, frame_dir, frame_names = video_segmenter.segment_video(
+        video_path,
+        active_prompts,
+    )
+
+    # Optional stabilization
+    stabilization_metrics: dict[str, Any] = {}
+    stabilization_cfg = pipeline_cfg.get("stabilization")
+    if stabilization_cfg:
+        video_segments, stabilization_metrics = stabilization_mod.stabilize_video_segments(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            video_segments=video_segments,
+            tracked_obj_ids=sorted({int(p.obj_id) for p in active_prompts}),
+            config=stabilization_cfg,
+        )
+
+    metrics["segment_total_s"] = time.perf_counter() - t0
+    metrics["num_frames"] = len(frame_names)
+    metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
+    metrics.update(stabilization_metrics)
+    print(f"[hybrid] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s")
+
+    # --- Step 2: Fit quads on frame 0 + init CornerTracker ---
+    fitter = build_fitter(pipeline_cfg["fitter"])
+    fitter_params = pipeline_cfg["fitter"].get("params", {})
+
+    frame0_bgr = cv2.imread(os.path.join(frame_dir, frame_names[0]))
+    if frame0_bgr is None:
+        raise RuntimeError(f"Could not read frame 0: {frame_names[0]}")
+
+    masks_frame0 = video_segments.get(0, {})
+    masks_2d_frame0 = {oid: m.squeeze() for oid, m in masks_frame0.items()}
+    corners_frame0: dict[int, np.ndarray] = {}
+    for obj_id, mask_2d in masks_2d_frame0.items():
+        corners = fitter.fit(mask_2d, **fitter_params)
+        if corners is not None:
+            corners_frame0[obj_id] = corners
+
+    ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
+    tracker = CornerTracker(ema_alpha=ema_alpha)
+    gray0 = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+    for obj_id, corners in corners_frame0.items():
+        tracker.init(obj_id, corners, gray0)
+    n_obj = len(corners_frame0)
+    print(f"[hybrid] Initialized CornerTracker with {n_obj} objects, ema={ema_alpha}")
+
+    # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
+    overlay = None
+    logo_path = input_cfg.get("logo")
+    if logo_path:
+        overlay = _load_overlay(logo_path)
+
+    compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
+    compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
+    focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
+
+    composite_times: list[float] = []
+    tracking_times: list[float] = []
+    write_video_s = 0.0
+    num_written = 0
+
+    _perf.reset()
+
+    fh, fw = frame0_bgr.shape[:2]
+    video_writer = StreamingVideoWriter(output_path, fw, fh, fps=input_fps)
+
+    try:
+        for frame_idx, fname in enumerate(frame_names):
+            if frame_idx == 0:
+                frame_bgr = frame0_bgr
+            else:
+                frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
+                if frame_bgr is None:
+                    raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+
+            # Get SAM masks for this frame (for inpainting).
+            masks_for_frame = video_segments.get(frame_idx, {})
+            masks_2d = {oid: m.squeeze() for oid, m in masks_for_frame.items()}
+
+            # Get tracked corners for this frame (for logo placement).
+            t_track = time.perf_counter()
+            if frame_idx == 0:
+                current_corners = corners_frame0
+            else:
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                current_corners = tracker.update(gray)
+            tracking_times.append(time.perf_counter() - t_track)
+
+            # Composite: SAM mask for inpaint, tracked corners for logo warp.
+            if overlay is not None and compositor is not None and current_corners:
+                t_comp = time.perf_counter()
+                K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
+                for obj_id in sorted(current_corners):
+                    extra_kw = dict(compositor_params)
+                    if compositor.name == "alpha":
+                        homo = compute_oriented_homography(current_corners[obj_id], K)
+                        extra_kw["homo"] = homo
+                    frame_bgr = compositor.composite(
+                        frame_bgr,
+                        current_corners[obj_id],  # tracked corners (smooth)
+                        overlay,
+                        mask=masks_2d.get(obj_id),  # SAM mask (correct inpainting)
+                        **extra_kw,
+                    )
+                composite_times.append(time.perf_counter() - t_comp)
+
+            t_write = time.perf_counter()
+            video_writer.write(frame_bgr)
+            num_written += 1
+            write_video_s += time.perf_counter() - t_write
+
+            if (frame_idx + 1) % 50 == 0 or frame_idx == len(frame_names) - 1:
+                print(f"[hybrid] Processed frame {frame_idx + 1}/{len(frame_names)}")
+
+    finally:
+        video_writer.close()
+        shutil.rmtree(frame_dir, ignore_errors=True)
+
+    metrics["write_video_s"] = round(write_video_s, 4)
+    print(f"[hybrid] Wrote {num_written} frames -> {output_path}")
+
+    if tracking_times:
+        track_arr = np.array(tracking_times) * 1000
+        metrics["tracking_mean_ms"] = round(float(track_arr.mean()), 2)
+    if composite_times:
+        comp_arr = np.array(composite_times) * 1000
+        metrics["composite_mean_ms"] = round(float(comp_arr.mean()), 2)
+
+    metrics["total_s"] = round(
+        metrics["segment_total_s"] + sum(tracking_times) + sum(composite_times) + write_video_s,
+        4,
+    )
+    metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+
+    if _perf.PERF_ENABLED:
+        metrics["composite_breakdown_ms"] = _perf.snapshot_ms(divisor=len(frame_names))
+
+    return {"output_path": output_path, "metrics": metrics}
+
+
 def run(
     config: dict,
     config_path: str | None = None,
     output_path: str = "output.mp4",
 ) -> dict:
-    """Dispatch to single-frame, video, or tracking pipeline based on config ``mode``."""
+    """Dispatch to single-frame, video, tracking, or hybrid pipeline."""
     mode = config.get("pipeline", {}).get("mode", "image")
+    if mode == "video_hybrid":
+        return run_pipeline_video_hybrid(
+            config,
+            output_path=output_path,
+            config_path=config_path,
+        )
     if mode == "video_tracking":
-        return run_pipeline_video_tracking(config, output_path=output_path, config_path=config_path)
+        return run_pipeline_video_tracking(
+            config,
+            output_path=output_path,
+            config_path=config_path,
+        )
     if mode == "video":
         return run_pipeline_video(config, output_path=output_path, config_path=config_path)
     return run_pipeline(config, config_path=config_path)
