@@ -1917,6 +1917,28 @@ def run_pipeline_video_hybrid(
         if corners is not None:
             corners_frame0[obj_id] = corners
 
+    # Enlarge fitted corners to cover the prompt point bounding box.
+    # The hull fitter often produces quads much smaller than the actual
+    # banner panel because the SAM mask only covers part of the content.
+    prompt_bboxes: dict[int, np.ndarray] = {}
+    for prompt in prompts:
+        pts = prompt.points
+        x0, y0 = pts.min(axis=0)
+        x1, y1 = pts.max(axis=0)
+        prompt_bboxes[prompt.obj_id] = np.array(
+            [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32
+        )
+    for obj_id in list(corners_frame0.keys()):
+        if obj_id in prompt_bboxes:
+            fitted = corners_frame0[obj_id]
+            bbox = prompt_bboxes[obj_id]
+            # Use the prompt bbox if the fitted quad is much smaller
+            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+            bbox_area = cv2.contourArea(bbox)
+            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                corners_frame0[obj_id] = bbox
+                print(f"[hybrid] obj {obj_id}: enlarged {fitted_area:.0f}→{bbox_area:.0f}px²")
+
     _tracking_cfg = pipeline_cfg.get("tracking", {})
     ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
     fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
