@@ -156,6 +156,8 @@
 | no_shade_blend | B200 | 3.5 | pca | redbull_white |  | 3 | 3 | 4.522 | 0.303 | 0.9992 | 6/6 |
 | mild_lum_0.2 | B200 | 4.7 | pca | redbull_white |  | 3 | 3 | 4.535 | 0.299 | 0.9990 | 6/6 |
 | r3_ema01 | B200 | 9.6 | pca | redbull_white |  | 3 | 3 | 4.559 | 0.404 | 0.9988 | 6/6 |
+| gradient_fill_raw | B200 | 5.3 | hull | redbull_white | gradient_fill | 1 | 3 | 4.566 | 0.576 | 0.9926 | 6/6 |
+| gradient_fill_seamless | B200 | 5.4 | hull | redbull_white | gradient_fill | 1 | 3 | 4.679 | 0.594 | 0.9881 | 6/6 |
 | lp_fitter | B200 | 5.4 | lp | redbull_white |  | 3 | 3 | 4.690 | 0.297 | 0.9992 | 6/6 |
 | feather_11px | B200 | 4.9 | pca | redbull_white |  | 3 | 3 | 4.862 | 0.274 | 0.9991 | 6/6 |
 | fronto_parallel | B200 | 5.3 | fronto_parallel | redbull_white |  | 3 | 3 | 4.894 | 0.314 | 0.9993 | 6/6 |
