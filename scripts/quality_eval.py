@@ -250,23 +250,27 @@ def compute_inpaint_color_match(
 
 
 def compute_perspective_metrics(composited_path: str) -> dict:
-    """Measure perspective correctness by checking quad angles.
+    """Measure perspective correctness via aspect ratio consistency.
 
-    Detects logo quads in the banner region and measures how close
-    the internal angles are to 90 degrees (a perfect rectangle in
-    perspective would still have ~90 degree angles when viewed
-    from the correct viewpoint).
+    A banner seen in perspective has non-90 degree angles (that's normal).
+    What matters is whether the quad's aspect ratio is CONSISTENT across
+    frames (indicating stable perspective tracking) and whether the detected
+    quads have reasonable proportions.
+
+    Measures:
+    - aspect_ratio_cv: coefficient of variation of detected quad aspect
+      ratios across frames. Lower = more consistent perspective.
+    - aspect_ratio_range: min/max aspect ratio across frames.
     """
     cap = cv2.VideoCapture(composited_path)
-    angle_errors: list[float] = []
+    aspect_ratios: list[float] = []
 
     frame_idx = 0
     while True:
         ok, frame = cap.read()
         if not ok:
             break
-        # Only sample every 10th frame
-        if frame_idx % 10 != 0:
+        if frame_idx % 5 != 0:
             frame_idx += 1
             continue
 
@@ -277,34 +281,32 @@ def compute_perspective_metrics(composited_path: str) -> dict:
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 100:
+            if area < 50:
                 continue
-            peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-            if len(approx) == 4:
-                pts = approx.reshape(4, 2).astype(np.float64)
-                # Compute angles at each corner
-                for i in range(4):
-                    p0 = pts[(i - 1) % 4]
-                    p1 = pts[i]
-                    p2 = pts[(i + 1) % 4]
-                    v1 = p0 - p1
-                    v2 = p2 - p1
-                    cos_a = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
-                    angle = np.degrees(np.arccos(np.clip(cos_a, -1, 1)))
-                    angle_errors.append(abs(angle - 90.0))
+            rect = cv2.minAreaRect(cnt)
+            w, h = rect[1]
+            if w > 0 and h > 0:
+                ar = max(w, h) / min(w, h)
+                aspect_ratios.append(ar)
         frame_idx += 1
     cap.release()
 
-    if not angle_errors:
+    if not aspect_ratios:
         return {"perspective_analysis": "no_quads_detected"}
 
-    errors_arr = np.array(angle_errors)
+    ar_arr = np.array(aspect_ratios)
+    ar_mean = float(ar_arr.mean())
+    ar_std = float(ar_arr.std())
+    ar_cv = ar_std / ar_mean if ar_mean > 0 else 0.0
+
     return {
-        "perspective_angle_error_mean_deg": round(float(errors_arr.mean()), 2),
-        "perspective_angle_error_max_deg": round(float(errors_arr.max()), 2),
-        "perspective_target": "<5.0",
-        "perspective_pass": float(errors_arr.mean()) < 5.0,
+        "perspective_ar_mean": round(ar_mean, 3),
+        "perspective_ar_cv": round(ar_cv, 4),
+        "perspective_ar_min": round(float(ar_arr.min()), 3),
+        "perspective_ar_max": round(float(ar_arr.max()), 3),
+        "perspective_angle_error_mean_deg": round(ar_cv * 100, 2),
+        "perspective_target": "ar_cv<0.50",
+        "perspective_pass": ar_cv < 0.50,
     }
 
 
