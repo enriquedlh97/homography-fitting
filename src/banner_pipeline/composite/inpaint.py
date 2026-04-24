@@ -54,7 +54,8 @@ class InpaintCompositor(Compositor):
         lum_strength: float = kwargs.get("lum_strength", 1.0)
         do_inpaint: bool = kwargs.get("inpaint", True)
         inpaint_method: str = kwargs.get("inpaint_method", "telea")
-        inpaint_radius: int = kwargs.get("inpaint_radius", 5)
+        inpaint_radius: int = kwargs.get("inpaint_radius", 3)
+        mask_dilate_px: int = kwargs.get("mask_dilate_px", 3)
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
@@ -94,7 +95,11 @@ class InpaintCompositor(Compositor):
         with Timer("inpaint.inpaint"):
             if do_inpaint and mask_roi is not None:
                 mask_u8_roi = (mask_roi > 0).astype(np.uint8) * 255
-                mask_u8_roi = cv2.dilate(mask_u8_roi, self._dilate_kern)
+                dilate_kern = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (mask_dilate_px, mask_dilate_px),
+                )
+                mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
 
                 if inpaint_method == "median_fill":
                     # Simple median-color fill: sample the border pixels
