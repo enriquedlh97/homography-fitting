@@ -894,6 +894,39 @@ def run_pipeline(
         )
     else:
         corners_map = _fit_corners(masks, fitter, fitter_params)
+
+    # Enlarge tiny fitted quads to cover the prompt point bounding box.
+    # Same logic as video_hybrid mode — the hull fitter often produces
+    # quads much smaller than the panel because SAM masks are partial.
+    prompt_bboxes: dict[int, np.ndarray] = {}
+    for prompt in prompts:
+        pts = prompt.points
+        x0p, y0p = pts.min(axis=0)
+        x1p, y1p = pts.max(axis=0)
+        prompt_bboxes[prompt.obj_id] = np.array(
+            [[x0p, y0p], [x1p, y0p], [x1p, y1p], [x0p, y1p]], dtype=np.float32
+        )
+    if prompt_bboxes:
+        bbox_heights = {oid: float(b[2, 1] - b[0, 1]) for oid, b in prompt_bboxes.items()}
+        ref_height = float(np.median(list(bbox_heights.values())))
+        for oid in prompt_bboxes:
+            bbox = prompt_bboxes[oid]
+            h = bbox_heights[oid]
+            if h > 0 and abs(h - ref_height) > 2:
+                cy = (bbox[0, 1] + bbox[2, 1]) / 2
+                bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
+                bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
+                prompt_bboxes[oid] = bbox
+    for obj_id in list(corners_map.keys()):
+        if obj_id in prompt_bboxes:
+            fitted = corners_map[obj_id]
+            bbox = prompt_bboxes[obj_id]
+            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+            bbox_area = cv2.contourArea(bbox)
+            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                corners_map[obj_id] = bbox
+                print(f"[pipeline] obj {obj_id}: enlarged {fitted_area:.0f}→{bbox_area:.0f}px²")
+
     metrics["fit_s"] = time.perf_counter() - t0
     if geometry_engine is not None:
         geometry_metrics = geometry_engine.finalize_metrics()
@@ -1956,14 +1989,41 @@ def run_pipeline_video_hybrid(
 
     _tracking_cfg = pipeline_cfg.get("tracking", {})
     ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
-    fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
-    lk_win = _tracking_cfg.get("lk_win_size", 21)
-    tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold, lk_win_size=lk_win)
-    gray0 = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
-    for obj_id, corners in corners_frame0.items():
-        tracker.init(obj_id, corners, gray0)
-    n_obj = len(corners_frame0)
-    print(f"[hybrid] Initialized CornerTracker with {n_obj} objects, ema={ema_alpha}")
+    corner_source = _tracking_cfg.get("corner_source", "bbox")
+
+    if corner_source == "bbox":
+        # Use static prompt bboxes for all frames — most reliable.
+        # Produces the same uniform sizing as image mode.
+        tracker = None
+        static_corners = {oid: bbox.copy() for oid, bbox in prompt_bboxes.items()}
+        # Also include any fitted corners that don't have prompt bboxes.
+        for oid, c in corners_frame0.items():
+            if oid not in static_corners:
+                static_corners[oid] = c.astype(np.float32).copy()
+        print(f"[hybrid] Using static bbox corners for {len(static_corners)} objects")
+    elif corner_source == "mask_refit":
+        # Re-fit from per-frame SAM masks + bbox fallback + EMA.
+        tracker = None
+        static_corners = None
+        smoothed_corners: dict[int, np.ndarray] = {
+            oid: c.astype(np.float32).copy() for oid, c in corners_frame0.items()
+        }
+        print(
+            f"[hybrid] Using mask_refit corners with {len(corners_frame0)} objects, ema={ema_alpha}"
+        )
+    elif corner_source == "optical_flow":
+        # Legacy optical flow tracking (can drift on textureless surfaces).
+        static_corners = None
+        fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
+        lk_win = _tracking_cfg.get("lk_win_size", 21)
+        tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold, lk_win_size=lk_win)
+        gray0 = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+        for obj_id, corners in corners_frame0.items():
+            tracker.init(obj_id, corners, gray0)
+        n_obj = len(corners_frame0)
+        print(f"[hybrid] CornerTracker (optical_flow) {n_obj} objects, ema={ema_alpha}")
+    else:
+        raise ValueError(f"Unknown corner_source: {corner_source!r}")
 
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
@@ -2003,13 +2063,51 @@ def run_pipeline_video_hybrid(
             masks_for_frame = video_segments.get(frame_idx, {})
             masks_2d = {oid: m.squeeze() for oid, m in masks_for_frame.items()}
 
-            # Get tracked corners for this frame (for logo placement).
+            # Get corners for this frame (for logo placement).
             t_track = time.perf_counter()
-            if frame_idx == 0:
-                current_corners = corners_frame0
+            if static_corners is not None:
+                # bbox mode: same corners every frame.
+                current_corners = static_corners
+            elif tracker is not None:
+                # optical_flow mode.
+                if frame_idx == 0:
+                    current_corners = corners_frame0
+                else:
+                    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    current_corners = tracker.update(gray)
             else:
-                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-                current_corners = tracker.update(gray)
+                # mask_refit mode.
+                if frame_idx == 0:
+                    current_corners = corners_frame0
+                else:
+                    raw_corners: dict[int, np.ndarray] = {}
+                    for obj_id, mask_2d_frame in masks_2d.items():
+                        refit = fitter.fit(mask_2d_frame, **fitter_params)
+                        if refit is not None:
+                            raw_corners[obj_id] = refit
+
+                    for obj_id in list(raw_corners.keys()):
+                        if obj_id in prompt_bboxes:
+                            fitted = raw_corners[obj_id]
+                            bbox = prompt_bboxes[obj_id]
+                            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+                            bbox_area = cv2.contourArea(bbox)
+                            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                                raw_corners[obj_id] = bbox.copy()
+
+                    for obj_id in smoothed_corners:
+                        if obj_id not in raw_corners and obj_id in prompt_bboxes:
+                            raw_corners[obj_id] = prompt_bboxes[obj_id].copy()
+
+                    for obj_id, rc in raw_corners.items():
+                        rc_f = rc.astype(np.float32)
+                        if obj_id in smoothed_corners:
+                            smoothed_corners[obj_id] = (
+                                ema_alpha * rc_f + (1 - ema_alpha) * smoothed_corners[obj_id]
+                            )
+                        else:
+                            smoothed_corners[obj_id] = rc_f
+                    current_corners = {oid: c.copy() for oid, c in smoothed_corners.items()}
             tracking_times.append(time.perf_counter() - t_track)
 
             # Composite: SAM mask for inpaint, tracked corners for logo warp.

@@ -37,6 +37,9 @@ class InpaintCompositor(Compositor):
         # per object. Reused for temporal consistency across frames.
         self._ref_lum_captured: bool = False
         self._ref_lum: tuple[float, float] | None = None
+        # Per-slot sampled color for local_color_match mode.
+        # Captured from frame 0's original banner text, keyed by slot center x.
+        self._local_color_cache: dict[int, np.ndarray] = {}
 
     @property
     def name(self) -> str:
@@ -104,6 +107,27 @@ class InpaintCompositor(Compositor):
             corners_roi = corners - np.array([x0, y0], dtype=corners.dtype)
             frame_roi = frame[y0:y1, x0:x1]
             mask_roi = mask[y0:y1, x0:x1] if mask is not None else None
+
+        # --- Step 0.5: sample local banner color for per-slot tinting ---
+        # Before erasing old logos, sample the bright pixels in the ROI
+        # to capture the original text color at this position.  Each slot
+        # gets its own color temperature (center slots brighter, edges dimmer).
+        local_color_match: bool = kwargs.get("local_color_match", False)
+        local_alpha_boost: float = kwargs.get("local_alpha_boost", 1.8)
+        slot_color: np.ndarray | None = None
+        if local_color_match:
+            slot_key = int(corners[:, 0].mean())  # keyed by slot center x
+            slot_color = self._local_color_cache.get(slot_key)
+            if slot_color is None and mask_roi is not None:
+                # Sample bright pixels (logo text) from the original frame ROI.
+                gray_roi = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY)
+                bright_mask = gray_roi > 100  # text pixels (not dark background)
+                if bright_mask.any() and bright_mask.sum() > 10:
+                    bright_pixels = frame_roi[bright_mask]
+                    # Use the 90th percentile — the brightest core text pixels.
+                    # This is the color our full-coverage pixels should match.
+                    slot_color = np.percentile(bright_pixels, 90, axis=0).astype(np.uint8)
+                    self._local_color_cache[slot_key] = slot_color
 
         # --- Step 1: inpaint (ROI only) ---
         # When inpaint=False, skip Telea inpainting and just alpha-blend
@@ -282,6 +306,34 @@ class InpaintCompositor(Compositor):
             warped_rgb = cv2.warpPerspective(rgb_canvas, H_roi, (roi_w, roi_h))
             warped_alpha = cv2.warpPerspective(alpha_canvas, H_roi, (roi_w, roi_h))
 
+        # --- Step 3.5: local color tinting + alpha boost ---
+        # When local_color_match is enabled, tint the warped logo to match
+        # the original banner text color sampled at this slot's position.
+        # Also boost alpha to counteract thin-text anti-aliasing brightness loss.
+        if local_color_match and slot_color is not None:
+            with Timer("inpaint.local_tint"):
+                logo_px = warped_alpha > 0
+                if logo_px.any():
+                    wrgb = warped_rgb.astype(np.float32)
+                    # Normalize each pixel by its brightness, then scale to
+                    # the local target color. This keeps the logo's internal
+                    # shading (anti-aliased edges dimmer, core strokes bright).
+                    gray = np.max(wrgb, axis=2, keepdims=True)
+                    gray = np.clip(gray, 1, 255)
+                    ratio = wrgb / gray
+                    # slot_color is in BGR order (from frame sampling)
+                    target = slot_color.astype(np.float32)
+                    new_rgb = ratio * target[np.newaxis, np.newaxis, :]
+                    # Only modify logo pixels, leave background zeros alone
+                    warped_rgb[logo_px] = np.clip(new_rgb[logo_px], 0, 255).astype(np.uint8)
+
+                    # Boost alpha so thin anti-aliased text is more opaque.
+                    # Without this, sub-pixel text strokes blend too heavily
+                    # with the dark background, making logos appear dimmer
+                    # than the originals.
+                    boosted = np.clip(warped_alpha.astype(np.float32) * local_alpha_boost, 0, 255)
+                    warped_alpha = boosted.astype(np.uint8)
+
         # --- Step 4: luminosity matching (LAB) on ROI ---
         # Uses ref_lum from the first call for temporal consistency.
         # lum_strength blends between the original L and the remapped L
@@ -380,7 +432,30 @@ class InpaintCompositor(Compositor):
                     except cv2.error:
                         pass  # fall through to normal blending
 
-            if shade_blend:
+            # Blend mode selection.
+            blend_mode: str = kwargs.get("blend_mode", "alpha")
+
+            if blend_mode == "additive":
+                # Additive blending: simulates LED panel light emission.
+                # Computes emission = target - bg so that fully covered
+                # pixels land at exactly the target color.
+                bg_f = inpainted_roi.astype(np.float32)
+                logo_f = warped_rgb.astype(np.float32)
+                # Emission: what the LED adds on top of ambient (bg).
+                emission = np.clip(logo_f - bg_f, 0, 255)
+                result_roi = np.clip(bg_f + emission * a, 0, 255).astype(np.uint8)
+            elif blend_mode == "led":
+                # LED blend: treat alpha as a soft coverage mask.
+                # Pixels with any coverage (alpha > 0) are steered toward
+                # the target color.  Uses a power curve to expand coverage
+                # so thin anti-aliased text appears at near-full brightness.
+                led_gamma: float = kwargs.get("led_gamma", 0.3)
+                bg_f = inpainted_roi.astype(np.float32)
+                logo_f = warped_rgb.astype(np.float32)
+                # Expand the alpha: power < 1.0 pushes midrange alpha up
+                coverage = np.power(a, led_gamma)  # e.g. gamma=0.3, alpha=0.3 → 0.70
+                result_roi = (logo_f * coverage + bg_f * (1.0 - coverage)).astype(np.uint8)
+            elif shade_blend:
                 # Shadow-preserving: extract illumination from the original
                 # frame ROI, normalize, and apply to the warped logo.
                 gray_roi = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY).astype(np.float32)
