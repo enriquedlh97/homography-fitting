@@ -1,5 +1,5 @@
 pipeline:
-  mode: image
+  mode: video_hybrid
   segmenter:
     type: sam2_image
     checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
@@ -11,7 +11,7 @@ pipeline:
   compositor:
     type: inpaint
     params:
-      padding: 0.0
+      padding: 0.01
       lum_strength: 0.8
       inpaint_method: median_fill
       shade_blend: true
