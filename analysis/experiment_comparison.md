@@ -82,6 +82,7 @@
 | FINAL_META_H100 | H100 | 5.2 | hull | meta_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9969 | 6/6 |
 | DEMO_redbull_white_H100 | H100 | 5.3 | hull | redbull_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9966 | 6/6 |
 | rolex_hull_ns_d1 | B200 | 4.3 | hull | rolex_white | ns | 1 | 3 | 2.116 | 0.423 | 0.9966 | 6/6 |
+| pca_seamless_ns_r3_d1 | B200 | 5.1 | pca | redbull_white | ns | 1 | 3 | 2.127 | 0.430 | 0.9961 | 6/6 |
 | padding_005 | B200 | 5.0 | hull | redbull_white | ns | 1 | 3 | 2.158 | 0.424 | 0.9973 | 6/6 |
 | hull_ns_d1_pad01 | B200 | 5.3 | hull | redbull_white | ns | 1 | 3 | 2.171 | 0.423 | 0.9971 | 6/6 |
 | hull_ns_d1_ema01 | B200 | 8.8 | hull | redbull_white | ns | 1 | 3 | 2.179 | 0.446 | 0.9975 | 6/6 |
