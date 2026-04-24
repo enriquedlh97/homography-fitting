@@ -58,6 +58,7 @@ class InpaintCompositor(Compositor):
         mask_dilate_px: int = kwargs.get("mask_dilate_px", 3)
         alpha_feather_px: int = kwargs.get("alpha_feather_px", 5)
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
+        erase_only: bool = kwargs.get("erase_only", False)
 
         # Cache BGRA overlay (constant across the entire video run).
         with Timer("inpaint.bgr2bgra"):
@@ -102,7 +103,22 @@ class InpaintCompositor(Compositor):
                 )
                 mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
 
-                if inpaint_method == "gradient_fill":
+                if inpaint_method == "black_fill":
+                    # Black fill: replace mask region with black.
+                    # LED banners are physically black panels, so this
+                    # matches the ground truth better than inpainting.
+                    inpainted_roi = frame_roi.copy()
+                    feather = int(kwargs.get("black_fill_feather_px", 3))
+                    if feather > 0:
+                        kf = feather * 2 + 1
+                        mask_soft = cv2.GaussianBlur(mask_u8_roi.astype(np.float32), (kf, kf), 0)
+                        mask_soft = (mask_soft / 255.0)[..., None]
+                        inpainted_roi = (
+                            inpainted_roi.astype(np.float32) * (1.0 - mask_soft)
+                        ).astype(np.uint8)
+                    else:
+                        inpainted_roi[mask_u8_roi > 0] = 0
+                elif inpaint_method == "gradient_fill":
                     # Gradient fill: compute a smooth fill from border
                     # pixels using distance-weighted interpolation.
                     # Better than median_fill for banners with gradients.
@@ -165,6 +181,11 @@ class InpaintCompositor(Compositor):
                     )
             else:
                 inpainted_roi = frame_roi.copy()
+
+        # If erase_only, skip logo overlay and return the erased frame.
+        if erase_only:
+            frame[y0:y1, x0:x1] = inpainted_roi
+            return frame
 
         # --- Step 2: build logo + alpha canvases ---
         with Timer("inpaint.build_canvas"):

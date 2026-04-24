@@ -1931,11 +1931,16 @@ def run_pipeline_video_hybrid(
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
     logo_path = input_cfg.get("logo")
+    compositor_params = pipeline_cfg["compositor"].get("params", {})
+    _erase_only = compositor_params.get("erase_only", False)
     if logo_path:
         overlay = _load_overlay(logo_path)
+    elif _erase_only:
+        overlay = np.zeros((1, 1, 3), dtype=np.uint8)  # dummy for erase-only
 
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
-    compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
+    if compositor is not None and not compositor_params:
+        compositor_params = pipeline_cfg["compositor"].get("params", {})
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
     composite_times: list[float] = []
