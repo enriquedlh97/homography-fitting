@@ -56,6 +56,7 @@ class InpaintCompositor(Compositor):
         inpaint_method: str = kwargs.get("inpaint_method", "telea")
         inpaint_radius: int = kwargs.get("inpaint_radius", 3)
         mask_dilate_px: int = kwargs.get("mask_dilate_px", 3)
+        alpha_feather_px: int = kwargs.get("alpha_feather_px", 5)
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
@@ -235,7 +236,8 @@ class InpaintCompositor(Compositor):
         shade_blend: bool = kwargs.get("shade_blend", False)
 
         with Timer("inpaint.blend"):
-            warped_alpha = cv2.GaussianBlur(warped_alpha, (5, 5), 1.0)
+            ksize = alpha_feather_px if alpha_feather_px % 2 == 1 else alpha_feather_px + 1
+            warped_alpha = cv2.GaussianBlur(warped_alpha, (ksize, ksize), 0)
 
             # Subtract occlusion mask so occluding objects (players) appear
             # in front of the composited logo.
