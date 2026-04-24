@@ -12,10 +12,10 @@ pipeline:
       padding: 0.0
       lum_strength: 0.0
       shade_blend: false
-      inpaint_method: ns
-      inpaint_radius: 3
-      mask_dilate_px: 1
-      seamless_clone: true
+      inpaint_method: median_fill
+      mask_dilate_px: 20
+      alpha_feather_px: 3
+      quad_pad_px: 20
   tracking:
     ema_alpha: 0.001
   camera:
