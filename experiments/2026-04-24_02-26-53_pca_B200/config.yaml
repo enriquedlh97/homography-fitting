@@ -1,0 +1,75 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: pca
+    params:
+      axis: short
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.0
+      lum_strength: 0.8
+      shade_blend: true
+      inpaint_method: telea
+      inpaint_radius: 2
+      mask_dilate_px: 1
+  tracking:
+    ema_alpha: 0.08
+  camera:
+    focal_length: null
+input:
+  video: data/tennis-clip.mp4
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 2
+    points:
+    - - 868
+      - 37
+    - - 870
+      - 66
+    - - 1024
+      - 66
+    - - 1025
+      - 34
+  - obj_id: 3
+    points:
+    - - 1070
+      - 38
+    - - 1069
+      - 63
+    - - 1225
+      - 66
+    - - 1225
+      - 38
+  - obj_id: 4
+    points:
+    - - 1269
+      - 54
+    - - 1271
+      - 35
+    - - 1415
+      - 38
+    - - 1414
+      - 56
+  - obj_id: 5
+    points:
+    - - 1444
+      - 36
+    - - 1441
+      - 53
+    - - 1587
+      - 61
+    - - 1586
+      - 41
+    - - 1517
+      - 36
+    - - 1516
+      - 56
+    - - 1553
+      - 59
+output:
+  dir: experiments/
