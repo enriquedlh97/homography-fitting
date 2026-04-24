@@ -268,12 +268,15 @@ class InpaintCompositor(Compositor):
                     median_bright = float(np.median(illumination))
                 median_bright = max(median_bright, 1.0)
                 shade_map = np.clip(illumination / median_bright, 0.6, 1.4)
-                # Apply shading to warped logo colors.
-                warped_float = warped_rgb.astype(np.float32) * shade_map[:, :, np.newaxis]
+                # Apply shading to BOTH the warped logo AND the inpainted
+                # background, so the entire composited region has consistent
+                # illumination matching the original banner surface.
+                shade_3ch = shade_map[:, :, np.newaxis]
+                warped_float = warped_rgb.astype(np.float32) * shade_3ch
                 warped_float = np.clip(warped_float, 0, 255)
-                result_roi = (
-                    warped_float * a + inpainted_roi.astype(np.float32) * (1.0 - a)
-                ).astype(np.uint8)
+                inpainted_shaded = inpainted_roi.astype(np.float32) * shade_3ch
+                inpainted_shaded = np.clip(inpainted_shaded, 0, 255)
+                result_roi = (warped_float * a + inpainted_shaded * (1.0 - a)).astype(np.uint8)
             else:
                 result_roi = (
                     warped_rgb.astype(np.float32) * a + inpainted_roi.astype(np.float32) * (1.0 - a)
