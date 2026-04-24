@@ -73,7 +73,10 @@ class FrontoParallelBannerFitter(QuadFitter):
         if contour is None:
             return FrontoParallelFitResult(None, None, None)
 
-        parallel_unit = _normalize_vec(np.asarray(parallel_dir, dtype=np.float64))
+        if parallel_dir is not None:
+            parallel_unit = _normalize_vec(np.asarray(parallel_dir, dtype=np.float64))
+        else:
+            parallel_unit = None
         if parallel_unit is None:
             parallel_unit = np.array([1.0, 0.0], dtype=np.float64)
         normal = np.array([-parallel_unit[1], parallel_unit[0]], dtype=np.float64)
