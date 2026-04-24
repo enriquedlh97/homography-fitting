@@ -1,5 +1,5 @@
 pipeline:
-  mode: image
+  mode: video_hybrid
   segmenter:
     type: sam2_image
     checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
@@ -13,12 +13,10 @@ pipeline:
       lum_strength: 0.0
       shade_blend: true
       inpaint_method: ns
-      inpaint_radius: 3
+      inpaint_radius: 2
       mask_dilate_px: 1
   tracking:
     ema_alpha: 0.001
-  camera:
-    focal_length: null
 input:
   video: data/tennis-clip.mp4
   logo: data/logos/redbull_white.png
