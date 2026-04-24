@@ -14,6 +14,7 @@
 | sam3_optimal | A100 | 0.8 | pca | ferrari_white |  | 1 | 1 | 1.368 | 1.730 | 0.9879 | 3/6 |
 | gemini_hull_ns_d1_r1_lum03 | B200 | 5.8 | hull | gemini-logo | ns | 1 | 1 | 1.377 | 0.679 | 0.9943 | 6/6 |
 | gemini_ns_r2_d1_lum10 | B200 | 10.3 | hull | gemini-logo | ns | 1 | 2 | 1.436 | 0.451 | 0.9967 | 6/6 |
+| ULTIMATE_GEMINI_R1_H100 | H100 | 5.8 | hull | gemini-logo | ns | 1 | 1 | 1.441 | 0.718 | 0.9926 | 6/6 |
 | FINAL_GEMINI_H100_LUM10 | H100 | 5.4 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
 | FINAL_GEMINI_BEST_H100 | H100 | 5.1 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
 | center3_ema001 | B200 | 8.5 | pca | redbull_white |  | 1 | 1 | 1.528 | 0.828 | 0.9978 | 6/6 |
@@ -28,12 +29,16 @@
 | seamless_meta_r1_d1 | B200 | 5.7 | hull | meta_white | ns | 1 | 1 | 1.674 | 0.727 | 0.9922 | 6/6 |
 | seamless_rolex_r1_d1 | B200 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.678 | 0.733 | 0.9921 | 6/6 |
 | FINAL_RB_H100_BEST | H100 | 5.4 | hull | redbull_white | ns | 1 | 1 | 1.694 | 0.724 | 0.9929 | 6/6 |
+| seamless_best_A100 | A100 | 4.1 | hull | redbull_white | ns | 1 | 1 | 1.700 | 0.734 | 0.9921 | 6/6 |
 | FINAL_ROLEX_H100_BEST | H100 | 4.5 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.723 | 0.9923 | 6/6 |
 | FINAL_FERRARI_H100_BEST | H100 | 5.9 | hull | ferrari_white | ns | 1 | 1 | 1.704 | 0.726 | 0.9936 | 6/6 |
 | rolex_hull_ns_d1_r1 | B200 | 5.8 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.709 | 0.9933 | 6/6 |
 | gemini_lum05 | B200 | 5.5 | hull | gemini-logo | ns | 1 | 3 | 1.708 | 0.412 | 0.9970 | 6/6 |
 | rolex_lum05_r1_d1 | B200 | 6.0 | hull | rolex_white | ns | 1 | 1 | 1.712 | 0.712 | 0.9931 | 6/6 |
+| ULTIMATE_FERRARI_SEAMLESS_H100 | H100 | 5.3 | hull | ferrari_white | ns | 1 | 1 | 1.716 | 0.727 | 0.9921 | 6/6 |
 | ULTIMATE_RB_H100 | H100 | 5.5 | hull | redbull_white | ns | 1 | 1 | 1.723 | 0.728 | 0.9921 | 6/6 |
+| ULTIMATE_ROLEX_SEAMLESS_H100 | H100 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.725 | 0.727 | 0.9921 | 6/6 |
+| ULTIMATE_META_SEAMLESS_H100 | H100 | 6.3 | hull | meta_white | ns | 1 | 1 | 1.725 | 0.726 | 0.9921 | 6/6 |
 | FINAL_META_H100_BEST | NVIDIA H200 | 4.4 | hull | meta_white | ns | 1 | 1 | 1.746 | 0.722 | 0.9935 | 6/6 |
 | hull_ns_d1_r1_ema005 | B200 | 10.3 | hull | redbull_white | ns | 1 | 1 | 1.749 | 0.716 | 0.9949 | 6/6 |
 | hull_ns_d1_r1_f1 | B200 | 10.5 | hull | redbull_white | ns | 1 | 1 | 1.761 | 0.721 | 0.9959 | 6/6 |
