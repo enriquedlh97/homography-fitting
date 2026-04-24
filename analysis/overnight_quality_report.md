@@ -1,12 +1,20 @@
 # Overnight Quality Optimization Report
 
 **Date:** April 24, 2026, 12:58 AM - 8:00 AM EDT
-**Experiments:** 135+ total
+**Experiments:** 200+ total
 **Branch:** `feat/quality-fixes`
 
 ## Summary
 
-Started at **3/6 metrics passing** (baseline SAM2 video mode). Ended at **6/6 metrics passing** with **4.3x jitter improvement** (1.24 → 0.29) and **4.2x inpaint quality improvement** (4.69 → 1.13 dE) through systematic exploration of fitters, inpaint methods, and compositor parameters across 135+ experiments.
+Started at **3/6 metrics passing** (baseline SAM2 video mode). Ended at **6/6 metrics passing** with **4.3x jitter improvement** (1.24 → 0.29) and **4.2x inpaint quality improvement** (4.69 → 1.13 dE) through systematic exploration of fitters, inpaint methods, blending modes, and compositor parameters across 200+ experiments.
+
+### Late-session discovery: `cv2.seamlessClone` (Poisson blending)
+
+Added `seamless_clone` parameter to the compositor. Uses gradient-domain compositing so logo edges automatically inherit surrounding colors. Results:
+- White logos improved by ~0.12 dE (1.78 → 1.66 for RB at r1/d1)
+- Colorful logos (Gemini) prefer alpha blend + lum_strength=1.0 instead
+- `seamless_clone` is the most impactful single factor at r1/d1, even more than fitter choice
+- PCA+seamless (1.75) nearly matches Hull+seamless (1.66) at r1/d1
 
 ## Key achievements
 
@@ -184,4 +192,5 @@ All three factors contribute additively. d=1 is the biggest factor.
 - `configs/default.yaml` — optimal configuration (hull + NS + d=1)
 - `scripts/generate_experiment_table.py` — generates comparison table from all experiments
 - `analysis/experiment_comparison.md` — sorted comparison table
-- 135+ experiment directories with configs, metrics, crops, and videos
+- `src/banner_pipeline/composite/inpaint.py` — seamless_clone, seamless_mode, gradient_fill
+- 200+ experiment directories with configs, metrics, crops, and videos
