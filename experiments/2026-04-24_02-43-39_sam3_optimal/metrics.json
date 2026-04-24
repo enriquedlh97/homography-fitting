@@ -1,0 +1,172 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "gpu_memory_gb": 39.5,
+  "mode": "video",
+  "num_prompts": 3,
+  "num_prompt_points": 8,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpgx2ydpu9/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "object_frame_coverage": {
+    "2": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "4": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    }
+  },
+  "object_valid_frame_coverage": {
+    "2": {
+      "frames_valid": 202,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_valid": 202,
+      "coverage_ratio": 1.0
+    },
+    "4": {
+      "frames_valid": 201,
+      "coverage_ratio": 0.995
+    }
+  },
+  "object_rejection_counts": {
+    "2": 0,
+    "3": 0,
+    "4": 1
+  },
+  "object_rejection_reasons": {
+    "2": {},
+    "3": {},
+    "4": {
+      "quad_coverage_low": 1
+    }
+  },
+  "sam3_reanchor_events": [
+    {
+      "obj_id": 2,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 4,
+      "frame_idx": 6,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 138,
+      "refresh_count": 2
+    }
+  ],
+  "geometry_config_enabled": true,
+  "geometry_runtime_enabled": true,
+  "geometry_active_objects": [
+    2,
+    3,
+    4
+  ],
+  "object_geometry_model": {
+    "2": "fronto_parallel_wall_banner",
+    "3": "vp_constrained_vertical_banner",
+    "4": "fronto_parallel_wall_banner"
+  },
+  "back_wall_runtime_model": {
+    "2": "fronto_parallel_wall_banner",
+    "4": "fronto_parallel_wall_banner"
+  },
+  "side_wall_runtime_model": {
+    "3": "vp_constrained_vertical_banner"
+  },
+  "geometry_fit_method_counts": {
+    "2": {
+      "fronto_parallel_wall_banner": 202
+    },
+    "3": {
+      "mask_free_quad_fallback": 51,
+      "hold_last_good": 151
+    },
+    "4": {
+      "fronto_parallel_wall_banner": 202
+    }
+  },
+  "stabilization_config_enabled": true,
+  "stabilization_runtime_enabled": true,
+  "stabilization_object_stats": {
+    "2": {
+      "frames_held": 35,
+      "frames_empty_reused": 3,
+      "frames_blended": 164,
+      "frames_raw_accepted": 3,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 3
+    },
+    "3": {
+      "frames_held": 10,
+      "frames_empty_reused": 3,
+      "frames_blended": 189,
+      "frames_raw_accepted": 3,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 3
+    },
+    "4": {
+      "frames_held": 50,
+      "frames_empty_reused": 4,
+      "frames_blended": 149,
+      "frames_raw_accepted": 3,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 4
+    }
+  },
+  "segment_total_s": 215.568761478,
+  "fit_mean_ms": 81.9,
+  "fit_std_ms": 14.56,
+  "composite_mean_ms": 13.09,
+  "composite_std_ms": 7.4,
+  "write_video_s": 2.0791,
+  "total_s": 236.8365,
+  "run_total_s": 239.47503606,
+  "output_fps": 0.85,
+  "frames_with_masks": 202,
+  "frames_with_valid_objects": 202,
+  "frames_with_quads": 202,
+  "frames_composited": 202,
+  "object_masks_total": 606,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 201,
+  "max_consecutive_mask_gap": 0,
+  "geometry_total_s": 16.5443,
+  "geometry_frames_held": 151,
+  "geometry_fallback_frames": 51,
+  "vp_width_valid_ratio": 0.0,
+  "vp_depth_valid_ratio": 1.0,
+  "court_width_candidate_count": 57.5248,
+  "court_depth_candidate_count": 19.5099,
+  "stabilization_total_s": 38.0914,
+  "stabilization_static_frame_ratio": 1.0,
+  "stabilization_frames_held": 95,
+  "stabilization_frames_blended": 502,
+  "stabilization_frames_raw_accepted": 9,
+  "git_branch": "feat/quality-fixes",
+  "git_commit_sha": "30f330ab6a5822f0de030c35f57cc9e3471ec146",
+  "requested_config_path": "/tmp/sam3_optimal.yaml",
+  "frozen_config_path": "/Users/enriquediazdeleonhicks/repositories/capstone-data-candidates/homography-fitting/experiments/2026-04-24_02-43-39_sam3_optimal/config.yaml",
+  "frozen_config_sha256": "62aae29934ca711100286cb41eb81aaa7c1d221139bd87b102ccb44244e70c9f"
+}
