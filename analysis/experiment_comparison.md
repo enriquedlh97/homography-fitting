@@ -66,6 +66,7 @@
 | meta_hull_ns_d1_r1 | B200 | 10.1 | hull | meta_white | ns | 1 | 1 | 1.834 | 0.709 | 0.9961 | 6/6 |
 | ferrari_lum05_r1_d1 | B200 | 5.7 | hull | ferrari_white | ns | 1 | 1 | 1.856 | 0.706 | 0.9955 | 6/6 |
 | ULTIMATE_gemini_H100 | H100 | 4.9 | hull | gemini-logo | ns | 1 | 3 | 1.870 | 0.413 | 0.9964 | 6/6 |
+| PROD_gemini_H100 | H100 | 5.4 | hull | gemini-logo | ns | 1 | 3 | 1.870 | 0.413 | 0.9964 | 6/6 |
 | FINAL_GEMINI_H100 | H100 | 5.9 | hull | gemini-logo | ns | 1 | 3 | 1.892 | 0.417 | 0.9964 | 6/6 |
 | seamless_ns_r2_d1 | B200 | 10.3 | hull | redbull_white | ns | 1 | 2 | 1.900 | 0.477 | 0.9956 | 6/6 |
 | DEMO_gemini_H100 | H100 | 5.2 | hull | gemini-logo | ns | 1 | 3 | 1.911 | 0.415 | 0.9964 | 6/6 |
@@ -87,11 +88,14 @@
 | PROD_meta_white | B200 | 5.6 | hull | meta_white | ns | 1 | 3 | 2.068 | 0.434 | 0.9961 | 6/6 |
 | seamless_balanced_T4 | T4 | 0.5 | hull | redbull_white | ns | 1 | 3 | 2.080 | 0.442 | 0.9958 | 6/6 |
 | ULTIMATE_rolex_white_H100 | H100 | 4.8 | hull | rolex_white | ns | 1 | 3 | 2.085 | 0.422 | 0.9962 | 6/6 |
+| PROD_rolex_H100 | H100 | 5.3 | hull | rolex_white | ns | 1 | 3 | 2.085 | 0.422 | 0.9962 | 6/6 |
 | ULTIMATE_meta_white_H100 | H100 | 5.2 | hull | meta_white | ns | 1 | 3 | 2.088 | 0.426 | 0.9962 | 6/6 |
 | FINAL_HULL_NS_ROLEX_H100 | H100 | 4.8 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | DEMO_rolex_white_H100 | NVIDIA H200 | 4.0 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | ULTIMATE_redbull_white_H100 | H100 | 4.8 | hull | redbull_white | ns | 1 | 3 | 2.092 | 0.424 | 0.9962 | 6/6 |
+| PROD_redbull_H100 | H100 | 5.6 | hull | redbull_white | ns | 1 | 3 | 2.092 | 0.424 | 0.9962 | 6/6 |
 | ULTIMATE_ferrari_white_H100 | H100 | 4.8 | hull | ferrari_white | ns | 1 | 3 | 2.093 | 0.424 | 0.9962 | 6/6 |
+| PROD_ferrari_H100 | H100 | 4.6 | hull | ferrari_white | ns | 1 | 3 | 2.093 | 0.424 | 0.9962 | 6/6 |
 | FINAL_HULL_NS_RB_H100 | H100 | 5.4 | hull | redbull_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9966 | 6/6 |
 | FINAL_META_H100 | H100 | 5.2 | hull | meta_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9969 | 6/6 |
 | DEMO_redbull_white_H100 | H100 | 5.3 | hull | redbull_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9966 | 6/6 |
