@@ -104,13 +104,15 @@ class InpaintCompositor(Compositor):
                 mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
 
                 if inpaint_method == "black_fill":
-                    # Black fill: replace the entire quad region with black.
-                    # Uses the fitted corners (not just the SAM mask) to get
-                    # a clean rectangular fill matching the physical LED panel.
+                    # Black fill: erase banner content with black.
+                    # Combines the dilated SAM mask (tracks content) with
+                    # the expanded quad (ensures rectangular coverage).
                     inpainted_roi = frame_roi.copy()
                     feather = int(kwargs.get("black_fill_feather_px", 5))
                     quad_pad = int(kwargs.get("quad_pad_px", 8))
-                    # Expand corners outward from center to cover full panel
+                    # Union of: dilated SAM mask + padded quad
+                    fill_mask = mask_u8_roi.copy()
+                    # Add padded quad region
                     c_roi = corners_roi.copy()
                     if quad_pad > 0:
                         center = c_roi.mean(axis=0)
@@ -119,25 +121,20 @@ class InpaintCompositor(Compositor):
                             norm = np.linalg.norm(direction)
                             if norm > 0:
                                 c_roi[i] += direction / norm * quad_pad
-                    # Build a quad mask from the padded corners
                     quad_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
                     pts = c_roi.astype(np.int32).reshape((-1, 1, 2))
                     cv2.fillPoly(quad_mask, [pts], 255)
-                    # Optionally dilate the quad mask slightly
-                    if mask_dilate_px > 0:
-                        dk = cv2.getStructuringElement(
-                            cv2.MORPH_ELLIPSE, (mask_dilate_px, mask_dilate_px)
-                        )
-                        quad_mask = cv2.dilate(quad_mask, dk)
+                    fill_mask = np.maximum(fill_mask, quad_mask)
+                    # Feather edges
                     if feather > 0:
                         kf = feather * 2 + 1
-                        mask_soft = cv2.GaussianBlur(quad_mask.astype(np.float32), (kf, kf), 0)
+                        mask_soft = cv2.GaussianBlur(fill_mask.astype(np.float32), (kf, kf), 0)
                         mask_soft = (mask_soft / 255.0)[..., None]
                         inpainted_roi = (
                             inpainted_roi.astype(np.float32) * (1.0 - mask_soft)
                         ).astype(np.uint8)
                     else:
-                        inpainted_roi[quad_mask > 0] = 0
+                        inpainted_roi[fill_mask > 0] = 0
                 elif inpaint_method == "gradient_fill":
                     # Gradient fill: compute a smooth fill from border
                     # pixels using distance-weighted interpolation.
