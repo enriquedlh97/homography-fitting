@@ -1991,16 +1991,45 @@ def run_pipeline_video_hybrid(
     ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
     corner_source = _tracking_cfg.get("corner_source", "bbox")
 
-    if corner_source == "bbox":
-        # Use static prompt bboxes for all frames — most reliable.
-        # Produces the same uniform sizing as image mode.
+    if corner_source in ("bbox", "mask_offset", "homography_offset"):
+        # Use prompt bboxes for sizing. "bbox" keeps them static;
+        # "mask_offset" shifts via SAM mask centroids;
+        # "homography_offset" warps via accumulated frame-to-frame homography.
         tracker = None
         static_corners = {oid: bbox.copy() for oid, bbox in prompt_bboxes.items()}
-        # Also include any fitted corners that don't have prompt bboxes.
         for oid, c in corners_frame0.items():
             if oid not in static_corners:
                 static_corners[oid] = c.astype(np.float32).copy()
-        print(f"[hybrid] Using static bbox corners for {len(static_corners)} objects")
+        if corner_source == "homography_offset":
+            _homo_prev_gray = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+            _homo_accum = np.eye(3, dtype=np.float64)
+            _homo_ema: np.ndarray | None = None
+            _homo_base_pts = {
+                oid: c.reshape(-1, 1, 2).astype(np.float64) for oid, c in static_corners.items()
+            }
+            _cut_thresh = _tracking_cfg.get("cut_threshold", 30.0)
+            n_obj = len(static_corners)
+            print(f"[hybrid] homography_offset {n_obj} objects, ema={ema_alpha}")
+        elif corner_source == "mask_offset":
+            # Compute frame-0 mask bboxes as reference for tracking
+            # both translation and scale (handles camera zoom).
+            _mask_ref: dict[int, tuple[float, float, float, float]] = {}
+            for oid, mask_2d in masks_2d_frame0.items():
+                ys, xs = np.where(mask_2d > 0)
+                if len(xs) > 10:
+                    _mask_ref[oid] = (
+                        float(xs.mean()),
+                        float(ys.mean()),
+                        float(xs.max() - xs.min()),
+                        float(ys.max() - ys.min()),
+                    )
+            # Frame center for zoom scaling.
+            _frame_cx = frame0_bgr.shape[1] / 2.0
+            _frame_cy = frame0_bgr.shape[0] / 2.0
+            n_obj = len(static_corners)
+            print(f"[hybrid] mask_offset {n_obj} objects, ema={ema_alpha}")
+        else:
+            print(f"[hybrid] Using static bbox corners for {len(static_corners)} objects")
     elif corner_source == "mask_refit":
         # Re-fit from per-frame SAM masks + bbox fallback + EMA.
         tracker = None
@@ -2065,7 +2094,74 @@ def run_pipeline_video_hybrid(
 
             # Get corners for this frame (for logo placement).
             t_track = time.perf_counter()
-            if static_corners is not None:
+            if corner_source == "homography_offset":
+                if frame_idx == 0:
+                    current_corners = static_corners
+                else:
+                    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    diff = cv2.absdiff(_homo_prev_gray, gray)
+                    if float(diff.mean()) > _cut_thresh:
+                        _homo_accum = np.eye(3, dtype=np.float64)
+                        _homo_ema = None
+                    else:
+                        H_pair, _, ok = stabilization_mod._estimate_pair_homography(
+                            _homo_prev_gray, gray, (fh, fw)
+                        )
+                        if ok:
+                            H = H_pair.astype(np.float64)
+                            if abs(H[2, 2]) > 1e-9:
+                                H /= H[2, 2]
+                            _homo_accum = H @ _homo_accum
+                        if _homo_ema is None:
+                            _homo_ema = _homo_accum.copy()
+                        else:
+                            blended = ema_alpha * _homo_accum + (1 - ema_alpha) * _homo_ema
+                            if abs(blended[2, 2]) > 1e-9:
+                                blended = blended / blended[2, 2]
+                            _homo_ema = blended
+                    _homo_prev_gray = gray
+                    H_use = _homo_ema if _homo_ema is not None else _homo_accum
+                    current_corners = {}
+                    for oid, base_pts in _homo_base_pts.items():
+                        warped = cv2.perspectiveTransform(base_pts, H_use)
+                        current_corners[oid] = warped.reshape(4, 2).astype(np.float32)
+            elif corner_source == "mask_offset":
+                # Shift + scale static bboxes using SAM mask bbox changes.
+                assert static_corners is not None
+                if frame_idx == 0:
+                    current_corners = static_corners
+                else:
+                    dxs: list[float] = []
+                    dys: list[float] = []
+                    sxs: list[float] = []
+                    for oid in static_corners:
+                        if oid not in _mask_ref or oid not in masks_2d:
+                            continue
+                        m = masks_2d[oid]
+                        ys, xs = np.where(m > 0)
+                        if len(xs) < 10:
+                            continue
+                        ref_cx, ref_cy, ref_w, ref_h = _mask_ref[oid]
+                        cur_cx = float(xs.mean())
+                        cur_cy = float(ys.mean())
+                        cur_w = float(xs.max() - xs.min())
+                        dxs.append(cur_cx - ref_cx)
+                        dys.append(cur_cy - ref_cy)
+                        if ref_w > 5:
+                            sxs.append(cur_w / ref_w)
+                    if dxs:
+                        med_dx = float(np.median(dxs))
+                        med_dy = float(np.median(dys))
+                        med_sx = float(np.median(sxs)) if sxs else 1.0
+                        current_corners = {}
+                        for oid, base in static_corners.items():
+                            # Scale around frame center, then translate.
+                            scaled = (base - [_frame_cx, _frame_cy]) * med_sx
+                            shifted = scaled + [_frame_cx + med_dx, _frame_cy + med_dy]
+                            current_corners[oid] = shifted.astype(np.float32)
+                    else:
+                        current_corners = static_corners
+            elif static_corners is not None:
                 # bbox mode: same corners every frame.
                 current_corners = static_corners
             elif tracker is not None:
