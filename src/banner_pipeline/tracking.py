@@ -78,6 +78,16 @@ class CornerTracker:
 
         pts_old = np.vstack(all_pts).reshape(-1, 1, 2)
 
+        # Scene cut detection: if the frame difference is very large,
+        # the camera angle has changed drastically. Reset EMA state
+        # to prevent smoothing across the cut.
+        frame_diff = cv2.absdiff(self._prev_gray, frame_gray)
+        mean_diff = float(frame_diff.mean())
+        if mean_diff > 30:  # hard cut threshold
+            # Reset EMA: use raw optical flow without smoothing
+            for oid in obj_ids:
+                self._smoothed[oid] = self._corners[oid].copy()
+
         # Forward flow: prev -> current
         pts_new, status, _ = cv2.calcOpticalFlowPyrLK(
             self._prev_gray, frame_gray, pts_old, None, **self.LK_PARAMS
