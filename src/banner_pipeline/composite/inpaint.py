@@ -256,6 +256,28 @@ class InpaintCompositor(Compositor):
 
             a = (warped_alpha.astype(np.float32) / 255.0)[..., None]
 
+            # Poisson (seamless clone) blending: uses gradient-domain
+            # compositing so the logo edges inherit surrounding colors.
+            seamless: bool = kwargs.get("seamless_clone", False)
+            if seamless and warped_alpha.any():
+                clone_mask = (warped_alpha > 128).astype(np.uint8) * 255
+                ys, xs = np.where(clone_mask > 0)
+                if len(xs) > 0 and len(ys) > 0:
+                    cx = int((xs.min() + xs.max()) / 2)
+                    cy = int((ys.min() + ys.max()) / 2)
+                    try:
+                        result_roi = cv2.seamlessClone(
+                            warped_rgb,
+                            inpainted_roi,
+                            clone_mask,
+                            (cx, cy),
+                            cv2.NORMAL_CLONE,
+                        )
+                        frame[y0:y1, x0:x1] = result_roi
+                        return frame
+                    except cv2.error:
+                        pass  # fall through to normal blending
+
             if shade_blend:
                 # Shadow-preserving: extract illumination from the original
                 # frame ROI, normalize, and apply to the warped logo.
