@@ -34,15 +34,19 @@ class CornerTracker:
         higher error are rejected and the previous position is kept.
     """
 
-    LK_PARAMS = dict(
-        winSize=(21, 21),
-        maxLevel=3,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
-    )
-
-    def __init__(self, ema_alpha: float = 0.3, fb_threshold: float = 2.0) -> None:
+    def __init__(
+        self,
+        ema_alpha: float = 0.3,
+        fb_threshold: float = 2.0,
+        lk_win_size: int = 21,
+    ) -> None:
         self.ema_alpha = ema_alpha
         self.fb_threshold = fb_threshold
+        self.LK_PARAMS = dict(
+            winSize=(lk_win_size, lk_win_size),
+            maxLevel=3,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
+        )
         self._corners: dict[int, np.ndarray] = {}  # obj_id -> (4, 2) float32
         self._smoothed: dict[int, np.ndarray] = {}  # EMA-smoothed version
         self._prev_gray: np.ndarray | None = None

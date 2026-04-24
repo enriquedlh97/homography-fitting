@@ -19,6 +19,7 @@ pipeline:
   tracking:
     ema_alpha: 0.01
     fb_threshold: 1.0
+    lk_win_size: 31
   camera:
     focal_length: null
 input:
