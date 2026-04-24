@@ -205,11 +205,31 @@ class InpaintCompositor(Compositor):
             return frame
 
         # --- Step 2: build logo + alpha canvases ---
+        # When using black_fill, expand the logo placement to match the
+        # expanded fill region so logos are visible on all banner slots.
+        logo_corners = corners.copy()
+        logo_corners_roi = corners_roi.copy()
+        if inpaint_method == "black_fill":
+            quad_pad = int(kwargs.get("quad_pad_px", 8))
+            if quad_pad > 0:
+                center = logo_corners.mean(axis=0)
+                for i in range(4):
+                    direction = logo_corners[i] - center
+                    norm = np.linalg.norm(direction)
+                    if norm > 0:
+                        logo_corners[i] += direction / norm * quad_pad
+                center_roi = logo_corners_roi.mean(axis=0)
+                for i in range(4):
+                    direction = logo_corners_roi[i] - center_roi
+                    norm = np.linalg.norm(direction)
+                    if norm > 0:
+                        logo_corners_roi[i] += direction / norm * quad_pad
+
         with Timer("inpaint.build_canvas"):
-            w_top = np.linalg.norm(corners[1] - corners[0])
-            w_bot = np.linalg.norm(corners[2] - corners[3])
-            h_left = np.linalg.norm(corners[3] - corners[0])
-            h_right = np.linalg.norm(corners[2] - corners[1])
+            w_top = np.linalg.norm(logo_corners[1] - logo_corners[0])
+            w_bot = np.linalg.norm(logo_corners[2] - logo_corners[3])
+            h_left = np.linalg.norm(logo_corners[3] - logo_corners[0])
+            h_right = np.linalg.norm(logo_corners[2] - logo_corners[1])
             avg_w = (w_top + w_bot) / 2
             avg_h = (h_left + h_right) / 2
             scale_up = max(1.0, 500.0 / max(float(avg_w), float(avg_h)))
@@ -243,7 +263,7 @@ class InpaintCompositor(Compositor):
                 [[0, 0], [canvas_w, 0], [canvas_w, canvas_h], [0, canvas_h]],
                 dtype=np.float32,
             )
-            H_roi, _ = cv2.findHomography(src, corners_roi.astype(np.float32))
+            H_roi, _ = cv2.findHomography(src, logo_corners_roi.astype(np.float32))
             warped_rgb = cv2.warpPerspective(rgb_canvas, H_roi, (roi_w, roi_h))
             warped_alpha = cv2.warpPerspective(alpha_canvas, H_roi, (roi_w, roi_h))
 
