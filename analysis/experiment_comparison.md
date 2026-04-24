@@ -21,6 +21,7 @@
 | FINAL_GEMINI_H100_LUM10 | H100 | 5.4 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
 | FINAL_GEMINI_BEST_H100 | H100 | 5.1 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
 | center3_ema001 | B200 | 8.5 | pca | redbull_white |  | 1 | 1 | 1.528 | 0.828 | 0.9978 | 6/6 |
+| PROD_gemini | B200 | 5.5 | hull | gemini-logo | ns | 1 | 3 | 1.559 | 0.410 | 0.9971 | 6/6 |
 | pca_B200 | B200 | 7.7 | pca | redbull_white | telea | 1 | 2 | 1.564 | 0.845 | 0.9975 | 6/6 |
 | gemini_balanced_lum10 | B200 | 3.7 | hull | gemini-logo | ns | 1 | 3 | 1.572 | 0.417 | 0.9971 | 6/6 |
 | seamless_gemini_lum0 | B200 | 10.9 | hull | gemini-logo | ns | 1 | 1 | 1.632 | 0.731 | 0.9922 | 6/6 |
