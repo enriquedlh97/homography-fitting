@@ -1928,6 +1928,21 @@ def run_pipeline_video_hybrid(
         prompt_bboxes[prompt.obj_id] = np.array(
             [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32
         )
+    # Normalize bbox heights so logos appear the same size across
+    # all banner slots. Use the median height as the reference.
+    if prompt_bboxes:
+        bbox_heights = {oid: float(b[2, 1] - b[0, 1]) for oid, b in prompt_bboxes.items()}
+        ref_height = float(np.median(list(bbox_heights.values())))
+        for oid in prompt_bboxes:
+            bbox = prompt_bboxes[oid]
+            h = bbox_heights[oid]
+            if h > 0 and abs(h - ref_height) > 2:
+                # Adjust top/bottom to match reference height, centered
+                cy = (bbox[0, 1] + bbox[2, 1]) / 2
+                bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
+                bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
+                prompt_bboxes[oid] = bbox
+
     for obj_id in list(corners_frame0.keys()):
         if obj_id in prompt_bboxes:
             fitted = corners_frame0[obj_id]
