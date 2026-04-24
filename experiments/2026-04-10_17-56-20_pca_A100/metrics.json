@@ -1,0 +1,142 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "gpu_memory_gb": 39.5,
+  "mode": "image",
+  "num_prompts": 4,
+  "num_prompt_points": 12,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmp2pb0bsci/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "alpha",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "preview_frame_idx": 0,
+  "preview_objects_with_masks": 3,
+  "preview_objects_with_quads": 2,
+  "preview_ok": false,
+  "preview_failure_reasons": [
+    "obj 1: mask failure (empty_mask)",
+    "obj 3: mask failure (mask_area_too_small)"
+  ],
+  "preview_object_diagnostics": {
+    "1": {
+      "obj_id": 1,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": false,
+      "parsed_nonempty_masks": 0,
+      "mask_area_px": 0,
+      "mask_bbox": null,
+      "fit_status": "not_run",
+      "fit_geometry_flags": [
+        "empty_mask"
+      ],
+      "seed_ok": false,
+      "failure_stage": "mask"
+    },
+    "2": {
+      "obj_id": 2,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 1,
+      "mask_area_px": 4357,
+      "mask_bbox": [
+        871,
+        28,
+        1026,
+        66
+      ],
+      "fit_status": "ok",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": null,
+      "quad_area_px": 4299.13,
+      "quad_aspect_ratio": 7.92,
+      "quad_mask_iou": 0.7141,
+      "mask_coverage": 0.8492,
+      "quad_coverage": 0.8179
+    },
+    "3": {
+      "obj_id": 3,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 2,
+      "mask_area_px": 789,
+      "mask_bbox": [
+        157,
+        266,
+        190,
+        302
+      ],
+      "fit_status": "not_run",
+      "fit_geometry_flags": [
+        "mask_area_too_small"
+      ],
+      "seed_ok": false,
+      "failure_stage": "mask"
+    },
+    "4": {
+      "obj_id": 4,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 3,
+      "mask_area_px": 4579,
+      "mask_bbox": [
+        676,
+        25,
+        833,
+        66
+      ],
+      "fit_status": "ok",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": null,
+      "quad_area_px": 4456.35,
+      "quad_aspect_ratio": 7.48,
+      "quad_mask_iou": 0.6892,
+      "mask_coverage": 0.8229,
+      "quad_coverage": 0.8093
+    }
+  },
+  "segment_s": 39.653294341000006,
+  "fit_s": 0.09613672999999778,
+  "composite_s": 0.06207614200000222,
+  "total_s": 39.811507213000006,
+  "run_total_s": 39.892850017
+}

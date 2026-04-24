@@ -21,9 +21,24 @@ Usage
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 import sys
+from pathlib import Path
 
-import modal
+try:
+    import modal
+except ModuleNotFoundError as exc:
+    if exc.name in {"modal", "pkg_resources", "setuptools"}:
+        raise SystemExit(
+            "Missing runtime dependency while importing Modal.\n"
+            "Run this command from the repository root with the project environment:\n"
+            "  UV_CACHE_DIR=.uv-cache uv run modal run "
+            "scripts/modal_run.py --config configs/default.yaml --gpu T4\n"
+            "If the environment is out of date, refresh it with:\n"
+            "  UV_CACHE_DIR=.uv-cache uv sync"
+        ) from exc
+    raise
 
 # ---------------------------------------------------------------------------
 # Parse --gpu from CLI before decorators run (Modal evaluates decorators at
@@ -40,26 +55,117 @@ for i, arg in enumerate(sys.argv):
 # Modal image: Linux + CUDA torch + SAM2 + our pipeline code
 # ---------------------------------------------------------------------------
 
-image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "git", "build-essential")
-    .pip_install(
-        "torch>=2.0",
-        "torchvision>=0.15",
-        "opencv-python-headless>=4.8",
-        "numpy>=1.24",
-        "matplotlib>=3.7",
-        "Pillow>=10.0",
-        "scipy>=1.11",
-        "pyyaml>=6.0",
+FA2_GPUS = {"L4", "A10G", "L40S", "A100", "A100-80GB", "H100", "H200"}
+FA4_GPUS = {"B200"}
+FA4_VERSION = "4.0.0b8"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _base_cuda_image() -> modal.Image:
+    return (
+        modal.Image.from_registry(
+            "nvidia/cuda:12.8.0-devel-ubuntu22.04",
+            add_python="3.11",
+        )
+        .apt_install("git", "ffmpeg", "libgl1", "libglib2.0-0", "build-essential")
+        .run_commands(
+            "python -m pip install --upgrade pip 'setuptools<82' wheel",
+            "python -m pip install --no-cache-dir "
+            "'torch==2.7.1' 'torchvision==0.22.1' 'torchaudio==2.7.1' "
+            "--index-url https://download.pytorch.org/whl/cu128",
+        )
+        .pip_install(
+            "opencv-python-headless>=4.8",
+            "numpy>=1.24",
+            "matplotlib>=3.7",
+            "Pillow>=10.0",
+            "scipy>=1.11",
+            "pyyaml>=6.0",
+            "huggingface_hub>=0.23",
+            "einops",
+            "packaging",
+            "pycocotools",
+            "ninja",
+            "tqdm",
+            "psutil",
+        )
     )
-    # Install SAM2 from source with C extension compiled.
-    .run_commands(
-        "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
-        "cd /tmp/sam2 && pip install -e '.[all]'",
+
+
+def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image:
+    return (
+        image.run_commands(*extra_commands)
+        .run_commands(
+            "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
+            "cd /tmp/sam2 && pip install -e '.[all]'",
+        )
+        .run_commands(
+            "python -m pip install --no-cache-dir 'git+https://github.com/facebookresearch/sam3.git'",
+        )
+        .add_local_dir("src", remote_path="/root/src")
     )
-    .add_local_dir("src", remote_path="/root/src")
-)
+
+
+def _build_t4_image() -> modal.Image:
+    return _install_sam_models(_base_cuda_image())
+
+
+def _build_fa2_image() -> modal.Image:
+    return _install_sam_models(
+        _base_cuda_image(),
+        "python -m pip install --no-cache-dir flash-attn --no-build-isolation",
+    )
+
+
+def _build_fa4_image() -> modal.Image:
+    return _install_sam_models(
+        _base_cuda_image(),
+        # Pin the FA4 beta explicitly because Modal's pip install
+        # will not resolve prerelease-only packages.
+        f"python -m pip install --no-cache-dir 'flash-attn-4=={FA4_VERSION}'",
+    )
+
+
+t4_image = _build_t4_image()
+fa2_image = _build_fa2_image()
+fa4_image = _build_fa4_image()
+
+
+def _select_image_for_gpu(gpu: str) -> modal.Image:
+    if gpu == "T4":
+        return t4_image
+    if gpu in FA2_GPUS:
+        return fa2_image
+    if gpu in FA4_GPUS:
+        return fa4_image
+    raise SystemExit(f"Unsupported GPU '{gpu}'. Update the image routing in scripts/modal_run.py.")
+
+
+def _validate_gpu_config(config_dict: dict, gpu: str) -> None:
+    segmenter_type = config_dict.get("pipeline", {}).get("segmenter", {}).get("type", "")
+    if segmenter_type == "sam3_video" and gpu == "T4":
+        raise SystemExit(
+            "SAM3 requires FlashAttention and is not supported on T4.\n"
+            "Use SAM2 on T4, or switch this SAM3 run to L4/A10G/L40S/A100/H100/H200/B200."
+        )
+
+
+def _git_output(*args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    text = result.stdout.strip()
+    return text or None
+
+
+image = _select_image_for_gpu(_GPU)
 
 app = modal.App("banner-pipeline", image=image)
 
@@ -78,6 +184,7 @@ checkpoints_volume = modal.Volume.from_name(
 @app.function(
     gpu=_GPU,
     volumes={"/checkpoints": checkpoints_volume},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=86400,  # 24h — Modal's max
 )
 def run_on_gpu(
@@ -94,7 +201,6 @@ def run_on_gpu(
     import time
 
     import cv2
-    import numpy as np
     import torch
 
     # Make our source code importable.
@@ -102,6 +208,7 @@ def run_on_gpu(
 
     from banner_pipeline import _perf
     from banner_pipeline.pipeline import run
+    from banner_pipeline.reporting import build_metrics_report
 
     if profile:
         _perf.enable()
@@ -150,6 +257,7 @@ def run_on_gpu(
     # --- Run pipeline (with optional benchmark) ---
     all_metrics = []
     output_bytes = None
+    preview_artifacts: dict[str, bytes] = {}
     output_ext = ".mp4" if mode in ("video", "video_tracking") else ".png"
 
     for i in range(benchmark_runs):
@@ -172,92 +280,73 @@ def run_on_gpu(
         if mode in ("video", "video_tracking") and results.get("output_path"):
             with open(results["output_path"], "rb") as f:
                 output_bytes = f.read()
+        elif results.get("preview_artifacts"):
+            preview_artifacts = {}
+            for name, image in results["preview_artifacts"].items():
+                success, buf = cv2.imencode(".png", image)
+                if not success:
+                    raise RuntimeError(f"Could not encode preview artifact: {name}")
+                preview_artifacts[name] = buf.tobytes()
+            output_bytes = preview_artifacts.get("composited")
         elif results.get("composited") is not None:
             _, buf = cv2.imencode(".png", results["composited"])
             output_bytes = buf.tobytes()
 
-    # --- Aggregate benchmark stats ---
-    report: dict = {
-        "runs": benchmark_runs,
-        "gpu": gpu_name,
-        "gpu_memory_gb": round(gpu_mem, 1),
-        "mode": mode,
-    }
-
-    # Carry over per-run metadata fields (same across all runs).
-    metadata_keys = [
-        "num_prompts",
-        "num_prompt_points",
-        "num_frames",
-        "input_fps",
-        "duration_s",
-        "frame_width",
-        "frame_height",
-        "video_path",
-        "fitter_type",
-        "compositor_type",
-        "checkpoint",
-    ]
-    for key in metadata_keys:
-        if all_metrics and key in all_metrics[0]:
-            report[key] = all_metrics[0][key]
-
-    # Numeric stats: aggregate any timing-like field.
-    timing_keys = [
-        "load_frame_s",
-        "segment_s",
-        "segment_total_s",
-        "fit_s",
-        "fit_mean_ms",
-        "composite_s",
-        "composite_mean_ms",
-        "write_video_s",
-        "total_s",
-        "run_total_s",
-        "output_fps",
-    ]
-    if benchmark_runs > 1:
-        for key in timing_keys:
-            values = [m[key] for m in all_metrics if key in m]
-            if values:
-                report[key] = {
-                    "mean": round(float(np.mean(values)), 4),
-                    "std": round(float(np.std(values)), 4),
-                    "min": round(float(np.min(values)), 4),
-                    "max": round(float(np.max(values)), 4),
-                }
-    else:
-        for key in timing_keys:
-            if all_metrics and key in all_metrics[0]:
-                report[key] = all_metrics[0][key]
-
-    # Aggregate composite_breakdown_ms (a dict of per-step ms means).
-    if all_metrics and "composite_breakdown_ms" in all_metrics[0]:
-        breakdown_runs = [
-            m["composite_breakdown_ms"] for m in all_metrics if "composite_breakdown_ms" in m
-        ]
-        all_keys = sorted({k for d in breakdown_runs for k in d})
-        report["composite_breakdown_ms"] = {
-            k: round(float(np.mean([d.get(k, 0.0) for d in breakdown_runs])), 3) for k in all_keys
-        }
+    report = build_metrics_report(
+        all_metrics,
+        benchmark_runs=benchmark_runs,
+        gpu_name=gpu_name,
+        gpu_mem_gb=gpu_mem,
+        mode=mode,
+    )
 
     return {
         "metrics": report,
         "output_bytes": output_bytes,
         "output_ext": output_ext,
+        "preview_artifacts": preview_artifacts,
     }
 
 
 def _download_checkpoint(filename: str, dest: str) -> None:
-    """Download a SAM2 checkpoint from the official release."""
+    """Download a SAM2 or SAM3 checkpoint.
+
+    SAM2 checkpoints are fetched from Meta's CDN.
+    SAM3 checkpoints are fetched from HuggingFace (requires HF auth token
+    in the ``HF_TOKEN`` environment variable or ``~/.cache/huggingface``).
+    """
     import os
     import urllib.request
 
-    base_url = "https://dl.fbaipublicfiles.com/segment_anything_2/092824"
-    url = f"{base_url}/{filename}"
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    print(f"  Downloading {url} …")
-    urllib.request.urlretrieve(url, dest)
+
+    if "sam3" in filename.lower() or filename.startswith("sam3"):
+        # SAM3 checkpoint — download from HuggingFace Hub.
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise ImportError(
+                "huggingface_hub is required to download SAM3 checkpoints.\n"
+                "Run: pip install huggingface_hub"
+            ) from exc
+        # SAM 3.1 checkpoints (sam3.1_*) live on facebook/sam3.1;
+        # base SAM 3 checkpoints (sam3.pt) live on facebook/sam3.
+        repo_id = "facebook/sam3.1" if "sam3.1" in filename else "facebook/sam3"
+        print(f"  Downloading SAM3 checkpoint from HuggingFace: {repo_id}/{filename} …")
+        tmp_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            token=os.environ.get("HF_TOKEN"),
+        )
+        import shutil
+
+        shutil.copy2(tmp_path, dest)
+    else:
+        # SAM2 checkpoint — download from Meta CDN.
+        base_url = "https://dl.fbaipublicfiles.com/segment_anything_2/092824"
+        url = f"{base_url}/{filename}"
+        print(f"  Downloading {url} …")
+        urllib.request.urlretrieve(url, dest)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +376,8 @@ def main(
     # Override mode if specified via CLI.
     if mode:
         config_dict.setdefault("pipeline", {})["mode"] = mode
+
+    _validate_gpu_config(config_dict, gpu)
 
     # Read input files as bytes.
     video_path = config_dict["input"]["video"]
@@ -324,11 +415,18 @@ def main(
 
     # Save frozen config.
     config_path = os.path.join(exp_dir, "config.yaml")
+    frozen_config_text = yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
     with open(config_path, "w") as f:
-        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+        f.write(frozen_config_text)
+    frozen_config_sha256 = hashlib.sha256(frozen_config_text.encode("utf-8")).hexdigest()
 
     # Save metrics.
     metrics = result["metrics"]
+    metrics["git_branch"] = _git_output("branch", "--show-current")
+    metrics["git_commit_sha"] = _git_output("rev-parse", "HEAD")
+    metrics["requested_config_path"] = os.path.abspath(config)
+    metrics["frozen_config_path"] = os.path.abspath(config_path)
+    metrics["frozen_config_sha256"] = frozen_config_sha256
     metrics_path = os.path.join(exp_dir, "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
@@ -343,6 +441,12 @@ def main(
         with open(out_path, "wb") as f:
             f.write(result["output_bytes"])
         print(f"Saved: {out_path}")
+        for name, data in result.get("preview_artifacts", {}).items():
+            artifact_path = os.path.join(out_dir, f"{name}.png")
+            with open(artifact_path, "wb") as f:
+                f.write(data)
+            if name != "composited":
+                print(f"Saved: {artifact_path}")
 
     # Print results.
     print(f"\n{'=' * 50}")

@@ -1,0 +1,23 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA B200",
+  "gpu_memory_gb": 178.4,
+  "mode": "video_tracking",
+  "num_prompts": 11,
+  "num_prompt_points": 75,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpdsjtlp98/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "segment_total_s": 5.516576350999999,
+  "composite_mean_ms": 7.39,
+  "write_video_s": 0.9158,
+  "total_s": 8.7161,
+  "run_total_s": 10.531491913,
+  "output_fps": 23.18
+}

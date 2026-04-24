@@ -1,0 +1,33 @@
+pipeline:
+  mode: video
+  segmenter:
+    type: sam3_video
+    checkpoint: sam3/checkpoints/sam3.1_multiplex.pt
+  fitter:
+    type: pca
+    params:
+      axis: short
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.05
+  camera:
+    focal_length: null
+input:
+  video: data/tennis-clip.mp4
+  logo: data/sponsor_logo.png
+  prompts:
+  - obj_id: 1
+    points:
+    - - 914
+      - 50
+    - - 986
+      - 50
+    - - 950
+      - 22
+    labels:
+    - 1
+    - 1
+    - 0
+output:
+  dir: experiments/
