@@ -1,6 +1,8 @@
 | Name | GPU | FPS | Fitter | Logo | Method | d | r | dE | Jitter | SSIM | Pass |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | center5_hull_best | B200 | 6.5 | hull | redbull_white | ns | 1 | 1 | 0.380 | 0.959 | 0.9954 | 6/6 |
+| center3_seamless_r1_d1 | B200 | 15.2 | hull | redbull_white | ns | 1 | 1 | 0.430 | 0.934 | 0.9974 | 6/6 |
+| center5_seamless_r3_d1 | B200 | 6.6 | hull | redbull_white | ns | 1 | 3 | 0.454 | 0.743 | 0.9958 | 6/6 |
 | vp_constrained | B200 | 6.8 | vp_constrained | redbull_white |  | 3 | 3 | 0.510 | 0.914 | 0.9984 | 3/6 |
 | noinpaint_hull | B200 | 11.1 | hull | redbull_white | ns | 1 | 3 | 0.676 | 0.911 | 0.9984 | 3/6 |
 | single_banner | B200 | 8.0 | pca | redbull_white |  | 1 | 1 | 0.746 | 0.885 | 0.9982 | 3/6 |
@@ -22,6 +24,7 @@
 | gemini_balanced_lum10 | B200 | 3.7 | hull | gemini-logo | ns | 1 | 3 | 1.572 | 0.417 | 0.9971 | 6/6 |
 | seamless_gemini_lum0 | B200 | 10.9 | hull | gemini-logo | ns | 1 | 1 | 1.632 | 0.731 | 0.9922 | 6/6 |
 | seamless_gemini_lum05 | B200 | 9.5 | hull | gemini-logo | ns | 1 | 1 | 1.648 | 0.731 | 0.9922 | 6/6 |
+| seamless_r1_d1_ema01 | B200 | 6.6 | hull | redbull_white | ns | 1 | 1 | 1.659 | 0.735 | 0.9922 | 6/6 |
 | seamless_gemini_lum10 | B200 | 5.5 | hull | gemini-logo | ns | 1 | 1 | 1.661 | 0.729 | 0.9922 | 6/6 |
 | seamless_hull_r1_d1 | B200 | 10.5 | hull | redbull_white | ns | 1 | 1 | 1.663 | 0.733 | 0.9922 | 6/6 |
 | mixed_clone_rb_r1_d1 | B200 | 10.7 | hull | redbull_white | ns | 1 | 1 | 1.663 | 0.733 | 0.9922 | 6/6 |
@@ -42,6 +45,7 @@
 | ULTIMATE_RB_H100 | H100 | 5.5 | hull | redbull_white | ns | 1 | 1 | 1.723 | 0.728 | 0.9921 | 6/6 |
 | ULTIMATE_ROLEX_SEAMLESS_H100 | H100 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.725 | 0.727 | 0.9921 | 6/6 |
 | ULTIMATE_META_SEAMLESS_H100 | H100 | 6.3 | hull | meta_white | ns | 1 | 1 | 1.725 | 0.726 | 0.9921 | 6/6 |
+| pca_seamless_ns_r1_d1 | B200 | 10.1 | pca | redbull_white | ns | 1 | 1 | 1.745 | 0.726 | 0.9922 | 6/6 |
 | FINAL_META_H100_BEST | NVIDIA H200 | 4.4 | hull | meta_white | ns | 1 | 1 | 1.746 | 0.722 | 0.9935 | 6/6 |
 | hull_ns_d1_r1_ema005 | B200 | 10.3 | hull | redbull_white | ns | 1 | 1 | 1.749 | 0.716 | 0.9949 | 6/6 |
 | hull_ns_d1_r1_f1 | B200 | 10.5 | hull | redbull_white | ns | 1 | 1 | 1.761 | 0.721 | 0.9959 | 6/6 |
