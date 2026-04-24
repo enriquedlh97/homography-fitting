@@ -68,14 +68,21 @@ class InpaintCompositor(Compositor):
                 cached_bgra = (
                     cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA) if overlay.shape[2] == 3 else overlay
                 )
-                # Optional: tint logo white to match banner LED panel color
+                # Optional: recolor logo to match banner LED panel color.
+                # Sets the RGB of all non-transparent pixels to the target
+                # color while preserving the alpha channel exactly.
                 white_tint = kwargs.get("white_tint")
                 if white_tint is not None:
-                    tint = np.array(white_tint, dtype=np.float32) / 255.0
-                    rgb = cached_bgra[:, :, :3].astype(np.float32)
-                    rgb *= tint[np.newaxis, np.newaxis, :]
+                    target = np.array(white_tint, dtype=np.uint8)
                     cached_bgra = cached_bgra.copy()
-                    cached_bgra[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+                    # Scale RGB toward target based on how bright the pixel is
+                    # (preserves shading in multi-tone logos)
+                    rgb = cached_bgra[:, :, :3].astype(np.float32)
+                    gray = np.max(rgb, axis=2, keepdims=True)
+                    gray = np.clip(gray, 1, 255)
+                    ratio = rgb / gray  # per-channel ratio (preserves hue)
+                    new_rgb = ratio * target[np.newaxis, np.newaxis, :].astype(np.float32)
+                    cached_bgra[:, :, :3] = np.clip(new_rgb, 0, 255).astype(np.uint8)
                 self._logo_bgra_cache[oid] = cached_bgra
             overlay = cached_bgra
 
