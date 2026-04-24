@@ -26,6 +26,8 @@
 | rolex_lum05_r1_d1 | B200 | 6.0 | hull | rolex_white | ns | 1 | 1 | 1.712 | 0.712 | 0.9931 | 6/6 |
 | FINAL_META_H100_BEST | NVIDIA H200 | 4.4 | hull | meta_white | ns | 1 | 1 | 1.746 | 0.722 | 0.9935 | 6/6 |
 | hull_ns_d1_r1_ema005 | B200 | 10.3 | hull | redbull_white | ns | 1 | 1 | 1.749 | 0.716 | 0.9949 | 6/6 |
+| hull_ns_d1_r1_f1 | B200 | 10.5 | hull | redbull_white | ns | 1 | 1 | 1.761 | 0.721 | 0.9959 | 6/6 |
+| hull_ns_d1_r1_noshade | B200 | 6.2 | hull | redbull_white | ns | 1 | 1 | 1.767 | 0.706 | 0.9952 | 6/6 |
 | rb_lum10_r1_d1 | B200 | 6.2 | hull | redbull_white | ns | 1 | 1 | 1.780 | 0.704 | 0.9943 | 6/6 |
 | hull_ns_d1_r1 | B200 | 10.6 | hull | redbull_white | ns | 1 | 1 | 1.782 | 0.704 | 0.9950 | 6/6 |
 | rb_lum05_r1_d1 | B200 | 10.2 | hull | redbull_white | ns | 1 | 1 | 1.784 | 0.702 | 0.9947 | 6/6 |
@@ -61,6 +63,7 @@
 | BEST_HULL_NS_T4 | T4 | 0.5 | hull | redbull_white | ns | 1 | 3 | 2.233 | 0.433 | 0.9973 | 6/6 |
 | tracking_mode_hull | B200 | 12.9 | hull | redbull_white | ns | 1 | 3 | 2.327 | 0.552 | 0.9965 | 5/6 |
 | hull_ns_d2 | B200 | 8.7 | hull | redbull_white | ns | 2 | 3 | 2.437 | 0.411 | 0.9977 | 6/6 |
+| hull_telea_d1_r1 | B200 | 10.7 | hull | redbull_white | telea | 1 | 1 | 2.459 | 0.496 | 0.9966 | 6/6 |
 | hull_telea_d1 | B200 | 9.8 | hull | redbull_white | telea | 1 | 3 | 2.678 | 0.341 | 0.9978 | 6/6 |
 | pca_ns_d1 | B200 | 9.0 | pca | redbull_white | ns | 1 | 3 | 2.804 | 0.419 | 0.9988 | 6/6 |
 | hull_ns_r1 | B200 | 10.3 | hull | redbull_white | ns | 3 | 1 | 2.991 | 0.503 | 0.9975 | 6/6 |
@@ -128,6 +131,7 @@
 | feather_11px | B200 | 4.9 | pca | redbull_white |  | 3 | 3 | 4.862 | 0.274 | 0.9991 | 6/6 |
 | fronto_parallel | B200 | 5.3 | fronto_parallel | redbull_white |  | 3 | 3 | 4.894 | 0.314 | 0.9993 | 6/6 |
 | r4_d4 | B200 | 9.2 | pca | redbull_white |  | 4 | 4 | 4.898 | 0.290 | 0.9991 | 6/6 |
+| hull_median_d1_r1 | B200 | 10.9 | hull | redbull_white | median_fill | 1 | 1 | 4.983 | 0.274 | 0.9981 | 6/6 |
 | inpaint_r5_d5 | B200 | 4.8 | pca | redbull_white |  | 5 | 5 | 5.524 | 0.268 | 0.9991 | 5/6 |
 | gemini_logo | B200 | 5.0 | pca | gemini-logo |  | 3 | 3 | 5.675 | 0.253 | 0.9992 | 5/6 |
 | median_r3_d3 | B200 | 10.8 | pca | redbull_white | median_fill | 3 | 3 | 5.823 | 0.264 | 0.9991 | 5/6 |
