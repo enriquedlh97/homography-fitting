@@ -19,6 +19,7 @@ dependencies = [
     "setuptools>=81,<82",
     "types-PyYAML>=6.0",
     "modal>=1.4.1",
+    "huggingface-hub>=1.11.0",
 ]
 
 [build-system]

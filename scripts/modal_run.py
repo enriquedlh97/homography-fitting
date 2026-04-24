@@ -100,7 +100,8 @@ def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image
             "cd /tmp/sam2 && pip install -e '.[all]'",
         )
         .run_commands(
-            "python -m pip install --no-cache-dir 'git+https://github.com/facebookresearch/sam3.git'",
+            "git clone https://github.com/facebookresearch/sam3.git /tmp/sam3",
+            "cd /tmp/sam3 && pip install -e .",
         )
         .add_local_dir("src", remote_path="/root/src")
     )
@@ -219,7 +220,9 @@ def run_on_gpu(
     cached_checkpoint = f"/checkpoints/{checkpoint_filename}"
 
     if not os.path.exists(cached_checkpoint):
+        hf_token = os.environ.get("HF_TOKEN")
         print(f"Downloading checkpoint: {checkpoint_filename} …")
+        print(f"  HF_TOKEN present: {hf_token is not None and len(hf_token) > 0}")
         _download_checkpoint(checkpoint_filename, cached_checkpoint)
         checkpoints_volume.commit()
         print(f"Cached checkpoint: {cached_checkpoint}")

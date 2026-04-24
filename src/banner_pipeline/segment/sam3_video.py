@@ -277,8 +277,43 @@ class SAM3VideoSegmenter:
 # ---------------------------------------------------------------------------
 
 
+def _patch_init_state_if_needed(predictor: _Sam3Predictor) -> None:
+    """Monkey-patch init_state to strip unsupported kwargs.
+
+    Some SAM3 versions pass ``offload_state_to_cpu`` internally during
+    ``start_session`` but the multiplex tracker's ``init_state`` doesn't
+    accept it, causing a TypeError. This patch wraps ``init_state`` to
+    silently drop unsupported kwargs.
+    """
+    tracker = getattr(predictor, "_tracker", None) or getattr(predictor, "tracker", None)
+    if tracker is None:
+        return
+    original_init_state = getattr(tracker, "init_state", None)
+    if original_init_state is None:
+        return
+
+    import functools
+    import inspect
+
+    try:
+        sig = inspect.signature(original_init_state)
+        accepted = set(sig.parameters.keys())
+    except (TypeError, ValueError):
+        return
+
+    if "offload_state_to_cpu" not in accepted:
+
+        @functools.wraps(original_init_state)
+        def _patched_init_state(*args, **kwargs):
+            kwargs.pop("offload_state_to_cpu", None)
+            return original_init_state(*args, **kwargs)
+
+        tracker.init_state = _patched_init_state
+
+
 def _start_session(predictor: _Sam3Predictor, frame_dir: str) -> str:
     """Create a fresh SAM3 session for prompt registration."""
+    _patch_init_state_if_needed(predictor)
     try:
         response = predictor.handle_request(
             request=dict(
