@@ -137,8 +137,23 @@ class InpaintCompositor(Compositor):
             canvas_w = max(int(avg_w * scale_up), 1)
             canvas_h = max(int(avg_h * scale_up), 1)
 
-            rgb_canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-            alpha_canvas = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+            # Sample the banner's background color from the border of the mask.
+            # Use this to fill the entire canvas so the warped overlay
+            # covers the old logo completely, not just where the new logo
+            # text has alpha.
+            bg_color = np.array([30, 30, 30], dtype=np.uint8)  # fallback dark
+            if mask_roi is not None:
+                border = cv2.dilate(
+                    (mask_roi > 0).astype(np.uint8) * 255,
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
+                ) & ~((mask_roi > 0).astype(np.uint8) * 255)
+                if np.any(border > 0):
+                    bg_color = np.median(frame_roi[border > 0], axis=0).astype(np.uint8)
+
+            # Full-coverage canvas: fill with sampled banner bg color,
+            # set alpha to fully opaque. Logo text is placed on top.
+            rgb_canvas = np.full((canvas_h, canvas_w, 3), bg_color, dtype=np.uint8)
+            alpha_canvas = np.full((canvas_h, canvas_w), 255, dtype=np.uint8)
 
             logo_h, logo_w = overlay.shape[:2]
             pad_w = int(canvas_w * padding)
@@ -155,8 +170,14 @@ class InpaintCompositor(Compositor):
 
             cx0 = (canvas_w - new_w) // 2
             cy0 = (canvas_h - new_h) // 2
-            rgb_canvas[cy0 : cy0 + new_h, cx0 : cx0 + new_w] = logo_resized[:, :, :3]
-            alpha_canvas[cy0 : cy0 + new_h, cx0 : cx0 + new_w] = logo_resized[:, :, 3]
+            # Alpha-composite the logo onto the bg-filled canvas.
+            logo_rgb = logo_resized[:, :, :3].astype(np.float32)
+            logo_a = logo_resized[:, :, 3:].astype(np.float32) / 255.0
+            patch = rgb_canvas[cy0 : cy0 + new_h, cx0 : cx0 + new_w].astype(np.float32)
+            rgb_canvas[cy0 : cy0 + new_h, cx0 : cx0 + new_w] = (
+                logo_rgb * logo_a + patch * (1.0 - logo_a)
+            ).astype(np.uint8)
+            # Alpha stays 255 (fully opaque everywhere).
 
         # --- Step 3: warp into ROI space (small dest, not full frame) ---
         with Timer("inpaint.warp"):
