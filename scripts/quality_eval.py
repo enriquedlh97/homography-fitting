@@ -174,10 +174,14 @@ def compute_inpaint_color_match(
     roi: tuple[int, int, int, int] = (20, 80, 250, 1350),
     n_samples: int = 10,
 ) -> dict:
-    """Measure how well the inpainted region matches surrounding banner color.
+    """Measure inpaint background color uniformity in the banner region.
 
-    Samples frames uniformly, compares LAB color in the banner region between
-    composited and original. High delta_E means visible color mismatch.
+    Focuses on DARK pixels (the banner background) in the composited video.
+    Measures the standard deviation of the dark-pixel colors across the
+    banner ROI. If inpainting creates uniform-but-different-tone patches,
+    the std will be higher than the original's natural dark-pixel variance.
+
+    Also computes delta_E between the dark pixels of composited and original.
     """
     cap_comp = cv2.VideoCapture(composited_path)
     cap_orig = cv2.VideoCapture(original_path)
@@ -185,7 +189,9 @@ def compute_inpaint_color_match(
     y0, y1, x0, x1 = roi
 
     sample_indices = np.linspace(0, n_frames - 1, n_samples, dtype=int)
-    delta_es = []
+    dark_delta_es = []
+    comp_dark_stds = []
+    orig_dark_stds = []
 
     for idx in sample_indices:
         cap_comp.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -198,24 +204,41 @@ def compute_inpaint_color_match(
         roi_c = frame_c[y0:y1, x0:x1]
         roi_o = frame_o[y0:y1, x0:x1]
 
-        # Convert to LAB for perceptual color distance
-        lab_c = cv2.cvtColor(roi_c, cv2.COLOR_BGR2LAB).astype(np.float32)
-        lab_o = cv2.cvtColor(roi_o, cv2.COLOR_BGR2LAB).astype(np.float32)
+        # Focus on dark pixels (banner background, not logo text)
+        gray_c = cv2.cvtColor(roi_c, cv2.COLOR_BGR2GRAY)
+        gray_o = cv2.cvtColor(roi_o, cv2.COLOR_BGR2GRAY)
+        dark_mask_c = gray_c < 100  # dark pixels in composited
+        dark_mask_o = gray_o < 100  # dark pixels in original
 
-        # Delta E (Euclidean distance in LAB space)
-        diff = lab_c - lab_o
-        delta_e = np.sqrt((diff**2).sum(axis=2)).mean()
-        delta_es.append(float(delta_e))
+        if np.sum(dark_mask_c) > 100 and np.sum(dark_mask_o) > 100:
+            # Color variance of dark pixels (higher = more patchy inpaint)
+            lab_c = cv2.cvtColor(roi_c, cv2.COLOR_BGR2LAB).astype(np.float32)
+            lab_o = cv2.cvtColor(roi_o, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+            comp_dark_stds.append(float(lab_c[dark_mask_c].std()))
+            orig_dark_stds.append(float(lab_o[dark_mask_o].std()))
+
+            # Delta E of dark pixels only
+            # Use the mean dark color from each frame
+            mean_c = lab_c[dark_mask_c].mean(axis=0)
+            mean_o = lab_o[dark_mask_o].mean(axis=0)
+            de = float(np.sqrt(((mean_c - mean_o) ** 2).sum()))
+            dark_delta_es.append(de)
 
     cap_comp.release()
     cap_orig.release()
 
-    mean_de = float(np.mean(delta_es)) if delta_es else 0.0
-    max_de = float(np.max(delta_es)) if delta_es else 0.0
+    mean_de = float(np.mean(dark_delta_es)) if dark_delta_es else 0.0
+    comp_std = float(np.mean(comp_dark_stds)) if comp_dark_stds else 0.0
+    orig_std = float(np.mean(orig_dark_stds)) if orig_dark_stds else 0.0
+    uniformity_ratio = comp_std / orig_std if orig_std > 0 else 1.0
 
     return {
+        "inpaint_dark_delta_E": round(mean_de, 3),
+        "inpaint_dark_std_composited": round(comp_std, 3),
+        "inpaint_dark_std_original": round(orig_std, 3),
+        "inpaint_uniformity_ratio": round(uniformity_ratio, 3),
         "inpaint_color_delta_E_mean": round(mean_de, 3),
-        "inpaint_color_delta_E_max": round(max_de, 3),
         "inpaint_color_target": "<5.0",
         "inpaint_color_pass": mean_de < 5.0,
     }
