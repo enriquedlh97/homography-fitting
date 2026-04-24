@@ -181,10 +181,17 @@ checkpoints_volume = modal.Volume.from_name(
 # ---------------------------------------------------------------------------
 
 
+# HuggingFace secret is needed for SAM3 (gated weights). Optional for SAM2.
+try:
+    _hf_secret = [modal.Secret.from_name("huggingface-secret")]
+except Exception:
+    _hf_secret = []
+
+
 @app.function(
     gpu=_GPU,
     volumes={"/checkpoints": checkpoints_volume},
-    secrets=[modal.Secret.from_name("huggingface-secret")],
+    secrets=_hf_secret,
     timeout=86400,  # 24h — Modal's max
 )
 def run_on_gpu(
