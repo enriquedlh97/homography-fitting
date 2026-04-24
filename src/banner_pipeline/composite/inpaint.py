@@ -54,6 +54,7 @@ class InpaintCompositor(Compositor):
         lum_strength: float = kwargs.get("lum_strength", 1.0)
         do_inpaint: bool = kwargs.get("inpaint", True)
         inpaint_method: str = kwargs.get("inpaint_method", "telea")
+        inpaint_radius: int = kwargs.get("inpaint_radius", 5)
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
@@ -118,7 +119,7 @@ class InpaintCompositor(Compositor):
                     inpainted_roi = cv2.inpaint(
                         frame_roi,
                         mask_u8_roi,
-                        inpaintRadius=5,
+                        inpaintRadius=inpaint_radius,
                         flags=cv2.INPAINT_TELEA,
                     )
             else:

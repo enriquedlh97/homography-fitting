@@ -13,7 +13,8 @@ pipeline:
     params:
       padding: 0.0
       lum_strength: 0.8
-      inpaint_method: median_fill
+      inpaint_method: telea
+      inpaint_radius: 2
       shade_blend: true
   camera:
     focal_length: null
