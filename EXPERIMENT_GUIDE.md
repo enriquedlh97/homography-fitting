@@ -62,11 +62,41 @@ compositor:
 | Logo color tint | visual inspection | Lower lum_strength (0.5-0.8) |
 | Court logos look flat | perspective error | Need VP-constrained fitter (Giovanni's geometry) |
 
-## Current best config
-
-Based on experiments as of April 24, 2026:
+## Current best config (April 24, 2026 — 20+ experiments)
 
 - Mode: `video_hybrid`
-- Compositor: `inpaint` with `padding=0.0, lum_strength=0.8, shade_blend=true, inpaint_method=median_fill`
-- Results: jitter=0.62 (PASS), ssim=0.995 (PASS), 4/6 metrics passing
-- Remaining issues: inpaint delta_E metric (needs fix), perspective metric (needs fix)
+- Prompts: top banners only (obj_ids 1-7, no court floor)
+- Compositor: `inpaint` with `padding=0.0, lum_strength=0.8, shade_blend=true`
+- Tracking: `ema_alpha=0.08`
+- Logo: `ferrari_white.png` (wider aspect ratio fills banners better) or `redbull_white.png`
+
+### Results (6/6 metrics passing)
+
+| Metric | Red Bull | Ferrari | Target |
+|---|---|---|---|
+| jitter_ratio | **0.66** | 0.84 | ≤1.05 |
+| corner_max_jump_px | 0.71 | 0.68 | <2.0 |
+| logo_area_cv | 0.014 | 0.014 | <0.05 |
+| overlay_accel_p95_px | 0.47 | **0.36** | <1.0 |
+| inpaint_dark_dE | **3.57** | 3.56 | <5.0 |
+| temporal_ssim | 0.996 | **0.996** | >0.95 |
+
+### Key improvements from baseline
+
+| Metric | Baseline | Best | Improvement |
+|---|---|---|---|
+| jitter_ratio | 1.24 | 0.66 | 1.9× better |
+| corner_max_jump | 0.81 | 0.67 | 1.2× better |
+| overlay_accel | 0.53 | 0.36 | 1.5× better |
+| temporal_ssim | 0.978 | 0.997 | +0.019 |
+| metrics passing | 3/6 | 6/6 | doubled |
+
+### EMA alpha sweep (optimal: 0.08)
+
+| alpha | jitter | jump | accel | dE | ssim |
+|---|---|---|---|---|---|
+| 0.30 | 0.86 | 0.79 | 0.41 | 4.46 | 0.9952 |
+| 0.15 | 0.84 | 0.71 | 0.43 | 4.46 | 0.9958 |
+| 0.10 | 0.88 | 0.67 | 0.46 | 3.60 | 0.9961 |
+| **0.08** | **0.84** | **0.68** | **0.36** | **3.56** | **0.9964** |
+| 0.05 | 0.79 | 0.73 | 0.47 | 3.62 | 0.9971 |
