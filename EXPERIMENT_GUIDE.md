@@ -85,18 +85,21 @@ compositor:
 
 | Metric | Baseline | Best | Improvement |
 |---|---|---|---|
-| jitter_ratio | 1.24 | 0.66 | 1.9× better |
-| corner_max_jump | 0.81 | 0.67 | 1.2× better |
-| overlay_accel | 0.53 | 0.36 | 1.5× better |
-| temporal_ssim | 0.978 | 0.997 | +0.019 |
-| metrics passing | 3/6 | 6/6 | doubled |
+| jitter_ratio | 1.24 | **0.57** | **2.2× better** |
+| corner_max_jump | 0.81 | 0.65 | 1.2× better |
+| overlay_accel | 0.53 | 0.40 | 1.3× better |
+| temporal_ssim | 0.978 | **0.998** | +0.020 |
+| metrics passing | 3/6 | **6/6** | doubled |
 
-### EMA alpha sweep (optimal: 0.08)
+### Full EMA alpha sweep (optimal: 0.01)
 
 | alpha | jitter | jump | accel | dE | ssim |
 |---|---|---|---|---|---|
 | 0.30 | 0.86 | 0.79 | 0.41 | 4.46 | 0.9952 |
 | 0.15 | 0.84 | 0.71 | 0.43 | 4.46 | 0.9958 |
 | 0.10 | 0.88 | 0.67 | 0.46 | 3.60 | 0.9961 |
-| **0.08** | **0.84** | **0.68** | **0.36** | **3.56** | **0.9964** |
+| 0.08 | 0.84 | 0.68 | 0.36 | 3.56 | 0.9964 |
 | 0.05 | 0.79 | 0.73 | 0.47 | 3.62 | 0.9971 |
+| 0.03 | 0.67 | 0.70 | 0.41 | 3.42 | 0.9978 |
+| 0.02 | 0.64 | 0.75 | 0.40 | 3.42 | 0.9980 |
+| **0.01** | **0.57** | **0.65** | **0.46** | **3.40** | **0.9983** |
