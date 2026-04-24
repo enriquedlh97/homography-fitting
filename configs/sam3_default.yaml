@@ -34,7 +34,7 @@ pipeline:
     morph_kernel_px: 3
 input:
   video: data/tennis-clip.mp4
-  logo: data/logos/redbull_white.png
+  logo: data/logos/ferrari_white.png
   prompts:
   - obj_id: 2
     points:
