@@ -53,6 +53,7 @@ class InpaintCompositor(Compositor):
         padding: float = kwargs.get("padding", 0.05)
         lum_strength: float = kwargs.get("lum_strength", 1.0)
         do_inpaint: bool = kwargs.get("inpaint", True)
+        inpaint_method: str = kwargs.get("inpaint_method", "telea")
         occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
@@ -93,9 +94,33 @@ class InpaintCompositor(Compositor):
             if do_inpaint and mask_roi is not None:
                 mask_u8_roi = (mask_roi > 0).astype(np.uint8) * 255
                 mask_u8_roi = cv2.dilate(mask_u8_roi, self._dilate_kern)
-                inpainted_roi = cv2.inpaint(
-                    frame_roi, mask_u8_roi, inpaintRadius=5, flags=cv2.INPAINT_TELEA
-                )
+
+                if inpaint_method == "median_fill":
+                    # Simple median-color fill: sample the border pixels
+                    # around the mask and fill the interior with their
+                    # median color. Avoids the Telea "paint brush" artifact.
+                    border = (
+                        cv2.dilate(
+                            mask_u8_roi,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
+                        )
+                        & ~mask_u8_roi
+                    )
+                    inpainted_roi = frame_roi.copy()
+                    if np.any(border > 0):
+                        fill_color = np.median(
+                            frame_roi[border > 0],
+                            axis=0,
+                        ).astype(np.uint8)
+                        inpainted_roi[mask_u8_roi > 0] = fill_color
+                else:
+                    # Telea inpainting (default, iterative algorithm).
+                    inpainted_roi = cv2.inpaint(
+                        frame_roi,
+                        mask_u8_roi,
+                        inpaintRadius=5,
+                        flags=cv2.INPAINT_TELEA,
+                    )
             else:
                 inpainted_roi = frame_roi.copy()
 
