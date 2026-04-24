@@ -36,6 +36,9 @@
 | seamless_meta_r1_d1 | B200 | 5.7 | hull | meta_white | ns | 1 | 1 | 1.674 | 0.727 | 0.9922 | 6/6 |
 | seamless_rolex_r1_d1 | B200 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.678 | 0.733 | 0.9921 | 6/6 |
 | FINAL_RB_H100_BEST | H100 | 5.4 | hull | redbull_white | ns | 1 | 1 | 1.694 | 0.724 | 0.9929 | 6/6 |
+| rolex_seamless_A100 | A100 | 3.1 | hull | rolex_white | ns | 1 | 1 | 1.697 | 0.730 | 0.9921 | 6/6 |
+| meta_seamless_A100 | A100 | 4.9 | hull | meta_white | ns | 1 | 1 | 1.698 | 0.734 | 0.9921 | 6/6 |
+| ferrari_seamless_A100 | A100 | 5.1 | hull | ferrari_white | ns | 1 | 1 | 1.699 | 0.729 | 0.9921 | 6/6 |
 | seamless_best_A100 | A100 | 4.1 | hull | redbull_white | ns | 1 | 1 | 1.700 | 0.734 | 0.9921 | 6/6 |
 | FINAL_ROLEX_H100_BEST | H100 | 4.5 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.723 | 0.9923 | 6/6 |
 | FINAL_FERRARI_H100_BEST | H100 | 5.9 | hull | ferrari_white | ns | 1 | 1 | 1.704 | 0.726 | 0.9936 | 6/6 |
