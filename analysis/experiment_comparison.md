@@ -1,13 +1,18 @@
 | Name | GPU | FPS | Fitter | Logo | Method | d | r | dE | Jitter | SSIM | Pass |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| center5_hull_best | B200 | 6.5 | hull | redbull_white | ns | 1 | 1 | 0.380 | 0.959 | 0.9954 | 6/6 |
 | vp_constrained | B200 | 6.8 | vp_constrained | redbull_white |  | 3 | 3 | 0.510 | 0.914 | 0.9984 | 3/6 |
 | noinpaint_hull | B200 | 11.1 | hull | redbull_white | ns | 1 | 3 | 0.676 | 0.911 | 0.9984 | 3/6 |
 | single_banner | B200 | 8.0 | pca | redbull_white |  | 1 | 1 | 0.746 | 0.885 | 0.9982 | 3/6 |
 | center_3_prompts | B200 | 8.3 | hull | redbull_white | ns | 1 | 3 | 0.811 | 0.771 | 0.9978 | 6/6 |
 | video_mode_hull_ns_d1 | B200 | 8.5 | hull | redbull_white | ns | 1 | 3 | 1.023 | 2.675 | 0.9691 | 2/6 |
+| gemini_hull_ns_d1_r1_lum10 | B200 | 10.6 | hull | gemini-logo | ns | 1 | 1 | 1.130 | 0.683 | 0.9943 | 6/6 |
 | gemini_hull_ns_d1_r1 | B200 | 6.0 | hull | gemini-logo | ns | 1 | 1 | 1.293 | 0.681 | 0.9943 | 6/6 |
 | pca_A100 | A100 | 0.7 | pca | ferrari_white |  | - | - | 1.334 | 1.855 | 0.9855 | 4/6 |
 | sam3_optimal | A100 | 0.8 | pca | ferrari_white |  | 1 | 1 | 1.368 | 1.730 | 0.9879 | 3/6 |
+| gemini_hull_ns_d1_r1_lum03 | B200 | 5.8 | hull | gemini-logo | ns | 1 | 1 | 1.377 | 0.679 | 0.9943 | 6/6 |
+| FINAL_GEMINI_H100_LUM10 | H100 | 5.4 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
+| FINAL_GEMINI_BEST_H100 | H100 | 5.1 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
 | center3_ema001 | B200 | 8.5 | pca | redbull_white |  | 1 | 1 | 1.528 | 0.828 | 0.9978 | 6/6 |
 | pca_B200 | B200 | 7.7 | pca | redbull_white | telea | 1 | 2 | 1.564 | 0.845 | 0.9975 | 6/6 |
 | FINAL_RB_H100_BEST | H100 | 5.4 | hull | redbull_white | ns | 1 | 1 | 1.694 | 0.724 | 0.9929 | 6/6 |
@@ -15,10 +20,15 @@
 | FINAL_FERRARI_H100_BEST | H100 | 5.9 | hull | ferrari_white | ns | 1 | 1 | 1.704 | 0.726 | 0.9936 | 6/6 |
 | rolex_hull_ns_d1_r1 | B200 | 5.8 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.709 | 0.9933 | 6/6 |
 | gemini_lum05 | B200 | 5.5 | hull | gemini-logo | ns | 1 | 3 | 1.708 | 0.412 | 0.9970 | 6/6 |
+| rolex_lum05_r1_d1 | B200 | 6.0 | hull | rolex_white | ns | 1 | 1 | 1.712 | 0.712 | 0.9931 | 6/6 |
+| FINAL_META_H100_BEST | NVIDIA H200 | 4.4 | hull | meta_white | ns | 1 | 1 | 1.746 | 0.722 | 0.9935 | 6/6 |
 | hull_ns_d1_r1_ema005 | B200 | 10.3 | hull | redbull_white | ns | 1 | 1 | 1.749 | 0.716 | 0.9949 | 6/6 |
+| rb_lum10_r1_d1 | B200 | 6.2 | hull | redbull_white | ns | 1 | 1 | 1.780 | 0.704 | 0.9943 | 6/6 |
 | hull_ns_d1_r1 | B200 | 10.6 | hull | redbull_white | ns | 1 | 1 | 1.782 | 0.704 | 0.9950 | 6/6 |
+| rb_lum05_r1_d1 | B200 | 10.2 | hull | redbull_white | ns | 1 | 1 | 1.784 | 0.702 | 0.9947 | 6/6 |
 | ferrari_hull_ns_d1_r1 | B200 | 6.0 | hull | ferrari_white | ns | 1 | 1 | 1.834 | 0.707 | 0.9958 | 6/6 |
 | meta_hull_ns_d1_r1 | B200 | 10.1 | hull | meta_white | ns | 1 | 1 | 1.834 | 0.709 | 0.9961 | 6/6 |
+| ferrari_lum05_r1_d1 | B200 | 5.7 | hull | ferrari_white | ns | 1 | 1 | 1.856 | 0.706 | 0.9955 | 6/6 |
 | FINAL_GEMINI_H100 | H100 | 5.9 | hull | gemini-logo | ns | 1 | 3 | 1.892 | 0.417 | 0.9964 | 6/6 |
 | BEST_HULL_NS_A100 | A100 | 2.4 | hull | redbull_white | ns | 1 | 3 | 2.031 | 0.430 | 0.9965 | 6/6 |
 | hull_ns_d1_r2 | B200 | 6.1 | hull | redbull_white | ns | 1 | 2 | 2.048 | 0.461 | 0.9972 | 6/6 |
