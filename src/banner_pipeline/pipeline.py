@@ -17,9 +17,11 @@ from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
 from banner_pipeline.fitting.base import QuadFitter
+from banner_pipeline.fitting.fronto_parallel import FrontoParallelBannerFitter
 from banner_pipeline.fitting.hull_fit import HullFitter
 from banner_pipeline.fitting.lp_fit import LPFitter
 from banner_pipeline.fitting.pca_fit import PCAFitter
+from banner_pipeline.fitting.vp_constrained import VPConstrainedBannerFitter
 from banner_pipeline.homography.camera import compute_oriented_homography, estimate_camera_matrix
 from banner_pipeline.io import StreamingVideoWriter, get_video_fps, load_frame
 from banner_pipeline.segment.base import ObjectPrompt, SegmentationModel
@@ -41,6 +43,8 @@ FITTERS: dict[str, type[QuadFitter]] = {
     "pca": PCAFitter,
     "lp": LPFitter,
     "hull": HullFitter,
+    "fronto_parallel": FrontoParallelBannerFitter,
+    "vp_constrained": VPConstrainedBannerFitter,
 }
 
 COMPOSITORS: dict[str, type[Compositor]] = {
