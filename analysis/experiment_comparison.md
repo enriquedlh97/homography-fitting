@@ -18,6 +18,10 @@
 | center3_ema001 | B200 | 8.5 | pca | redbull_white |  | 1 | 1 | 1.528 | 0.828 | 0.9978 | 6/6 |
 | pca_B200 | B200 | 7.7 | pca | redbull_white | telea | 1 | 2 | 1.564 | 0.845 | 0.9975 | 6/6 |
 | gemini_balanced_lum10 | B200 | 3.7 | hull | gemini-logo | ns | 1 | 3 | 1.572 | 0.417 | 0.9971 | 6/6 |
+| seamless_gemini_lum10 | B200 | 5.5 | hull | gemini-logo | ns | 1 | 1 | 1.661 | 0.729 | 0.9922 | 6/6 |
+| seamless_hull_r1_d1 | B200 | 10.5 | hull | redbull_white | ns | 1 | 1 | 1.663 | 0.733 | 0.9922 | 6/6 |
+| seamless_ferrari_r1_d1 | B200 | 3.6 | hull | ferrari_white | ns | 1 | 1 | 1.672 | 0.737 | 0.9922 | 6/6 |
+| seamless_rolex_r1_d1 | B200 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.678 | 0.733 | 0.9921 | 6/6 |
 | FINAL_RB_H100_BEST | H100 | 5.4 | hull | redbull_white | ns | 1 | 1 | 1.694 | 0.724 | 0.9929 | 6/6 |
 | FINAL_ROLEX_H100_BEST | H100 | 4.5 | hull | rolex_white | ns | 1 | 1 | 1.704 | 0.723 | 0.9923 | 6/6 |
 | FINAL_FERRARI_H100_BEST | H100 | 5.9 | hull | ferrari_white | ns | 1 | 1 | 1.704 | 0.726 | 0.9936 | 6/6 |
@@ -41,6 +45,7 @@
 | hull_ns_d1_r2 | B200 | 6.1 | hull | redbull_white | ns | 1 | 2 | 2.048 | 0.461 | 0.9972 | 6/6 |
 | FINAL_HULL_NS_FERRARI_H100 | H100 | 4.9 | hull | ferrari_white | ns | 1 | 3 | 2.058 | 0.424 | 0.9969 | 6/6 |
 | DEMO_ferrari_white_H100 | H100 | 5.3 | hull | ferrari_white | ns | 1 | 3 | 2.058 | 0.424 | 0.9969 | 6/6 |
+| seamless_clone_hull | B200 | 4.3 | hull | redbull_white | ns | 1 | 3 | 2.059 | 0.434 | 0.9961 | 6/6 |
 | FINAL_HULL_NS_ROLEX_H100 | H100 | 4.8 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | DEMO_rolex_white_H100 | NVIDIA H200 | 4.0 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | FINAL_HULL_NS_RB_H100 | H100 | 5.4 | hull | redbull_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9966 | 6/6 |
@@ -62,6 +67,7 @@
 | hull_ns_d1_ferrari | B200 | 4.8 | hull | ferrari_white | ns | 1 | 3 | 2.224 | 0.430 | 0.9979 | 6/6 |
 | BEST_HULL_NS_T4 | T4 | 0.5 | hull | redbull_white | ns | 1 | 3 | 2.233 | 0.433 | 0.9973 | 6/6 |
 | tracking_mode_hull | B200 | 12.9 | hull | redbull_white | ns | 1 | 3 | 2.327 | 0.552 | 0.9965 | 5/6 |
+| pca_ns_d1_r1 | B200 | 9.3 | pca | redbull_white | ns | 1 | 1 | 2.346 | 0.656 | 0.9980 | 6/6 |
 | hull_ns_d2 | B200 | 8.7 | hull | redbull_white | ns | 2 | 3 | 2.437 | 0.411 | 0.9977 | 6/6 |
 | hull_telea_d1_r1 | B200 | 10.7 | hull | redbull_white | telea | 1 | 1 | 2.459 | 0.496 | 0.9966 | 6/6 |
 | hull_telea_d1 | B200 | 9.8 | hull | redbull_white | telea | 1 | 3 | 2.678 | 0.341 | 0.9978 | 6/6 |
