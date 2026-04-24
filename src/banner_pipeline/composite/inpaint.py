@@ -215,7 +215,11 @@ class InpaintCompositor(Compositor):
                 new_lab[logo_pixels, 0] = new_l * (1 - lum_strength) + remapped_l * lum_strength
                 warped_rgb = cv2.cvtColor(new_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
 
-        # --- Step 5: soft-edge alpha blend (ROI only) + in-place write-back ---
+        # --- Step 5: shadow-preserving blend + soft-edge alpha ---
+        # Ported from tennis-virtual-ads painted_blend.py: the logo inherits
+        # the frame's illumination field so it looks painted on the surface.
+        shade_blend: bool = kwargs.get("shade_blend", False)
+
         with Timer("inpaint.blend"):
             warped_alpha = cv2.GaussianBlur(warped_alpha, (5, 5), 1.0)
 
@@ -229,13 +233,36 @@ class InpaintCompositor(Compositor):
                 )
                 occ_soft = cv2.GaussianBlur(occ_dilated, (11, 11), 3.0)
                 warped_alpha = np.clip(
-                    warped_alpha.astype(np.float32) - occ_soft.astype(np.float32), 0, 255
+                    warped_alpha.astype(np.float32) - occ_soft.astype(np.float32),
+                    0,
+                    255,
                 ).astype(np.uint8)
 
             a = (warped_alpha.astype(np.float32) / 255.0)[..., None]
-            result_roi = (
-                warped_rgb.astype(np.float32) * a + inpainted_roi.astype(np.float32) * (1.0 - a)
-            ).astype(np.uint8)
+
+            if shade_blend:
+                # Shadow-preserving: extract illumination from the original
+                # frame ROI, normalize, and apply to the warped logo.
+                gray_roi = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY).astype(np.float32)
+                illumination = cv2.GaussianBlur(gray_roi, (41, 41), 0)
+                # Normalize by the median brightness in the mask area.
+                if mask_roi is not None and np.any(mask_roi > 0):
+                    median_bright = float(np.median(illumination[mask_roi > 0]))
+                else:
+                    median_bright = float(np.median(illumination))
+                median_bright = max(median_bright, 1.0)
+                shade_map = np.clip(illumination / median_bright, 0.6, 1.4)
+                # Apply shading to warped logo colors.
+                warped_float = warped_rgb.astype(np.float32) * shade_map[:, :, np.newaxis]
+                warped_float = np.clip(warped_float, 0, 255)
+                result_roi = (
+                    warped_float * a + inpainted_roi.astype(np.float32) * (1.0 - a)
+                ).astype(np.uint8)
+            else:
+                result_roi = (
+                    warped_rgb.astype(np.float32) * a + inpainted_roi.astype(np.float32) * (1.0 - a)
+                ).astype(np.uint8)
+
             frame[y0:y1, x0:x1] = result_roi
 
         return frame
