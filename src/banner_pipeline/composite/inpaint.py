@@ -259,6 +259,8 @@ class InpaintCompositor(Compositor):
             # Poisson (seamless clone) blending: uses gradient-domain
             # compositing so the logo edges inherit surrounding colors.
             seamless: bool = kwargs.get("seamless_clone", False)
+            seamless_mode_str: str = kwargs.get("seamless_mode", "normal")
+            clone_flag = cv2.MIXED_CLONE if seamless_mode_str == "mixed" else cv2.NORMAL_CLONE
             if seamless and warped_alpha.any():
                 clone_mask = (warped_alpha > 128).astype(np.uint8) * 255
                 ys, xs = np.where(clone_mask > 0)
@@ -271,7 +273,7 @@ class InpaintCompositor(Compositor):
                             inpainted_roi,
                             clone_mask,
                             (cx, cy),
-                            cv2.NORMAL_CLONE,
+                            clone_flag,
                         )
                         frame[y0:y1, x0:x1] = result_roi
                         return frame
