@@ -144,12 +144,14 @@ class InpaintCompositor(Compositor):
         # so the logo doesn't get over-corrected.
         with Timer("inpaint.lab_match"):
             logo_pixels = warped_alpha > 0
-            if logo_pixels.any() and mask_roi is not None:
+            has_mask = mask_roi is not None
+            has_ref = self._ref_lum_captured and self._ref_lum is not None
+            if logo_pixels.any() and (has_mask or has_ref):
                 # Use captured ref_lum for temporal consistency, or compute
                 # fresh stats from this frame (and capture for next time).
                 if self._ref_lum_captured and self._ref_lum is not None:
                     orig_l_lo, orig_l_hi = self._ref_lum
-                else:
+                elif mask_roi is not None:
                     orig_lab = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2LAB).astype(np.float32)
                     orig_mask_l = orig_lab[mask_roi > 0, 0]
                     if orig_mask_l.size > 0:
@@ -157,12 +159,14 @@ class InpaintCompositor(Compositor):
                             float(np.percentile(orig_mask_l, 10)),
                             float(np.percentile(orig_mask_l, 90)),
                         )
-                        # Capture from first call for all subsequent frames.
                         if not self._ref_lum_captured:
                             self._ref_lum = (orig_l_lo, orig_l_hi)
                             self._ref_lum_captured = True
                     else:
                         orig_l_lo, orig_l_hi = 0.0, 255.0
+                else:
+                    # No mask and no ref_lum yet: skip LAB matching.
+                    orig_l_lo, orig_l_hi = 0.0, 255.0
 
                 new_lab = cv2.cvtColor(warped_rgb, cv2.COLOR_BGR2LAB).astype(np.float32)
                 new_l = new_lab[logo_pixels, 0]

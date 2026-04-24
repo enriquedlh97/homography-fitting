@@ -1742,9 +1742,10 @@ def run_pipeline_video_tracking(
                     if compositor.name == "alpha":
                         homo = compute_oriented_homography(current_corners[obj_id], K)
                         extra_kw["homo"] = homo
-                    # For tracking mode, pass mask=None for non-frame-0
-                    # (we don't have per-frame masks from SAM2).
-                    frame_mask = masks_frame0.get(obj_id) if frame_idx == 0 else None
+                    # Reuse frame 0's mask for all frames. The mask shape is
+                    # stable across frames (banners don't move much), and the
+                    # compositor needs it to inpaint the old logo away.
+                    frame_mask = masks_frame0.get(obj_id)
                     if frame_mask is not None:
                         frame_mask = frame_mask.squeeze()
                     frame_bgr = compositor.composite(
