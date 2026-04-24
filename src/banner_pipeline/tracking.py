@@ -104,14 +104,21 @@ class CornerTracker:
         idx = 0
         result: dict[int, np.ndarray] = {}
         for oid in obj_ids:
-            new_c = np.empty((4, 2), dtype=np.float32)
-            for j in range(4):
-                if good[idx + j]:
-                    new_c[j] = pts_new[idx + j].ravel()
-                else:
-                    # Bad track: keep previous position.
-                    new_c[j] = self._corners[oid][j]
-            self._corners[oid] = new_c
+            n_good = sum(1 for j in range(4) if good[idx + j])
+
+            if n_good >= 2:
+                # Enough good tracks: update corners.
+                new_c = np.empty((4, 2), dtype=np.float32)
+                for j in range(4):
+                    if good[idx + j]:
+                        new_c[j] = pts_new[idx + j].ravel()
+                    else:
+                        new_c[j] = self._corners[oid][j]
+                self._corners[oid] = new_c
+            else:
+                # Too few good tracks: hold previous corners entirely.
+                # This prevents jitter from bad optical flow frames.
+                new_c = self._corners[oid]
 
             # EMA smooth for temporal stability.
             sm = self.ema_alpha * new_c + (1 - self.ema_alpha) * self._smoothed[oid]
