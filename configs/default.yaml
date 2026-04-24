@@ -18,6 +18,7 @@ pipeline:
       mask_dilate_px: 1
   tracking:
     ema_alpha: 0.01
+    fb_threshold: 1.0
   camera:
     focal_length: null
 input:

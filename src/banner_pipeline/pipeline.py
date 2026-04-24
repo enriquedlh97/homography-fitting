@@ -1692,8 +1692,10 @@ def run_pipeline_video_tracking(
         return {"output_path": None, "metrics": metrics}
 
     # --- Step 3: Initialize CornerTracker ---
-    ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
-    tracker = CornerTracker(ema_alpha=ema_alpha)
+    _tracking_cfg = pipeline_cfg.get("tracking", {})
+    ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
+    fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
+    tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold)
     gray0 = cv2.cvtColor(frame0, cv2.COLOR_BGR2GRAY)
     for obj_id, corners in corners_map.items():
         tracker.init(obj_id, corners, gray0)
@@ -1910,8 +1912,10 @@ def run_pipeline_video_hybrid(
         if corners is not None:
             corners_frame0[obj_id] = corners
 
-    ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
-    tracker = CornerTracker(ema_alpha=ema_alpha)
+    _tracking_cfg = pipeline_cfg.get("tracking", {})
+    ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
+    fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
+    tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold)
     gray0 = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
     for obj_id, corners in corners_frame0.items():
         tracker.init(obj_id, corners, gray0)
