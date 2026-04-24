@@ -1427,6 +1427,10 @@ def run_pipeline_video(
     composite_times: list[float] = []
     write_video_s = 0.0  # accumulated time spent piping frames to ffmpeg
     num_written = 0
+    # EMA smoothing of fitted corners to eliminate per-frame jitter from
+    # slightly-different SAM2 masks. Alpha=0.3 matches Raghav's CornerTracker.
+    ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
+    smoothed_corners: dict[int, np.ndarray] = {}
     valid_frame_counts, object_rejection_counts, object_rejection_reasons = _init_validity_metrics(
         prompts
     )
@@ -1485,6 +1489,15 @@ def run_pipeline_video(
                 frames_with_quads += 1
                 for obj_id in corners_map:
                     valid_frame_counts[str(obj_id)] = valid_frame_counts.get(str(obj_id), 0) + 1
+
+            # EMA-smooth corners to eliminate per-frame jitter.
+            for obj_id, corners in corners_map.items():
+                if obj_id in smoothed_corners:
+                    smoothed = ema_alpha * corners + (1 - ema_alpha) * smoothed_corners[obj_id]
+                    corners_map[obj_id] = smoothed
+                    smoothed_corners[obj_id] = smoothed
+                else:
+                    smoothed_corners[obj_id] = corners.copy()
 
             # Composite for this frame.
             if overlay is not None and compositor is not None and corners_map:
