@@ -150,7 +150,7 @@ def run_on_gpu(
     # --- Run pipeline (with optional benchmark) ---
     all_metrics = []
     output_bytes = None
-    output_ext = ".mp4" if mode == "video" else ".png"
+    output_ext = ".mp4" if mode in ("video", "video_tracking") else ".png"
 
     for i in range(benchmark_runs):
         if benchmark_runs > 1:
@@ -169,7 +169,7 @@ def run_on_gpu(
         all_metrics.append(m)
 
         # Save output from last run.
-        if mode == "video" and results.get("output_path"):
+        if mode in ("video", "video_tracking") and results.get("output_path"):
             with open(results["output_path"], "rb") as f:
                 output_bytes = f.read()
         elif results.get("composited") is not None:
