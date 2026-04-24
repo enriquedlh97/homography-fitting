@@ -12,6 +12,7 @@ pipeline:
     type: inpaint
     params:
       padding: 0.05
+      lum_strength: 0.8
   camera:
     focal_length: null
 input:

@@ -14,7 +14,17 @@ from banner_pipeline.composite.base import Compositor
 
 
 class InpaintCompositor(Compositor):
-    """Inpaints the old logo away, then warps the new one with luminosity matching."""
+    """Inpaints the old logo away, then warps the new one with luminosity matching.
+
+    Supports:
+    - ``lum_strength`` (0-1): controls how aggressively the luminosity is
+      remapped.  1.0 = full remap (our original behavior); lower values
+      preserve more of the logo's native appearance.
+    - Auto-captured ``ref_lum``: the luminosity stats from the first call
+      are reused for all subsequent calls, preventing per-frame flicker.
+    - ``occlusion_mask``: pixels where this mask is True are excluded
+      from the logo overlay (e.g. a player in front of the banner).
+    """
 
     def __init__(self) -> None:
         # Cached BGRA copies of overlays we've seen, keyed by id().
@@ -23,6 +33,10 @@ class InpaintCompositor(Compositor):
         self._logo_resize_cache: dict[tuple[int, int, int], np.ndarray] = {}
         # Reusable structuring element for the inpaint dilation step.
         self._dilate_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # Reference luminosity stats auto-captured on the first composite call
+        # per object. Reused for temporal consistency across frames.
+        self._ref_lum_captured: bool = False
+        self._ref_lum: tuple[float, float] | None = None
 
     @property
     def name(self) -> str:
@@ -37,6 +51,8 @@ class InpaintCompositor(Compositor):
         **kwargs,
     ) -> np.ndarray:
         padding: float = kwargs.get("padding", 0.05)
+        lum_strength: float = kwargs.get("lum_strength", 1.0)
+        occlusion_mask: np.ndarray | None = kwargs.get("occlusion_mask")
 
         # Cache BGRA overlay (constant across the entire video run).
         with Timer("inpaint.bgr2bgra"):
@@ -79,8 +95,7 @@ class InpaintCompositor(Compositor):
             else:
                 inpainted_roi = frame_roi.copy()
 
-        # --- Step 2: build logo + alpha canvases (size depends on quad,
-        #     not ROI; this stays as-is) ---
+        # --- Step 2: build logo + alpha canvases ---
         with Timer("inpaint.build_canvas"):
             w_top = np.linalg.norm(corners[1] - corners[0])
             w_bot = np.linalg.norm(corners[2] - corners[3])
@@ -100,13 +115,10 @@ class InpaintCompositor(Compositor):
             pad_h = int(canvas_h * padding)
             scale = min((canvas_w - 2 * pad_w) / logo_w, (canvas_h - 2 * pad_h) / logo_h)
             new_w, new_h = int(logo_w * scale), int(logo_h * scale)
-            # Cache the resized logo: same overlay + same target size repeats
-            # across frames (and across same-sized banners within a frame).
             resize_key = (oid, new_w, new_h)
             logo_resized = self._logo_resize_cache.get(resize_key)
             if logo_resized is None:
                 logo_resized = cv2.resize(overlay, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                # Bound the cache so it doesn't grow unbounded across runs.
                 if len(self._logo_resize_cache) > 64:
                     self._logo_resize_cache.clear()
                 self._logo_resize_cache[resize_key] = logo_resized
@@ -127,39 +139,70 @@ class InpaintCompositor(Compositor):
             warped_alpha = cv2.warpPerspective(alpha_canvas, H_roi, (roi_w, roi_h))
 
         # --- Step 4: luminosity matching (LAB) on ROI ---
+        # Uses ref_lum from the first call for temporal consistency.
+        # lum_strength blends between the original L and the remapped L
+        # so the logo doesn't get over-corrected.
         with Timer("inpaint.lab_match"):
             logo_pixels = warped_alpha > 0
             if logo_pixels.any() and mask_roi is not None:
-                orig_lab = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2LAB).astype(np.float32)
-                orig_mask_l = orig_lab[mask_roi > 0, 0]
-                if orig_mask_l.size > 0:
-                    orig_l_lo, orig_l_hi = np.percentile(orig_mask_l, [10, 90])
+                # Use captured ref_lum for temporal consistency, or compute
+                # fresh stats from this frame (and capture for next time).
+                if self._ref_lum_captured and self._ref_lum is not None:
+                    orig_l_lo, orig_l_hi = self._ref_lum
+                else:
+                    orig_lab = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+                    orig_mask_l = orig_lab[mask_roi > 0, 0]
+                    if orig_mask_l.size > 0:
+                        orig_l_lo, orig_l_hi = (
+                            float(np.percentile(orig_mask_l, 10)),
+                            float(np.percentile(orig_mask_l, 90)),
+                        )
+                        # Capture from first call for all subsequent frames.
+                        if not self._ref_lum_captured:
+                            self._ref_lum = (orig_l_lo, orig_l_hi)
+                            self._ref_lum_captured = True
+                    else:
+                        orig_l_lo, orig_l_hi = 0.0, 255.0
 
-                    new_lab = cv2.cvtColor(warped_rgb, cv2.COLOR_BGR2LAB).astype(np.float32)
-                    new_l = new_lab[logo_pixels, 0]
-                    new_l_lo, new_l_hi = np.percentile(new_l, [10, 90])
+                new_lab = cv2.cvtColor(warped_rgb, cv2.COLOR_BGR2LAB).astype(np.float32)
+                new_l = new_lab[logo_pixels, 0]
+                new_l_lo, new_l_hi = (
+                    float(np.percentile(new_l, 10)),
+                    float(np.percentile(new_l, 90)),
+                )
 
-                    s = (
-                        (orig_l_hi - orig_l_lo) / (new_l_hi - new_l_lo)
-                        if new_l_hi - new_l_lo > 1
-                        else 1.0
-                    )
-                    new_lab[logo_pixels, 0] = np.clip(
-                        (new_l - new_l_lo) * s + orig_l_lo,
-                        0,
-                        255,
-                    )
-                    warped_rgb = cv2.cvtColor(new_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+                s = (
+                    (orig_l_hi - orig_l_lo) / (new_l_hi - new_l_lo)
+                    if new_l_hi - new_l_lo > 1
+                    else 1.0
+                )
+                remapped_l = np.clip((new_l - new_l_lo) * s + orig_l_lo, 0, 255)
+                # Blend: lum_strength=1.0 = full remap; <1 preserves logo's
+                # native luminosity, preventing over-correction and tinting.
+                new_lab[logo_pixels, 0] = new_l * (1 - lum_strength) + remapped_l * lum_strength
+                warped_rgb = cv2.cvtColor(new_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
 
         # --- Step 5: soft-edge alpha blend (ROI only) + in-place write-back ---
         with Timer("inpaint.blend"):
             warped_alpha = cv2.GaussianBlur(warped_alpha, (5, 5), 1.0)
+
+            # Subtract occlusion mask so occluding objects (players) appear
+            # in front of the composited logo.
+            if occlusion_mask is not None:
+                occ_roi = occlusion_mask[y0:y1, x0:x1]
+                occ_u8 = (np.squeeze(occ_roi) > 0).astype(np.uint8) * 255
+                occ_dilated = cv2.dilate(
+                    occ_u8, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                )
+                occ_soft = cv2.GaussianBlur(occ_dilated, (11, 11), 3.0)
+                warped_alpha = np.clip(
+                    warped_alpha.astype(np.float32) - occ_soft.astype(np.float32), 0, 255
+                ).astype(np.uint8)
+
             a = (warped_alpha.astype(np.float32) / 255.0)[..., None]
             result_roi = (
                 warped_rgb.astype(np.float32) * a + inpainted_roi.astype(np.float32) * (1.0 - a)
             ).astype(np.uint8)
-            # Write back into the source frame in-place. Safe because the
-            # video pipeline always passes a freshly-loaded frame.
             frame[y0:y1, x0:x1] = result_roi
 
         return frame
