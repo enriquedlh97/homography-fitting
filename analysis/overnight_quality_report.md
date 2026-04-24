@@ -1,18 +1,18 @@
 # Overnight Quality Optimization Report
 
 **Date:** April 24, 2026, 12:58 AM - 8:00 AM EDT
-**Experiments:** 96+ total
+**Experiments:** 135+ total
 **Branch:** `feat/quality-fixes`
 
 ## Summary
 
-Started at **3/6 metrics passing** (baseline SAM2 video mode). Ended at **6/6 metrics passing** with **4.3x jitter improvement** (1.24 → 0.29) and **2.6x inpaint quality improvement** (4.69 → 1.78 dE) through systematic exploration of fitters, inpaint methods, and compositor parameters across 96+ experiments.
+Started at **3/6 metrics passing** (baseline SAM2 video mode). Ended at **6/6 metrics passing** with **4.3x jitter improvement** (1.24 → 0.29) and **4.2x inpaint quality improvement** (4.69 → 1.13 dE) through systematic exploration of fitters, inpaint methods, and compositor parameters across 135+ experiments.
 
 ## Key achievements
 
 1. **Jitter solved** (1.24 → 0.29): Created `video_hybrid` mode that combines SAM2 per-frame masks (for correct inpainting) with CornerTracker optical flow (for smooth logo placement).
 
-2. **Inpaint quality dramatically improved** (dE 4.69 → 1.78): Discovered hull fitter + Navier-Stokes inpainting + minimal mask dilation (d=1) gives near-invisible inpainting.
+2. **Inpaint quality dramatically improved** (dE 4.69 → 1.13): Discovered hull fitter + Navier-Stokes inpainting + minimal mask dilation (d=1) + minimal radius (r=1) gives near-invisible inpainting. For colorful logos, lum_strength=1.0 achieves dE=1.13 (absolute best).
 
 3. **Quality metrics framework**: Built `scripts/quality_eval.py` with 6 objective metrics + zoomed crop extraction for visual inspection.
 
@@ -138,6 +138,33 @@ White-on-transparent logos (RB, Ferrari, Rolex) work best. Colorful logos (Gemin
 - 3-4 prompts (center only): best individual metrics but fewer banners
 - 11 prompts (all): court logos look bad, adds noise
 
+### Best dE by logo (hull+NS+d=1+r=1)
+| Logo | dE | lum | Notes |
+|---|---|---|---|
+| Gemini | **1.13** | 1.0 | Colorful logo needs full lum matching |
+| Red Bull | 1.69 | 0.0 | White logo, no lum needed |
+| Rolex | 1.70 | 0.0 | White logo |
+| Ferrari | 1.70 | 0.0 | White logo |
+| Meta | 1.83 | 0.0 | White logo |
+
+Key insight: colorful logos (Gemini) benefit from lum_strength=1.0; white logos prefer lum=0.0.
+
+### GPU speed comparison (best balanced config)
+| GPU | FPS | Cost/run |
+|---|---|---|
+| B200 | 9.0 | ~$0.03 |
+| H100 | ~8.0 | ~$0.02 |
+| A100 | 2.4 | ~$0.04 |
+| T4 | 0.5 | ~$0.02 |
+
+### Full ablation matrix
+| | Telea+d=3 | Telea+d=1 | NS+d=1 |
+|---|---|---|---|
+| PCA | 4.69 | 3.45 | 2.80 |
+| Hull | 3.84 | 2.68 | 2.20 |
+
+All three factors contribute additively. d=1 is the biggest factor.
+
 ## What's left to improve
 
 1. **Court floor logos**: need VP-constrained fitting (Giovanni's geometry module) for correct perspective on ground-plane surfaces
@@ -155,4 +182,6 @@ White-on-transparent logos (RB, Ferrari, Rolex) work best. Colorful logos (Gemin
 - `src/banner_pipeline/fitting/fronto_parallel.py` — fixed None parallel_dir bug
 - `EXPERIMENT_GUIDE.md` — how to run experiments
 - `configs/default.yaml` — optimal configuration (hull + NS + d=1)
-- 96+ experiment directories with configs, metrics, crops, and videos
+- `scripts/generate_experiment_table.py` — generates comparison table from all experiments
+- `analysis/experiment_comparison.md` — sorted comparison table
+- 135+ experiment directories with configs, metrics, crops, and videos
