@@ -1,5 +1,5 @@
 pipeline:
-  mode: image
+  mode: video_hybrid
   segmenter:
     type: sam2_image
     checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
@@ -18,7 +18,7 @@ pipeline:
       inpaint_radius: 2
       mask_dilate_px: 1
   tracking:
-    ema_alpha: 0.08
+    ema_alpha: 0.05
   camera:
     focal_length: null
 input:
