@@ -90,10 +90,12 @@
 | ULTIMATE_rolex_white_H100 | H100 | 4.8 | hull | rolex_white | ns | 1 | 3 | 2.085 | 0.422 | 0.9962 | 6/6 |
 | PROD_rolex_H100 | H100 | 5.3 | hull | rolex_white | ns | 1 | 3 | 2.085 | 0.422 | 0.9962 | 6/6 |
 | ULTIMATE_meta_white_H100 | H100 | 5.2 | hull | meta_white | ns | 1 | 3 | 2.088 | 0.426 | 0.9962 | 6/6 |
+| PROD_meta_H100 | H100 | 4.6 | hull | meta_white | ns | 1 | 3 | 2.088 | 0.426 | 0.9962 | 6/6 |
 | FINAL_HULL_NS_ROLEX_H100 | H100 | 4.8 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | DEMO_rolex_white_H100 | NVIDIA H200 | 4.0 | hull | rolex_white | ns | 1 | 3 | 2.090 | 0.421 | 0.9963 | 6/6 |
 | ULTIMATE_redbull_white_H100 | H100 | 4.8 | hull | redbull_white | ns | 1 | 3 | 2.092 | 0.424 | 0.9962 | 6/6 |
 | PROD_redbull_H100 | H100 | 5.6 | hull | redbull_white | ns | 1 | 3 | 2.092 | 0.424 | 0.9962 | 6/6 |
+| PROD_rbtight_H100 | H100 | 4.9 | hull | redbull_white_tight | ns | 1 | 3 | 2.092 | 0.424 | 0.9962 | 6/6 |
 | ULTIMATE_ferrari_white_H100 | H100 | 4.8 | hull | ferrari_white | ns | 1 | 3 | 2.093 | 0.424 | 0.9962 | 6/6 |
 | PROD_ferrari_H100 | H100 | 4.6 | hull | ferrari_white | ns | 1 | 3 | 2.093 | 0.424 | 0.9962 | 6/6 |
 | FINAL_HULL_NS_RB_H100 | H100 | 5.4 | hull | redbull_white | ns | 1 | 3 | 2.095 | 0.423 | 0.9966 | 6/6 |
