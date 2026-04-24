@@ -109,9 +109,19 @@ class InpaintCompositor(Compositor):
                     # a clean rectangular fill matching the physical LED panel.
                     inpainted_roi = frame_roi.copy()
                     feather = int(kwargs.get("black_fill_feather_px", 5))
-                    # Build a quad mask from the corners for a clean rectangle
+                    quad_pad = int(kwargs.get("quad_pad_px", 8))
+                    # Expand corners outward from center to cover full panel
+                    c_roi = corners_roi.copy()
+                    if quad_pad > 0:
+                        center = c_roi.mean(axis=0)
+                        for i in range(4):
+                            direction = c_roi[i] - center
+                            norm = np.linalg.norm(direction)
+                            if norm > 0:
+                                c_roi[i] += direction / norm * quad_pad
+                    # Build a quad mask from the padded corners
                     quad_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                    pts = corners_roi.astype(np.int32).reshape((-1, 1, 2))
+                    pts = c_roi.astype(np.int32).reshape((-1, 1, 2))
                     cv2.fillPoly(quad_mask, [pts], 255)
                     # Optionally dilate the quad mask slightly
                     if mask_dilate_px > 0:
