@@ -102,7 +102,34 @@ class InpaintCompositor(Compositor):
                 )
                 mask_u8_roi = cv2.dilate(mask_u8_roi, dilate_kern)
 
-                if inpaint_method == "median_fill":
+                if inpaint_method == "gradient_fill":
+                    # Gradient fill: compute a smooth fill from border
+                    # pixels using distance-weighted interpolation.
+                    # Better than median_fill for banners with gradients.
+                    border = (
+                        cv2.dilate(
+                            mask_u8_roi,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
+                        )
+                        & ~mask_u8_roi
+                    )
+                    inpainted_roi = frame_roi.copy()
+                    if np.any(border > 0) and np.any(mask_u8_roi > 0):
+                        # Use distance transform to weight border colors
+                        dist = cv2.distanceTransform(mask_u8_roi, cv2.DIST_L2, 5).astype(np.float32)
+                        # Blur the border-sampled frame to create a smooth fill
+                        fill = frame_roi.copy()
+                        fill[mask_u8_roi > 0] = 0
+                        kw = max(31, int(dist.max()) * 2 + 1)
+                        kw = kw if kw % 2 == 1 else kw + 1
+                        fill_blur = cv2.GaussianBlur(fill, (kw, kw), 0)
+                        weight = cv2.GaussianBlur(
+                            (mask_u8_roi == 0).astype(np.float32), (kw, kw), 0
+                        )
+                        weight = np.clip(weight, 1e-6, None)
+                        gradient = (fill_blur.astype(np.float32) / weight[..., None]).clip(0, 255)
+                        inpainted_roi[mask_u8_roi > 0] = gradient[mask_u8_roi > 0].astype(np.uint8)
+                elif inpaint_method == "median_fill":
                     # Simple median-color fill: sample the border pixels
                     # around the mask and fill the interior with their
                     # median color. Avoids the Telea "paint brush" artifact.
