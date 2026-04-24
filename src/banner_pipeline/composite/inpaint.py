@@ -119,6 +119,14 @@ class InpaintCompositor(Compositor):
                             axis=0,
                         ).astype(np.uint8)
                         inpainted_roi[mask_u8_roi > 0] = fill_color
+                elif inpaint_method == "ns":
+                    # Navier-Stokes inpainting (better at preserving gradients).
+                    inpainted_roi = cv2.inpaint(
+                        frame_roi,
+                        mask_u8_roi,
+                        inpaintRadius=inpaint_radius,
+                        flags=cv2.INPAINT_NS,
+                    )
                 else:
                     # Telea inpainting (default, iterative algorithm).
                     inpainted_roi = cv2.inpaint(
