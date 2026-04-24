@@ -278,37 +278,47 @@ class SAM3VideoSegmenter:
 
 
 def _patch_init_state_if_needed(predictor: _Sam3Predictor) -> None:
-    """Monkey-patch init_state to strip unsupported kwargs.
+    """Monkey-patch init_state on all objects in the predictor tree that have it.
 
     Some SAM3 versions pass ``offload_state_to_cpu`` internally during
     ``start_session`` but the multiplex tracker's ``init_state`` doesn't
-    accept it, causing a TypeError. This patch wraps ``init_state`` to
-    silently drop unsupported kwargs.
+    accept it, causing a TypeError. This recursively finds init_state
+    methods and wraps them to silently drop unsupported kwargs.
     """
-    tracker = getattr(predictor, "_tracker", None) or getattr(predictor, "tracker", None)
-    if tracker is None:
-        return
-    original_init_state = getattr(tracker, "init_state", None)
-    if original_init_state is None:
-        return
-
     import functools
     import inspect
 
-    try:
-        sig = inspect.signature(original_init_state)
-        accepted = set(sig.parameters.keys())
-    except (TypeError, ValueError):
-        return
+    patched = set()
 
-    if "offload_state_to_cpu" not in accepted:
+    def _patch_obj(obj: object, depth: int = 0) -> None:
+        if depth > 5 or id(obj) in patched:
+            return
+        patched.add(id(obj))
 
-        @functools.wraps(original_init_state)
-        def _patched_init_state(*args, **kwargs):
-            kwargs.pop("offload_state_to_cpu", None)
-            return original_init_state(*args, **kwargs)
+        original = getattr(obj, "init_state", None)
+        if original is not None and callable(original):
+            try:
+                sig = inspect.signature(original)
+                accepted = set(sig.parameters.keys())
+            except (TypeError, ValueError):
+                accepted = set()
 
-        tracker.init_state = _patched_init_state
+            if "offload_state_to_cpu" not in accepted:
+
+                @functools.wraps(original)
+                def _patched(*, _orig=original, **kwargs):
+                    kwargs.pop("offload_state_to_cpu", None)
+                    return _orig(**kwargs)
+
+                object.__setattr__(obj, "init_state", _patched)
+
+        # Recurse into common tracker attribute names.
+        for attr in ("_tracker", "tracker", "_model", "model", "_predictor"):
+            child = getattr(obj, attr, None)
+            if child is not None and child is not obj:
+                _patch_obj(child, depth + 1)
+
+    _patch_obj(predictor)
 
 
 def _start_session(predictor: _Sam3Predictor, frame_dir: str) -> str:
