@@ -15,6 +15,7 @@
 | pca_A100 | A100 | 0.7 | pca | ferrari_white |  | - | - | 1.334 | 1.855 | 0.9855 | 4/6 |
 | sam3_optimal | A100 | 0.8 | pca | ferrari_white |  | 1 | 1 | 1.368 | 1.730 | 0.9879 | 3/6 |
 | gemini_hull_ns_d1_r1_lum03 | B200 | 5.8 | hull | gemini-logo | ns | 1 | 1 | 1.377 | 0.679 | 0.9943 | 6/6 |
+| gemini_best_A100 | A100 | 3.1 | hull | gemini-logo | ns | 1 | 1 | 1.424 | 0.718 | 0.9926 | 6/6 |
 | gemini_ns_r2_d1_lum10 | B200 | 10.3 | hull | gemini-logo | ns | 1 | 2 | 1.436 | 0.451 | 0.9967 | 6/6 |
 | ULTIMATE_GEMINI_R1_H100 | H100 | 5.8 | hull | gemini-logo | ns | 1 | 1 | 1.441 | 0.718 | 0.9926 | 6/6 |
 | FINAL_GEMINI_H100_LUM10 | H100 | 5.4 | hull | gemini-logo | ns | 1 | 1 | 1.496 | 0.717 | 0.9925 | 6/6 |
@@ -42,6 +43,7 @@
 | gemini_lum05 | B200 | 5.5 | hull | gemini-logo | ns | 1 | 3 | 1.708 | 0.412 | 0.9970 | 6/6 |
 | rolex_lum05_r1_d1 | B200 | 6.0 | hull | rolex_white | ns | 1 | 1 | 1.712 | 0.712 | 0.9931 | 6/6 |
 | ULTIMATE_FERRARI_SEAMLESS_H100 | H100 | 5.3 | hull | ferrari_white | ns | 1 | 1 | 1.716 | 0.727 | 0.9921 | 6/6 |
+| DEFINITIVE_FERRARI_H100 | H100 | 6.4 | hull | ferrari_white | ns | 1 | 1 | 1.716 | 0.727 | 0.9921 | 6/6 |
 | ULTIMATE_RB_H100 | H100 | 5.5 | hull | redbull_white | ns | 1 | 1 | 1.723 | 0.728 | 0.9921 | 6/6 |
 | ULTIMATE_ROLEX_SEAMLESS_H100 | H100 | 5.5 | hull | rolex_white | ns | 1 | 1 | 1.725 | 0.727 | 0.9921 | 6/6 |
 | ULTIMATE_META_SEAMLESS_H100 | H100 | 6.3 | hull | meta_white | ns | 1 | 1 | 1.725 | 0.726 | 0.9921 | 6/6 |
@@ -99,6 +101,7 @@
 | hull_ns_d1_ferrari | B200 | 4.8 | hull | ferrari_white | ns | 1 | 3 | 2.224 | 0.430 | 0.9979 | 6/6 |
 | BEST_HULL_NS_T4 | T4 | 0.5 | hull | redbull_white | ns | 1 | 3 | 2.233 | 0.433 | 0.9973 | 6/6 |
 | tracking_mode_hull | B200 | 12.9 | hull | redbull_white | ns | 1 | 3 | 2.327 | 0.552 | 0.9965 | 5/6 |
+| tracking_seamless | B200 | 12.1 | hull | redbull_white | ns | 1 | 3 | 2.327 | 0.552 | 0.9965 | 5/6 |
 | seamless_ns_r3_d2 | B200 | 8.9 | hull | redbull_white | ns | 2 | 3 | 2.340 | 0.425 | 0.9963 | 6/6 |
 | pca_ns_d1_r1 | B200 | 9.3 | pca | redbull_white | ns | 1 | 1 | 2.346 | 0.656 | 0.9980 | 6/6 |
 | hull_ns_d2 | B200 | 8.7 | hull | redbull_white | ns | 2 | 3 | 2.437 | 0.411 | 0.9977 | 6/6 |
