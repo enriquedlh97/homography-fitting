@@ -49,7 +49,6 @@ input:
   video: data/tennis-clip.mp4
   logo: data/logos/redbull_white.png
   prompts:
-  # === Back banner (7 slots, baseline v2) ===
   - obj_id: 1
     points:
     - - 680
@@ -136,9 +135,6 @@ input:
       - 34
     - - 401
       - 31
-  # === Court floor: MELBOURNE ===
-  # SAM prompts: clicks ON the text + bounding box
-  # placement_quad: perspective trapezoid for logo warp
   - obj_id: 8
     surface_type: court_floor
     points:
@@ -148,8 +144,15 @@ input:
       - 845
     - - 1100
       - 848
-    labels: [1, 1, 1]
-    box: [744, 833, 1176, 862]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 744
+    - 833
+    - 1176
+    - 862
     placement_quad:
     - - 760
       - 815
@@ -159,7 +162,6 @@ input:
       - 870
     - - 740
       - 870
-  # === Court floor: blua ===
   - obj_id: 9
     surface_type: court_floor
     points:
@@ -167,8 +169,14 @@ input:
       - 535
     - - 330
       - 535
-    labels: [1, 1]
-    box: [222, 521, 382, 547]
+    labels:
+    - 1
+    - 1
+    box:
+    - 222
+    - 521
+    - 382
+    - 547
     placement_quad:
     - - 225
       - 505
@@ -178,14 +186,18 @@ input:
       - 558
     - - 218
       - 555
-  # === KIA side panel 1 (34° slope) ===
   - obj_id: 10
     surface_type: side_panel
     points:
     - - 155
       - 280
-    labels: [1]
-    box: [128, 255, 200, 310]
+    labels:
+    - 1
+    box:
+    - 128
+    - 255
+    - 200
+    - 310
     placement_quad:
     - - 130
       - 260
@@ -195,14 +207,18 @@ input:
       - 273
     - - 158
       - 301
-  # === KIA side panel 2 (adjacent) ===
   - obj_id: 11
     surface_type: side_panel
     points:
     - - 195
       - 250
-    labels: [1]
-    box: [170, 200, 242, 280]
+    labels:
+    - 1
+    box:
+    - 170
+    - 200
+    - 242
+    - 280
     placement_quad:
     - - 171
       - 232

@@ -261,6 +261,26 @@ class InpaintCompositor(Compositor):
                     + frame_roi.astype(np.float32) * (1.0 - alpha_blend)
                 ).astype(np.uint8)
 
+            # Add surface noise to inpainted area to match surrounding texture.
+            inpaint_noise: float = float(kwargs.get("inpaint_noise", 0.0))
+            if inpaint_noise > 0 and mask_roi is not None:
+                # Sample noise std from the border region around the mask.
+                border = (
+                    cv2.dilate(
+                        mask_u8_roi,
+                        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)),
+                    )
+                    & ~mask_u8_roi
+                )
+                if np.any(border > 0):
+                    border_pixels = frame_roi[border > 0].astype(np.float32)
+                    noise_std = float(border_pixels.std()) * inpaint_noise
+                    noise = np.random.normal(0, noise_std, inpainted_roi.shape)
+                    fill_area = mask_u8_roi > 0
+                    noisy = inpainted_roi.astype(np.float32)
+                    noisy[fill_area] += noise[fill_area]
+                    inpainted_roi = np.clip(noisy, 0, 255).astype(np.uint8)
+
         # If erase_only, skip logo overlay and return the erased frame.
         if erase_only:
             frame[y0:y1, x0:x1] = inpainted_roi
