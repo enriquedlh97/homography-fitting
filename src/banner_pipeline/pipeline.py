@@ -2292,12 +2292,25 @@ def run_pipeline_video_hybrid(
                                 cv2.MORPH_ELLIPSE, (dilate_px, dilate_px)
                             )
                             mask_u8 = cv2.dilate(mask_u8, kern)
-                            frame_bgr = cv2.inpaint(frame_bgr, mask_u8, 3, cv2.INPAINT_NS)
+                            # Subtract person mask from inpainting mask so we
+                            # don't inpaint under the player (causes artifacts).
+                            if person_mask is not None:
+                                person_u8 = (person_mask > 0.5).astype(np.uint8) * 255
+                                person_dilated = cv2.dilate(
+                                    person_u8,
+                                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+                                )
+                                mask_u8 = cv2.bitwise_and(mask_u8, cv2.bitwise_not(person_dilated))
+                            if np.any(mask_u8 > 0):
+                                frame_bgr = cv2.inpaint(frame_bgr, mask_u8, 3, cv2.INPAINT_NS)
                         # Then composite the logo with painted blend.
+                        # Pass SAM mask for natural occlusion (SAM excludes
+                        # players walking over the text automatically).
                         painted_court_composite(
                             frame_bgr,
                             current_corners[obj_id],
                             overlay,
+                            sam_mask=sam_mask,
                             occlusion_mask=person_mask,
                             alpha_scale=float(court_overrides.get("alpha_scale", 0.75)),
                             alpha_feather_px=int(court_overrides.get("alpha_feather_px", 3)),
