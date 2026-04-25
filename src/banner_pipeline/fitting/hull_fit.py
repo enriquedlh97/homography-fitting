@@ -13,10 +13,10 @@ import numpy as np
 from banner_pipeline.fitting.base import QuadFitter
 from banner_pipeline.geometry import intersect_implicit, line_from_points, sort_corners_tlbr
 
-
 # ---------------------------------------------------------------------------
 # Hull extraction + vertex classification
 # ---------------------------------------------------------------------------
+
 
 def get_hull_vertices(mask: np.ndarray) -> np.ndarray:
     """Largest contour → convex hull → simplified to ≤6 vertices."""
@@ -53,6 +53,7 @@ def classify_vertices(
 # ---------------------------------------------------------------------------
 # Corner deduction helpers
 # ---------------------------------------------------------------------------
+
 
 def _are_adjacent(i0: int, i1: int, n: int, labels: list[str]) -> bool:
     j = (i0 + 1) % n
@@ -175,6 +176,7 @@ def find_corners(pts: np.ndarray, labels: list[str]) -> np.ndarray:
 # QuadFitter implementation
 # ---------------------------------------------------------------------------
 
+
 class HullFitter(QuadFitter):
     """Hull vertex deduction fitter — works when corners extend off-screen."""
 
@@ -191,7 +193,12 @@ class HullFitter(QuadFitter):
             mask = (mask > 0).astype(np.uint8) * 255
 
         pts = get_hull_vertices(mask)
+        if pts is None or len(pts) < 3:
+            return None
         if img_shape is None:
             img_shape = mask.shape[:2]
         labels = classify_vertices(pts, img_shape, margin=margin)
-        return find_corners(pts, labels)
+        try:
+            return find_corners(pts, labels)
+        except (ValueError, RuntimeError):
+            return None

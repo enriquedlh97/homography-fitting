@@ -1965,10 +1965,17 @@ def run_pipeline_video_hybrid(
     prompt_bboxes: dict[int, np.ndarray] = {}
     for prompt in prompts:
         if prompt.placement_quad is not None:
-            # Explicit placement quad (for non-banner surfaces).
+            # Explicit placement quad.
             prompt_bboxes[prompt.obj_id] = prompt.placement_quad.copy()
+        elif prompt.box is not None:
+            # Derive from SAM box parameter [x0, y0, x1, y1].
+            b = prompt.box
+            prompt_bboxes[prompt.obj_id] = np.array(
+                [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]],
+                dtype=np.float32,
+            )
         else:
-            # Derive from points: axis-aligned bounding box.
+            # Derive from click points: axis-aligned bounding box.
             pts = prompt.points
             x0, y0 = pts.min(axis=0)
             x1, y1 = pts.max(axis=0)
