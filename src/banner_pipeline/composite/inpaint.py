@@ -449,6 +449,14 @@ class InpaintCompositor(Compositor):
                     255,
                 ).astype(np.uint8)
 
+            # Scale alpha for "painted on" effect: values <1.0 let the
+            # surface texture show through the logo.
+            alpha_scale: float = float(kwargs.get("alpha_scale", 1.0))
+            if alpha_scale < 1.0:
+                warped_alpha = np.clip(
+                    warped_alpha.astype(np.float32) * alpha_scale, 0, 255
+                ).astype(np.uint8)
+
             a = (warped_alpha.astype(np.float32) / 255.0)[..., None]
 
             # Poisson (seamless clone) blending: uses gradient-domain
