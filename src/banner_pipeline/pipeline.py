@@ -2254,6 +2254,14 @@ def run_pipeline_video_hybrid(
             person_mask: np.ndarray | None = None
             if _person_masker is not None:
                 person_mask = _person_masker.mask(frame_bgr)
+                # Small dilation to cover racket/limb edges the model misses.
+                occ_dilate = int(_occlusion_cfg.get("mask_dilate_px", 3))
+                if occ_dilate > 0 and np.any(person_mask > 0):
+                    kern = cv2.getStructuringElement(
+                        cv2.MORPH_ELLIPSE,
+                        (2 * occ_dilate + 1, 2 * occ_dilate + 1),
+                    )
+                    person_mask = cv2.dilate(person_mask, kern, iterations=1)
 
             # Composite: SAM mask for inpaint, tracked corners for logo warp.
             if overlay is not None and compositor is not None and current_corners:
@@ -2261,28 +2269,55 @@ def run_pipeline_video_hybrid(
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
                 surface_overrides = pipeline_cfg["compositor"].get("surface_overrides", {})
                 for obj_id in sorted(current_corners):
+                    prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+
+                    # Court floor: use painted compositor (full-frame warp).
+                    if st == "court_floor":
+                        from banner_pipeline.composite.painted import (
+                            painted_court_composite,
+                        )
+
+                        court_overrides = surface_overrides.get("court_floor", {})
+                        # First inpaint (erase original text) using SAM mask.
+                        sam_mask = masks_2d.get(obj_id)
+                        if sam_mask is not None and np.any(sam_mask > 0):
+                            mask_u8 = (sam_mask > 0).astype(np.uint8) * 255
+                            dilate_px = int(court_overrides.get("mask_dilate_px", 8))
+                            kern = cv2.getStructuringElement(
+                                cv2.MORPH_ELLIPSE, (dilate_px, dilate_px)
+                            )
+                            mask_u8 = cv2.dilate(mask_u8, kern)
+                            frame_bgr = cv2.inpaint(frame_bgr, mask_u8, 3, cv2.INPAINT_NS)
+                        # Then composite the logo with painted blend.
+                        painted_court_composite(
+                            frame_bgr,
+                            current_corners[obj_id],
+                            overlay,
+                            occlusion_mask=person_mask,
+                            alpha_scale=float(court_overrides.get("alpha_scale", 0.75)),
+                            alpha_feather_px=int(court_overrides.get("alpha_feather_px", 3)),
+                        )
+                        continue
+
                     extra_kw = dict(compositor_params)
                     # Apply per-surface-type compositor overrides.
-                    prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
                     if prompt is not None:
-                        st = _normalize_surface_type(prompt.surface_type)
                         overrides = surface_overrides.get(st, {})
                         extra_kw.update(overrides)
-                    # Pass person occlusion mask for court floor objects.
-                    if person_mask is not None and prompt is not None:
-                        st = _normalize_surface_type(prompt.surface_type)
-                        if st in ("court_floor", "side_panel"):
-                            extra_kw["occlusion_mask"] = person_mask
+                    # Pass person occlusion mask for side panel objects.
+                    if person_mask is not None and st == "side_panel":
+                        extra_kw["occlusion_mask"] = person_mask
                     # Use per-surface compositor to isolate caches.
                     comp = compositor
-                    if prompt is not None:
-                        st = _normalize_surface_type(prompt.surface_type)
-                        if st != "banner":
-                            if st not in _surface_compositors:
-                                _surface_compositors[st] = build_compositor(
-                                    pipeline_cfg["compositor"]
-                                )
-                            comp = _surface_compositors[st]
+                    if st != "banner":
+                        if st not in _surface_compositors:
+                            _surface_compositors[st] = build_compositor(pipeline_cfg["compositor"])
+                        comp = _surface_compositors[st]
                     if comp.name == "alpha":
                         homo = compute_oriented_homography(current_corners[obj_id], K)
                         extra_kw["homo"] = homo
