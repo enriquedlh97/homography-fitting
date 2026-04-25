@@ -30,35 +30,31 @@ pipeline:
         alpha_scale: 0.75
         lum_strength: 0.0
         alpha_feather_px: 3
-      side_panel:
-        inpaint_method: ns
-        inpaint_radius: 3
-        mask_dilate_px: 10
-        inpaint_feather_px: 5
-        local_color_match: false
-        lum_strength: 0.0
   occlusion_masker:
     type: person
     confidence_threshold: 0.5
   tracking:
-    corner_source: homography_offset
-    ema_alpha: 0.7
+    corner_source: mask_refit
+    ema_alpha: 0.5
   camera:
     focal_length: null
 input:
   video: data/zoom-clip-melbourne.mov
   logo: data/logos/redbull_white.png
   prompts:
-  # === Court floor: MELBOURNE (bottom of frame) ===
-  # Zoom clip — MELBOURNE visible at bottom, camera zooms in
+  # === Court floor: MELBOURNE (mid-frame in this clip) ===
   - obj_id: 1
     surface_type: court_floor
     points:
-    - - 500
-      - 975
-    labels: [1]
-    box: [478, 930, 522, 1020]
-  # === Court floor: realestate.com (left court) ===
+    - - 700
+      - 680
+    - - 900
+      - 680
+    - - 1050
+      - 680
+    labels: [1, 1, 1]
+    box: [474, 650, 1199, 711]
+  # === Court floor: realestate.com (left court, angled text) ===
   - obj_id: 2
     surface_type: court_floor
     points:
@@ -66,7 +62,9 @@ input:
       - 531
     - - 185
       - 449
-    labels: [1, 1]
-    box: [110, 430, 462, 567]
+    - - 129
+      - 492
+    labels: [1, 1, 1]
+    box: [50, 360, 465, 550]
 output:
   dir: experiments/

@@ -18,11 +18,11 @@ from banner_pipeline.geometry import intersect_implicit, line_from_points, sort_
 # ---------------------------------------------------------------------------
 
 
-def get_hull_vertices(mask: np.ndarray) -> np.ndarray:
+def get_hull_vertices(mask: np.ndarray) -> np.ndarray | None:
     """Largest contour → convex hull → simplified to ≤6 vertices."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        raise RuntimeError("No contours found in mask.")
+        return None
     largest = max(contours, key=cv2.contourArea)
     hull = cv2.convexHull(largest)
 
