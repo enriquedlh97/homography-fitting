@@ -108,6 +108,17 @@ class InpaintCompositor(Compositor):
             frame_roi = frame[y0:y1, x0:x1]
             mask_roi = mask[y0:y1, x0:x1] if mask is not None else None
 
+        # --- Polygon mask fallback ---
+        # When enabled, ALWAYS use a filled polygon from quad corners as
+        # the mask. This replaces the SAM mask entirely for surfaces where
+        # SAM can't segment reliably (light text on blue court, etc.).
+        poly_mask_fallback: bool = kwargs.get("poly_mask_fallback", False)
+        if poly_mask_fallback:
+            poly_mask = np.zeros((frame_h, frame_w), dtype=np.uint8)
+            pts_int = corners.astype(np.int32).reshape((-1, 1, 2))
+            cv2.fillPoly(poly_mask, [pts_int], 255)
+            mask_roi = poly_mask[y0:y1, x0:x1]
+
         # --- Step 0.5: sample local banner color for per-slot tinting ---
         # Before erasing old logos, sample the bright pixels in the ROI
         # to capture the original text color at this position.  Each slot
@@ -237,6 +248,18 @@ class InpaintCompositor(Compositor):
                     )
             else:
                 inpainted_roi = frame_roi.copy()
+
+            # Feather the inpainting edges so the filled region blends
+            # gradually with the surrounding original content.
+            inpaint_feather_px: int = int(kwargs.get("inpaint_feather_px", 0))
+            if inpaint_feather_px > 0 and mask_roi is not None:
+                kf = inpaint_feather_px * 2 + 1
+                soft = cv2.GaussianBlur(mask_u8_roi.astype(np.float32), (kf, kf), 0)
+                alpha_blend = (soft / 255.0)[..., None]
+                inpainted_roi = (
+                    inpainted_roi.astype(np.float32) * alpha_blend
+                    + frame_roi.astype(np.float32) * (1.0 - alpha_blend)
+                ).astype(np.uint8)
 
         # If erase_only, skip logo overlay and return the erased frame.
         if erase_only:

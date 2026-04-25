@@ -128,15 +128,21 @@ def resolve_geometry_model(prompt: ObjectPrompt) -> str:
     return SURFACE_TO_GEOMETRY_MODEL.get(str(prompt.surface_type).strip().lower(), "mask_free_quad")
 
 
+# Surface types that work without geometry (polygon mask fallback).
+POLYGON_FALLBACK_SURFACE_TYPES = {"court_floor", "side_panel"}
+
+
 def supports_surface_type(surface_type: str, geometry_enabled: bool) -> bool:
     normalized = str(surface_type).strip().lower() or "banner"
     if normalized == "banner":
+        return True
+    if normalized in POLYGON_FALLBACK_SURFACE_TYPES:
         return True
     return geometry_enabled and normalized in SUPPORTED_GEOMETRY_SURFACE_TYPES
 
 
 def supported_surface_types(geometry_enabled: bool) -> set[str]:
-    base = {"banner"}
+    base = {"banner"} | POLYGON_FALLBACK_SURFACE_TYPES
     if geometry_enabled:
         base |= SUPPORTED_GEOMETRY_SURFACE_TYPES
     return base

@@ -150,6 +150,12 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
             raise ValueError(
                 "Prompt labels must be a 1D array with the same length as the points list."
             )
+        box = None
+        if "box" in p:
+            box = np.array(p["box"], dtype=np.float32)
+        placement_quad = None
+        if "placement_quad" in p:
+            placement_quad = np.array(p["placement_quad"], dtype=np.float32)
         out.append(
             ObjectPrompt(
                 obj_id=p["obj_id"],
@@ -158,6 +164,8 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
                 frame_idx=p.get("frame_idx", 0),
                 surface_type=_normalize_surface_type(p.get("surface_type", "banner")),
                 geometry_model=_normalize_geometry_model(p.get("geometry_model")),
+                box=box,
+                placement_quad=placement_quad,
             )
         )
     return out
@@ -1953,28 +1961,44 @@ def run_pipeline_video_hybrid(
     # Enlarge fitted corners to cover the prompt point bounding box.
     # The hull fitter often produces quads much smaller than the actual
     # banner panel because the SAM mask only covers part of the content.
+    prompt_by_id: dict[int, ObjectPrompt] = {p.obj_id: p for p in prompts}
     prompt_bboxes: dict[int, np.ndarray] = {}
     for prompt in prompts:
-        pts = prompt.points
-        x0, y0 = pts.min(axis=0)
-        x1, y1 = pts.max(axis=0)
-        prompt_bboxes[prompt.obj_id] = np.array(
-            [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32
-        )
-    # Normalize bbox heights so logos appear the same size across
-    # all banner slots. Use the median height as the reference.
-    if prompt_bboxes:
-        bbox_heights = {oid: float(b[2, 1] - b[0, 1]) for oid, b in prompt_bboxes.items()}
-        ref_height = float(np.median(list(bbox_heights.values())))
-        for oid in prompt_bboxes:
-            bbox = prompt_bboxes[oid]
-            h = bbox_heights[oid]
-            if h > 0 and abs(h - ref_height) > 2:
-                # Adjust top/bottom to match reference height, centered
-                cy = (bbox[0, 1] + bbox[2, 1]) / 2
-                bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
-                bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
-                prompt_bboxes[oid] = bbox
+        if prompt.placement_quad is not None:
+            # Explicit placement quad (for non-banner surfaces).
+            prompt_bboxes[prompt.obj_id] = prompt.placement_quad.copy()
+        else:
+            # Derive from points: axis-aligned bounding box.
+            pts = prompt.points
+            x0, y0 = pts.min(axis=0)
+            x1, y1 = pts.max(axis=0)
+            prompt_bboxes[prompt.obj_id] = np.array(
+                [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32
+            )
+    # Normalize bbox heights for banner surfaces only.
+    banner_ids = {
+        oid
+        for oid, p in prompt_by_id.items()
+        if _normalize_surface_type(p.surface_type) == "banner"
+    }
+    if banner_ids:
+        banner_heights = {
+            oid: float(prompt_bboxes[oid][2, 1] - prompt_bboxes[oid][0, 1])
+            for oid in banner_ids
+            if oid in prompt_bboxes
+        }
+        if banner_heights:
+            ref_height = float(np.median(list(banner_heights.values())))
+            for oid in banner_ids:
+                if oid not in prompt_bboxes:
+                    continue
+                bbox = prompt_bboxes[oid]
+                h = banner_heights.get(oid, 0.0)
+                if h > 0 and abs(h - ref_height) > 2:
+                    cy = (bbox[0, 1] + bbox[2, 1]) / 2
+                    bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
+                    bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
+                    prompt_bboxes[oid] = bbox
 
     for obj_id in list(corners_frame0.keys()):
         if obj_id in prompt_bboxes:
@@ -2054,6 +2078,18 @@ def run_pipeline_video_hybrid(
     else:
         raise ValueError(f"Unknown corner_source: {corner_source!r}")
 
+    # --- Step 2b: Initialize person masker for occlusion ---
+    _person_masker = None
+    _occlusion_cfg = pipeline_cfg.get("occlusion_masker", {})
+    if _occlusion_cfg.get("type") == "person":
+        from banner_pipeline.masking import PersonMasker
+
+        _person_masker = PersonMasker(
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] PersonMasker enabled for occlusion")
+
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
     logo_path = input_cfg.get("logo")
@@ -2065,6 +2101,7 @@ def run_pipeline_video_hybrid(
         overlay = np.zeros((1, 1, 3), dtype=np.uint8)  # dummy for erase-only
 
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
+    _surface_compositors: dict[str, Any] = {}  # per-surface instances
     if compositor is not None and not compositor_params:
         compositor_params = pipeline_cfg["compositor"].get("params", {})
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
@@ -2206,20 +2243,47 @@ def run_pipeline_video_hybrid(
                     current_corners = {oid: c.copy() for oid, c in smoothed_corners.items()}
             tracking_times.append(time.perf_counter() - t_track)
 
+            # Detect person occlusion mask (once per frame).
+            person_mask: np.ndarray | None = None
+            if _person_masker is not None:
+                person_mask = _person_masker.mask(frame_bgr)
+
             # Composite: SAM mask for inpaint, tracked corners for logo warp.
             if overlay is not None and compositor is not None and current_corners:
                 t_comp = time.perf_counter()
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
+                surface_overrides = pipeline_cfg["compositor"].get("surface_overrides", {})
                 for obj_id in sorted(current_corners):
                     extra_kw = dict(compositor_params)
-                    if compositor.name == "alpha":
+                    # Apply per-surface-type compositor overrides.
+                    prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
+                    if prompt is not None:
+                        st = _normalize_surface_type(prompt.surface_type)
+                        overrides = surface_overrides.get(st, {})
+                        extra_kw.update(overrides)
+                    # Pass person occlusion mask for court floor objects.
+                    if person_mask is not None and prompt is not None:
+                        st = _normalize_surface_type(prompt.surface_type)
+                        if st in ("court_floor", "side_panel"):
+                            extra_kw["occlusion_mask"] = person_mask
+                    # Use per-surface compositor to isolate caches.
+                    comp = compositor
+                    if prompt is not None:
+                        st = _normalize_surface_type(prompt.surface_type)
+                        if st != "banner":
+                            if st not in _surface_compositors:
+                                _surface_compositors[st] = build_compositor(
+                                    pipeline_cfg["compositor"]
+                                )
+                            comp = _surface_compositors[st]
+                    if comp.name == "alpha":
                         homo = compute_oriented_homography(current_corners[obj_id], K)
                         extra_kw["homo"] = homo
-                    frame_bgr = compositor.composite(
+                    frame_bgr = comp.composite(
                         frame_bgr,
-                        current_corners[obj_id],  # tracked corners (smooth)
+                        current_corners[obj_id],
                         overlay,
-                        mask=masks_2d.get(obj_id),  # SAM mask (correct inpainting)
+                        mask=masks_2d.get(obj_id),
                         **extra_kw,
                     )
                 composite_times.append(time.perf_counter() - t_comp)

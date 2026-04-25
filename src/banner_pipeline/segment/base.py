@@ -21,6 +21,8 @@ class ObjectPrompt:
     surface_type: Semantic surface type for downstream routing.
     geometry_model: Optional geometry override for downstream quad construction.
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
+    placement_quad: Optional (4, 2) float32 quad corners for logo placement.
+                    When set, used instead of points for building prompt_bboxes.
     """
 
     obj_id: int
@@ -30,6 +32,7 @@ class ObjectPrompt:
     surface_type: str = "banner"
     geometry_model: str | None = None
     box: np.ndarray | None = None
+    placement_quad: np.ndarray | None = None
 
 
 class SegmentationModel(ABC):
