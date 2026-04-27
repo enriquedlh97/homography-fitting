@@ -222,21 +222,21 @@ def painted_court_composite(
     #     gaps where SAM missed text pixels.
     effective_alpha = warped_mask
     if not erase_text and occlusion_mask is not None:
-        # Overlay mode: use person mask directly (skip SAM mask).
-        # The warped quad already covers the text area, so we don't
-        # need SAM to restrict the overlay. Just cut out the player.
+        # Overlay mode (tennis-virtual-ads approach): use BINARY dilated
+        # player mask with NO feathering. This gives a clean hard cut
+        # at the player boundary — feet are never semi-transparent.
+        # Feathering the occlusion mask was the root cause of soft feet.
         occ = occlusion_mask.astype(np.float32)
         if occ.max() > 1:
             occ = occ / 255.0
-        is_binary = np.all((occ == 0) | (occ == 1))
-        if is_binary and np.any(occ > 0):
-            occ = _process_occlusion_mask(
-                occ,
-                dilate_px=occlusion_dilate_px,
-                feather_ksize=occlusion_feather_ksize,
-                feather_sigma=occlusion_feather_sigma,
+        occ_binary = (occ > 0.5).astype(np.uint8)
+        if np.any(occ_binary) and occlusion_dilate_px > 0:
+            kern = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (2 * occlusion_dilate_px + 1, 2 * occlusion_dilate_px + 1),
             )
-        effective_alpha = warped_mask * (1.0 - np.clip(occ, 0.0, 1.0))
+            occ_binary = cv2.dilate(occ_binary, kern, iterations=1)
+        effective_alpha = warped_mask * (1.0 - occ_binary.astype(np.float32))
     elif sam_mask is not None and np.any(sam_mask > 0):
         # SAM2 mask mode: logo only appears where SAM2 says "text".
         # SAM2 naturally excludes players → clean occlusion.
