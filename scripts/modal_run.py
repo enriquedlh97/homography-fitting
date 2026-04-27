@@ -104,8 +104,10 @@ def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image
             "cd /tmp/sam3 && pip install -e .",
         )
         .run_commands(
-            "apt-get update && apt-get install -y python3-dev build-essential gcc g++",
-            "pip install git+https://github.com/pq-yang/MatAnyone.git",
+            "apt-get update && apt-get install -y python3-dev build-essential gcc g++ clang",
+            "pip install cchardet netifaces || true",
+            "pip install --no-deps git+https://github.com/pq-yang/MatAnyone.git",
+            "pip install ftfy regex einops fvcore",
         )
         .add_local_dir("src", remote_path="/root/src")
     )
