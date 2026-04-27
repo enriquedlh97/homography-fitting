@@ -24,8 +24,12 @@ pipeline:
         padding: 0.0
         alpha_scale: 1.0
         alpha_feather_px: 3
-        erase_text: false
+        # Combined: erase text first, then overlay Red Bull with occlusion.
+        # Erasure removes MELBOURNE so cutout holes show clean court.
+        # Overlay provides Red Bull logo + binary player occlusion.
+        erase_text: true
         erase_only: false
+        erase_feather_px: 5
         shade_strength: 0.0
         quad_expand_px: 80
         occlusion_dilate_px: 20
@@ -39,7 +43,6 @@ pipeline:
   occlusion_masker:
     type: sam2_video
     confidence_threshold: 0.5
-    # Prompt on frame 650 — player is near MELBOURNE text, better tracking
     prompt_frame_idx: 650
     checkpoint: sam2/checkpoints/sam2.1_hiera_large.pt
     model_cfg: configs/sam2.1/sam2.1_hiera_l.yaml

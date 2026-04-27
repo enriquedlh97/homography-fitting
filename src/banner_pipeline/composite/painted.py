@@ -230,8 +230,8 @@ def painted_court_composite(
     #     don't need SAM to restrict the overlay. Using SAM would leave
     #     gaps where SAM missed text pixels.
     effective_alpha = warped_mask
-    if not erase_text and occlusion_mask is not None:
-        # Overlay mode (tennis-virtual-ads approach): use BINARY dilated
+    if occlusion_mask is not None:
+        # Tennis-virtual-ads approach: use BINARY dilated
         # player mask with NO feathering. This gives a clean hard cut
         # at the player boundary — feet are never semi-transparent.
         # Feathering the occlusion mask was the root cause of soft feet.
