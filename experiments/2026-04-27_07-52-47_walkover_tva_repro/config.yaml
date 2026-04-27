@@ -24,9 +24,6 @@ pipeline:
         padding: 0.0
         alpha_scale: 1.0
         alpha_feather_px: 3
-        # Combined: erase text first, then overlay Red Bull with occlusion.
-        # Erasure removes MELBOURNE so cutout holes show clean court.
-        # Overlay provides Red Bull logo + binary player occlusion.
         erase_text: true
         erase_only: false
         erase_feather_px: 5
@@ -44,7 +41,6 @@ pipeline:
     type: sam2_video
     confidence_threshold: 0.5
     prompt_frame_idx: 0
-    # Match tennis-virtual-ads exactly: SAM2 large + smoother + 5px dilate
     checkpoint: sam2/checkpoints/sam2.1_hiera_large.pt
     model_cfg: configs/sam2.1/sam2.1_hiera_l.yaml
     mask_smooth: true
@@ -66,14 +62,26 @@ input:
       - 34
     - - 599
       - 33
-    labels: [1, 1, 1]
-    box: [519, 22, 615, 56]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 519
+    - 22
+    - 615
+    - 56
   - obj_id: 2
     points:
     - - 1122
       - 37
-    labels: [1]
-    box: [1109, 26, 1136, 50]
+    labels:
+    - 1
+    box:
+    - 1109
+    - 26
+    - 1136
+    - 50
   - obj_id: 3
     surface_type: court_floor
     points:
@@ -83,8 +91,15 @@ input:
       - 939
     - - 1117
       - 939
-    labels: [1, 1, 1]
-    box: [729, 920, 1188, 958]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 729
+    - 920
+    - 1188
+    - 958
   - obj_id: 4
     surface_type: court_floor
     points:
@@ -94,7 +109,14 @@ input:
       - 611
     - - 324
       - 611
-    labels: [1, 1, 1]
-    box: [180, 598, 346, 625]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 180
+    - 598
+    - 346
+    - 625
 output:
   dir: experiments/

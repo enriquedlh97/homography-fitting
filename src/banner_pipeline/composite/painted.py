@@ -238,8 +238,7 @@ def painted_court_composite(
         occ = occlusion_mask.astype(np.float32)
         if occ.max() > 1:
             occ = occ / 255.0
-        # Lower threshold (0.3) to include uncertain pixels near feet.
-        occ_binary = (occ > 0.3).astype(np.uint8)
+        occ_binary = (occ > 0.5).astype(np.uint8)
         if np.any(occ_binary) and occlusion_dilate_px > 0:
             kern = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE,

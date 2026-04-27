@@ -2126,6 +2126,15 @@ def run_pipeline_video_hybrid(
         )
         print("[hybrid] PersonMasker (Mask R-CNN) enabled for occlusion")
 
+    # --- Step 2c: Initialize mask smoother (tennis-virtual-ads approach) ---
+    _mask_smoother = None
+    if _person_masker is not None and _occlusion_cfg.get("mask_smooth", False):
+        from banner_pipeline.masking import MaskSmoother
+
+        _close_px = int(_occlusion_cfg.get("mask_close_px", 7))
+        _mask_smoother = MaskSmoother(close_px=_close_px)
+        print(f"[hybrid] MaskSmoother enabled (close_px={_close_px})")
+
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
     logo_path = input_cfg.get("logo")
@@ -2280,6 +2289,7 @@ def run_pipeline_video_hybrid(
             tracking_times.append(time.perf_counter() - t_track)
 
             # Detect person occlusion mask (once per frame).
+            # Follows tennis-virtual-ads flow: detect → smooth → dilate.
             person_mask: np.ndarray | None = None
             person_mask_raw: np.ndarray | None = None
             if _person_masker is not None:
@@ -2287,10 +2297,13 @@ def run_pipeline_video_hybrid(
                     person_mask_raw = _person_masker.mask(frame_idx)
                 else:
                     person_mask_raw = _person_masker.mask(frame_bgr)
+
+                # MaskSmoother: morph close + temporal dropout protection.
+                if _mask_smoother is not None and person_mask_raw is not None:
+                    person_mask_raw = _mask_smoother.update(person_mask_raw)
+
                 person_mask = person_mask_raw.copy()  # type: ignore[union-attr]
-                # Small dilation to cover racket/limb edges the model misses.
-                # Note: court_floor uses its own dilation in painted.py,
-                # so this only affects banner/side_panel surfaces.
+                # Dilation to cover racket/limb edges the model misses.
                 occ_dilate = int(_occlusion_cfg.get("mask_dilate_px", 3))
                 if occ_dilate > 0 and np.any(person_mask > 0):
                     kern = cv2.getStructuringElement(

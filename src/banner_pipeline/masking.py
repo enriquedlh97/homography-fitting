@@ -5,9 +5,8 @@ Three masker backends:
 - RVMMasker: RobustVideoMatting (continuous alpha mattes)
 - SAM2VideoPersonMasker: SAM2 video propagation (pre-computed, best quality)
 
-SAM2VideoPersonMasker auto-detects players on a prompt frame using Mask R-CNN,
-converts detections to SAM2 point prompts, and propagates masks across all
-frames. This gives much better foot/limb boundaries than per-frame Mask R-CNN.
+MaskSmoother: temporal post-processor (morph close + dropout protection).
+Exact reproduction of tennis-virtual-ads mask_smoother.py.
 """
 
 from __future__ import annotations
@@ -334,3 +333,38 @@ class SAM2VideoPersonMasker:
             ref = next(iter(self._masks.values()))
             return np.zeros_like(ref, dtype=np.float32)
         return np.zeros((1, 1), dtype=np.float32)
+
+
+class MaskSmoother:
+    """Temporal mask post-processor — exact reproduction of tennis-virtual-ads.
+
+    Two operations applied in order:
+    1. Morphological close (fills arm-body and foot-court gaps)
+    2. Single-frame dropout protection (union with previous frame)
+    """
+
+    def __init__(self, close_px: int = 7) -> None:
+        self._close_px = close_px
+        self._prev_raw: np.ndarray | None = None
+
+    def update(self, raw_mask: np.ndarray) -> np.ndarray:
+        """Smooth *raw_mask* and return the processed version."""
+        mask = raw_mask.copy()
+
+        # 1. Morphological close — fills small gaps in the silhouette
+        # (e.g. between arm and body, or between shoe sole and court).
+        if self._close_px > 0 and np.any(mask > 0):
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (2 * self._close_px + 1, 2 * self._close_px + 1),
+            )
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # 2. Single-frame dropout protection — union with previous
+        # frame's raw mask prevents flickering from single-frame
+        # detection failures.
+        if self._prev_raw is not None:
+            mask = np.maximum(mask, self._prev_raw)
+        self._prev_raw = raw_mask.copy()
+
+        return mask
