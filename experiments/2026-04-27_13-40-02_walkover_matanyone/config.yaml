@@ -23,14 +23,8 @@ pipeline:
         padding: 0.0
         alpha_scale: 1.0
         alpha_feather_px: 25
-        # Pure overlay (like tennis-virtual-ads): NO frame modification.
-        # Court-colored canvas covers MELBOURNE, occlusion keeps player.
         erase_text: false
         erase_only: false
-        # shade_strength=0.0 for our use case — shade map at 1.0 picks up
-        # MELBOURNE text as bright spots in the illumination, recreating
-        # the text through the canvas. Tennis-virtual-ads can use 1.0
-        # because they overlay on clean court (no existing text).
         shade_strength: 0.0
         quad_expand_px: 80
         occlusion_dilate_px: 2
@@ -44,7 +38,6 @@ pipeline:
     type: matanyone
     confidence_threshold: 0.5
     prompt_frame_idx: 0
-    # Match tennis-virtual-ads exactly: SAM2 large + smoother + 5px dilate
   tracking:
     corner_source: bbox
   camera:
@@ -61,14 +54,26 @@ input:
       - 34
     - - 599
       - 33
-    labels: [1, 1, 1]
-    box: [519, 22, 615, 56]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 519
+    - 22
+    - 615
+    - 56
   - obj_id: 2
     points:
     - - 1122
       - 37
-    labels: [1]
-    box: [1109, 26, 1136, 50]
+    labels:
+    - 1
+    box:
+    - 1109
+    - 26
+    - 1136
+    - 50
   - obj_id: 3
     surface_type: court_floor
     points:
@@ -78,8 +83,15 @@ input:
       - 939
     - - 1117
       - 939
-    labels: [1, 1, 1]
-    box: [729, 920, 1188, 958]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 729
+    - 920
+    - 1188
+    - 958
   - obj_id: 4
     surface_type: court_floor
     points:
@@ -89,7 +101,14 @@ input:
       - 611
     - - 324
       - 611
-    labels: [1, 1, 1]
-    box: [180, 598, 346, 625]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 180
+    - 598
+    - 346
+    - 625
 output:
   dir: experiments/
