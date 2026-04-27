@@ -298,25 +298,6 @@ def painted_court_composite(
     blended = frame.astype(np.float32) * (1.0 - alpha_3ch) + shaded_bgr * alpha_3ch
     frame[:] = blended.astype(np.uint8)
 
-    # --- 2i. Margin cleanup: suppress text fragments near player ---
-    # The binary occlusion mask creates a margin zone where the original
-    # frame shows through. If MELBOURNE text is in that zone, white
-    # letter fragments appear near the shoes. Fix: detect bright white
-    # pixels in the margin and replace with court color.
-    # The margin zone = dilated mask minus the warped overlay zone.
-    # Only apply where effective_alpha is low (original frame shows).
-    if occlusion_mask is not None and not erase_text:
-        in_overlay_zone = warped_mask > 0.01
-        low_alpha = effective_alpha < 0.1
-        margin_zone = in_overlay_zone & low_alpha
-        if np.any(margin_zone):
-            gray_comp = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            bright_in_margin = margin_zone & (gray_comp > 170)
-            if np.any(bright_in_margin):
-                # Sample court color from the overlay canvas.
-                canvas_bgr_warped = warped_bgr.astype(np.uint8)
-                frame[bright_in_margin] = canvas_bgr_warped[bright_in_margin]
-
     return frame
 
 
