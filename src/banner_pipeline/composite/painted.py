@@ -155,8 +155,23 @@ def painted_court_composite(
                 med = np.median(non_text.reshape(-1, 3), axis=0).astype(np.uint8)
                 court_region[text_pixels] = med
         # Heavy blur removes remaining artifacts, preserves illumination.
-        court_blurred = cv2.GaussianBlur(court_region, (81, 81), 0)
-        canvas[:, :, :3] = court_blurred
+        court_blurred = cv2.GaussianBlur(court_region, (101, 101), 0)
+
+        # Add matched texture noise — the blurred canvas is too smooth
+        # compared to real court grain. Sample noise statistics from the
+        # non-text pixels and add matched Gaussian noise.
+        if np.any(~text_pixels):
+            gray_smooth = cv2.GaussianBlur(gray, (5, 5), 0)
+            texture = gray.astype(np.float32) - gray_smooth.astype(np.float32)
+            non_text_texture = texture[~text_pixels]
+            noise_std = float(np.std(non_text_texture)) if len(non_text_texture) > 10 else 1.0
+        else:
+            noise_std = 1.0
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, noise_std, size=court_blurred.shape).astype(np.float32)
+        court_textured = np.clip(court_blurred.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+        canvas[:, :, :3] = court_textured
         canvas[:, :, 3] = 255
     x_off = (canvas_w - new_w) // 2
     y_off = (canvas_h - new_h) // 2
