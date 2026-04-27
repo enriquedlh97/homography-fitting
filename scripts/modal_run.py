@@ -104,7 +104,7 @@ def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image
             "cd /tmp/sam3 && pip install -e .",
         )
         .run_commands(
-            "apt-get update && apt-get install -y python3-dev build-essential",
+            "apt-get update && apt-get install -y python3-dev build-essential gcc g++",
             "pip install git+https://github.com/pq-yang/MatAnyone.git",
         )
         .add_local_dir("src", remote_path="/root/src")
