@@ -606,7 +606,7 @@ class MatAnyonePersonMasker:
                 y1 = max(0, y1 - self._box_padding)
                 x2 = min(fw, x2 + self._box_padding)
                 y2 = min(fh, y2 + self._box_padding)
-                binary_mask[y1:y2, x1:x2] = 1.0
+                binary_mask[y1:y2, x1:x2] = 255.0
                 count += 1
 
         print(f"[MatAnyone] Detected {count} persons, initializing …")
