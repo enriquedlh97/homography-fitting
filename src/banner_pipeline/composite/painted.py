@@ -183,22 +183,31 @@ def painted_court_composite(
     region[:, :, 3] = np.maximum(region[:, :, 3], logo_resized[:, :, 3])
 
     # --- 2b. Warp canvas into full-frame space ---
+    # Warp BGR and alpha SEPARATELY to avoid black border artifacts.
+    # BGR uses BORDER_REPLICATE (extends edge color instead of black).
+    # Alpha uses BORDER_CONSTANT(0) (transparent outside the quad).
     src_corners = np.array(
         [[0, 0], [canvas_w - 1, 0], [canvas_w - 1, canvas_h - 1], [0, canvas_h - 1]],
         dtype=np.float32,
     )
     dst_corners = corners.astype(np.float32)
     M = cv2.getPerspectiveTransform(src_corners, dst_corners)
-    warped_rgba = cv2.warpPerspective(
-        canvas,
+    warped_bgr = cv2.warpPerspective(
+        canvas[:, :, :3],
+        M,
+        (fw, fh),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    warped_alpha = cv2.warpPerspective(
+        canvas[:, :, 3],
         M,
         (fw, fh),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0, 0),
+        borderValue=0,
     )
-    warped_bgr = warped_rgba[:, :, :3]
-    warped_mask = warped_rgba[:, :, 3].astype(np.float32) / 255.0
+    warped_mask = warped_alpha.astype(np.float32) / 255.0
 
     # --- 2c. Alpha feather ---
     if alpha_feather_px > 0:

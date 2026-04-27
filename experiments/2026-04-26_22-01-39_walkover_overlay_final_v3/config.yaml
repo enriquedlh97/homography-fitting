@@ -24,10 +24,6 @@ pipeline:
         padding: 0.0
         alpha_scale: 1.0
         alpha_feather_px: 3
-        # KEY: DON'T erase text. Instead, overlay court-colored patch.
-        # This uses the tennis-virtual-ads formula:
-        #   effective_alpha = overlay_alpha * (1 - player_mask)
-        # Player area is NEVER modified → feet can't disappear.
         erase_text: false
         erase_only: false
         shade_strength: 0.0
@@ -44,7 +40,6 @@ pipeline:
     type: sam2_video
     confidence_threshold: 0.5
     prompt_frame_idx: 0
-    # Use LARGE model (same as tennis-virtual-ads) for better foot segmentation
     checkpoint: sam2/checkpoints/sam2.1_hiera_large.pt
     model_cfg: configs/sam2.1/sam2.1_hiera_l.yaml
   tracking:
@@ -53,11 +48,8 @@ pipeline:
     focal_length: null
 input:
   video: data/melbourne-walking-over-logo.mov
-  # Dummy 1x1 logo — the court-colored canvas covers the text,
-  # the tiny logo is invisible. This is just to trigger Phase 2.
   logo: data/logos/redbull_white.png
   prompts:
-  # === Back banner slots (visible in this clip) ===
   - obj_id: 1
     points:
     - - 537
@@ -66,15 +58,26 @@ input:
       - 34
     - - 599
       - 33
-    labels: [1, 1, 1]
-    box: [519, 22, 615, 56]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 519
+    - 22
+    - 615
+    - 56
   - obj_id: 2
     points:
     - - 1122
       - 37
-    labels: [1]
-    box: [1109, 26, 1136, 50]
-  # === Court floor: MELBOURNE (y=924-954) ===
+    labels:
+    - 1
+    box:
+    - 1109
+    - 26
+    - 1136
+    - 50
   - obj_id: 3
     surface_type: court_floor
     points:
@@ -84,9 +87,15 @@ input:
       - 939
     - - 1117
       - 939
-    labels: [1, 1, 1]
-    box: [729, 920, 1188, 958]
-  # === Court floor: YoPRO (left court) ===
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 729
+    - 920
+    - 1188
+    - 958
   - obj_id: 4
     surface_type: court_floor
     points:
@@ -96,7 +105,14 @@ input:
       - 611
     - - 324
       - 611
-    labels: [1, 1, 1]
-    box: [180, 598, 346, 625]
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 180
+    - 598
+    - 346
+    - 625
 output:
   dir: experiments/
