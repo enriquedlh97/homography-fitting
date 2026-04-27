@@ -524,6 +524,135 @@ class SAM3VideoPersonMasker:
         return np.zeros((1, 1), dtype=np.float32)
 
 
+class MatAnyonePersonMasker:
+    """Per-frame alpha matting via MatAnyone (CVPR 2025).
+
+    Returns continuous float32 alpha [0,1] instead of binary masks.
+    This gives natural soft edges at shoe-court boundaries — no hard
+    margin where text can show through. Uses memory bank for temporal
+    consistency across frames.
+
+    Install: pip install git+https://github.com/pq-yang/MatAnyone.git
+    """
+
+    def __init__(
+        self,
+        confidence_threshold: float = 0.5,
+        n_warmup: int = 5,
+        box_padding: int = 10,
+        device: str | None = None,
+    ) -> None:
+        import torch
+
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device = torch.device(device)
+        self._confidence_threshold = confidence_threshold
+        self._n_warmup = n_warmup
+        self._box_padding = box_padding
+        self._is_initialized = False
+        self._frame_count = 0
+
+        # Load MatAnyone.
+        print(f"[MatAnyone] Loading on {self._device} …")
+        from matanyone import InferenceCore
+
+        self._processor = InferenceCore("PeiqingYang/MatAnyone", device=self._device)
+        print("[MatAnyone] Model loaded.")
+
+        # Load Mask R-CNN for person detection.
+        from torchvision.models.detection import (
+            MaskRCNN_ResNet50_FPN_Weights,
+            maskrcnn_resnet50_fpn,
+        )
+
+        weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT
+        self._detector = maskrcnn_resnet50_fpn(weights=weights)
+        self._detector.to(self._device)
+        self._detector.eval()
+
+    def mask(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """Return (H, W) float32 continuous alpha matte, 0.0=bg, 1.0=person."""
+
+        fh, fw = frame_bgr.shape[:2]
+        self._frame_count += 1
+
+        if not self._is_initialized:
+            return self._prompt_and_warmup(frame_bgr)
+        return self._propagate(frame_bgr)
+
+    def _prompt_and_warmup(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """Detect persons, init MatAnyone, warmup memory bank."""
+        import torch
+
+        fh, fw = frame_bgr.shape[:2]
+
+        # Detect persons.
+        rgb = frame_bgr[:, :, ::-1].astype(np.float32) / 255.0
+        tensor = torch.from_numpy(rgb).permute(2, 0, 1).to(self._device)
+        with torch.no_grad():
+            preds = self._detector([tensor])[0]
+
+        # Build binary prompt mask from detection boxes.
+        binary_mask = np.zeros((fh, fw), dtype=np.float32)
+        labels = preds["labels"].cpu().numpy()
+        scores = preds["scores"].cpu().numpy()
+        boxes = preds["boxes"].cpu().numpy()
+        count = 0
+        for i, (label, score) in enumerate(zip(labels, scores, strict=False)):
+            if label == 1 and score >= self._confidence_threshold:
+                x1, y1, x2, y2 = boxes[i].astype(int)
+                x1 = max(0, x1 - self._box_padding)
+                y1 = max(0, y1 - self._box_padding)
+                x2 = min(fw, x2 + self._box_padding)
+                y2 = min(fh, y2 + self._box_padding)
+                binary_mask[y1:y2, x1:x2] = 1.0
+                count += 1
+
+        print(f"[MatAnyone] Detected {count} persons, initializing …")
+        if count == 0:
+            self._is_initialized = False
+            return np.zeros((fh, fw), dtype=np.float32)
+
+        # Init MatAnyone.
+        image_t = self._to_tensor(frame_bgr)
+        mask_t = torch.from_numpy(binary_mask).float().to(self._device)
+
+        self._processor.clear_memory()
+        with torch.inference_mode():
+            self._processor.step(image_t, mask_t, objects=[1])
+            output_prob = self._processor.step(image_t, first_frame_pred=True)
+            for _ in range(self._n_warmup):
+                output_prob = self._processor.step(image_t, first_frame_pred=True)
+
+        self._is_initialized = True
+        return self._extract_alpha(output_prob, fh, fw)
+
+    def _propagate(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """Propagate mask via memory bank."""
+        import torch
+
+        fh, fw = frame_bgr.shape[:2]
+        image_t = self._to_tensor(frame_bgr)
+        with torch.inference_mode():
+            output_prob = self._processor.step(image_t)
+        return self._extract_alpha(output_prob, fh, fw)
+
+    def _to_tensor(self, frame_bgr: np.ndarray) -> Any:
+        import torch
+
+        rgb = frame_bgr[:, :, ::-1].copy()
+        return torch.from_numpy(rgb).permute(2, 0, 1).float().div(255.0).to(self._device)
+
+    def _extract_alpha(self, output_prob: Any, h: int, w: int) -> np.ndarray:
+        alpha_tensor = self._processor.output_prob_to_mask(output_prob, matting=True)
+        alpha = np.squeeze(alpha_tensor.cpu().numpy()).astype(np.float32)
+        alpha = np.clip(alpha, 0.0, 1.0)
+        if alpha.shape != (h, w):
+            alpha = cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        return alpha
+
+
 class MaskSmoother:
     """Temporal mask post-processor — exact reproduction of tennis-virtual-ads.
 

@@ -2124,6 +2124,16 @@ def run_pipeline_video_hybrid(
             device=_occlusion_cfg.get("device"),
         )
         print("[hybrid] SAM3VideoPersonMasker enabled — pre-computed player masks")
+    elif _occ_type == "matanyone":
+        from banner_pipeline.masking import MatAnyonePersonMasker
+
+        _person_masker = MatAnyonePersonMasker(
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            n_warmup=_occlusion_cfg.get("n_warmup", 5),
+            box_padding=_occlusion_cfg.get("box_padding", 10),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] MatAnyonePersonMasker enabled — continuous alpha matting")
     elif _occ_type == "rvm":
         from banner_pipeline.masking import RVMMasker
 
