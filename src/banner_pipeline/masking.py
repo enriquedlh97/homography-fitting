@@ -11,6 +11,7 @@ Exact reproduction of tennis-virtual-ads mask_smoother.py.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import Any
 
@@ -329,6 +330,194 @@ class SAM2VideoPersonMasker:
         if frame_idx in self._masks:
             return self._masks[frame_idx].astype(np.float32)
         # Out of range — return empty mask.
+        if self._masks:
+            ref = next(iter(self._masks.values()))
+            return np.zeros_like(ref, dtype=np.float32)
+        return np.zeros((1, 1), dtype=np.float32)
+
+
+class SAM3VideoPersonMasker:
+    """Pre-compute player masks via SAM3.1 video propagation (848M params).
+
+    Same interface as SAM2VideoPersonMasker but uses the SAM3 request/response
+    API with normalized coordinates. SAM3.1 has 4x more parameters than SAM2
+    large, potentially giving better foot/limb segmentation.
+
+    Requires FlashAttention — works on H200/H100/A100, NOT on T4.
+    """
+
+    def __init__(
+        self,
+        frame_dir: str,
+        frame_names: list[str],
+        checkpoint: str = "sam3/checkpoints/sam3.1_multiplex.pt",
+        confidence_threshold: float = 0.5,
+        prompt_frame_idx: int = 0,
+        device: str | None = None,
+    ) -> None:
+        self._frame_dir = frame_dir
+        self._frame_names = frame_names
+        self._masks: dict[int, np.ndarray] = {}
+
+        # Read the prompt frame for person detection.
+        frame_path = os.path.join(frame_dir, frame_names[prompt_frame_idx])
+        frame_bgr = cv2.imread(frame_path)
+        if frame_bgr is None:
+            raise RuntimeError(f"Cannot read frame {prompt_frame_idx}: {frame_path}")
+
+        fh, fw = frame_bgr.shape[:2]
+
+        # Detect persons using Mask R-CNN (same as SAM2 masker).
+        boxes = SAM2VideoPersonMasker._detect_persons(
+            frame_bgr,
+            confidence_threshold,
+            device,
+        )
+        if not boxes:
+            print("[SAM3PersonMasker] No persons detected — all frames get empty masks")
+            for i in range(len(frame_names)):
+                self._masks[i] = np.zeros((fh, fw), dtype=np.uint8)
+            return
+
+        print(f"[SAM3PersonMasker] Detected {len(boxes)} persons on frame {prompt_frame_idx}")
+
+        self._propagate(
+            boxes,
+            prompt_frame_idx,
+            checkpoint,
+            device,
+            (fh, fw),
+        )
+
+    def _propagate(
+        self,
+        boxes: list[list[float]],
+        prompt_frame_idx: int,
+        checkpoint: str,
+        device: str | None,
+        frame_shape: tuple[int, int],
+    ) -> None:
+        """Build SAM3 video predictor, add person prompts, propagate."""
+        from banner_pipeline.device import detect_device, load_sam3_video_predictor
+        from banner_pipeline.segment.sam3_video import _patch_init_state_if_needed
+
+        dev = detect_device(device or "auto")
+        predictor = load_sam3_video_predictor(checkpoint, dev)
+        _patch_init_state_if_needed(predictor)
+
+        # Start session.
+        response = predictor.handle_request(
+            request=dict(type="start_session", resource_path=self._frame_dir)
+        )
+        session_id = str(response.get("session_id", "session-1"))
+        print(f"[SAM3PersonMasker] Session started: {session_id}")
+
+        fh, fw = frame_shape
+
+        # Add center-point prompts (normalized to [0,1]).
+        for obj_id, box in enumerate(boxes, start=1):
+            x1, y1, x2, y2 = box
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            rel_x, rel_y = cx / fw, cy / fh
+            predictor.handle_request(
+                request=dict(
+                    type="add_prompt",
+                    session_id=session_id,
+                    frame_index=prompt_frame_idx,
+                    obj_id=obj_id,
+                    points=torch.tensor([[rel_x, rel_y]], dtype=torch.float32),
+                    point_labels=torch.tensor([1], dtype=torch.int32),
+                )
+            )
+            print(f"[SAM3PersonMasker] Player {obj_id}: center=({cx:.0f}, {cy:.0f})")
+
+        # Propagate masks across all frames.
+        print("[SAM3PersonMasker] Propagating player masks …")
+
+        # Try streaming first, fall back to single response.
+        propagate_request = dict(
+            type="propagate_in_video",
+            session_id=session_id,
+            start_frame_index=prompt_frame_idx,
+        )
+
+        try:
+            if hasattr(predictor, "handle_stream_request"):
+                responses = predictor.handle_stream_request(request=propagate_request)
+            else:
+                resp = predictor.handle_request(request=propagate_request)
+                responses = [resp]
+
+            for response in responses:
+                fidx = int(response.get("frame_index", -1))
+                if fidx < 0:
+                    continue
+                outputs = response.get("outputs", {})
+                if not isinstance(outputs, dict):
+                    continue
+                # Parse masks — handle multiple output format variants.
+                masks_blob = None
+                for key in (
+                    "out_binary_masks",
+                    "video_res_masks",
+                    "masks",
+                    "pred_masks",
+                    "out_mask_logits",
+                    "mask_logits",
+                ):
+                    if key in outputs:
+                        masks_blob = outputs[key]
+                        break
+                if masks_blob is None:
+                    self._masks[fidx] = np.zeros((fh, fw), dtype=np.uint8)
+                    continue
+                # Convert to numpy and union all objects.
+                if isinstance(masks_blob, torch.Tensor):
+                    if masks_blob.dtype == torch.bool:
+                        t_bin = masks_blob.squeeze()
+                    else:
+                        t_bin = (masks_blob > 0.0).squeeze()
+                    t_union = t_bin.any(dim=0) if t_bin.ndim == 3 else t_bin
+                    self._masks[fidx] = t_union.cpu().numpy().astype(np.uint8)
+                elif isinstance(masks_blob, dict):
+                    np_union = np.zeros((fh, fw), dtype=np.uint8)
+                    for mask_val in masks_blob.values():
+                        m = np.asarray(mask_val).squeeze()
+                        if m.shape == (fh, fw):
+                            np_union = np.maximum(np_union, (m > 0).astype(np.uint8))
+                    self._masks[fidx] = np_union
+                elif isinstance(masks_blob, np.ndarray):
+                    m = masks_blob.squeeze()
+                    if m.ndim == 3:
+                        np_union2 = np.any(m > 0, axis=0).astype(np.uint8)
+                    else:
+                        np_union2 = (m > 0).astype(np.uint8)
+                    self._masks[fidx] = np_union2
+        except Exception as exc:
+            print(f"[SAM3PersonMasker] Propagation error: {exc}")
+
+        # Fill missing frames.
+        for i in range(len(self._frame_names)):
+            if i not in self._masks:
+                self._masks[i] = np.zeros((fh, fw), dtype=np.uint8)
+
+        # Cleanup.
+        with contextlib.suppress(Exception):
+            predictor.handle_request(request=dict(type="close_session", session_id=session_id))
+        del predictor
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        n_nonempty = sum(1 for m in self._masks.values() if m.any())
+        print(
+            f"[SAM3PersonMasker] Done — {len(self._masks)} frames, "
+            f"{n_nonempty} with detected players"
+        )
+
+    def mask(self, frame_idx: int) -> np.ndarray:
+        """Return (H, W) float32 mask for *frame_idx*. 1.0 = person pixel."""
+        if frame_idx in self._masks:
+            return self._masks[frame_idx].astype(np.float32)
         if self._masks:
             ref = next(iter(self._masks.values()))
             return np.zeros_like(ref, dtype=np.float32)

@@ -2108,6 +2108,22 @@ def run_pipeline_video_hybrid(
             device=_occlusion_cfg.get("device"),
         )
         print("[hybrid] SAM2VideoPersonMasker enabled — pre-computed player masks")
+    elif _occ_type == "sam3_video":
+        # SAM3.1 video propagation — 848M params, potentially better
+        # foot segmentation than SAM2 large (224M). Requires FlashAttention.
+        from banner_pipeline.masking import SAM3VideoPersonMasker
+
+        del video_segmenter
+
+        _person_masker = SAM3VideoPersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            checkpoint=_occlusion_cfg.get("checkpoint", "sam3/checkpoints/sam3.1_multiplex.pt"),
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] SAM3VideoPersonMasker enabled — pre-computed player masks")
     elif _occ_type == "rvm":
         from banner_pipeline.masking import RVMMasker
 
@@ -2293,7 +2309,7 @@ def run_pipeline_video_hybrid(
             person_mask: np.ndarray | None = None
             person_mask_raw: np.ndarray | None = None
             if _person_masker is not None:
-                if _occ_type == "sam2_video":
+                if _occ_type in ("sam2_video", "sam3_video"):
                     person_mask_raw = _person_masker.mask(frame_idx)
                 else:
                     person_mask_raw = _person_masker.mask(frame_bgr)
