@@ -77,7 +77,13 @@ def painted_court_composite(
             dilate_px=erase_dilate_px,
             feather_px=erase_feather_px,
             inpaint_radius=erase_inpaint_radius,
-            occlusion_mask=occlusion_mask,
+            # Only pass occlusion_mask in erase_only mode (no Phase 2).
+            # In overlay mode (erase_only=False), Phase 2 handles
+            # occlusion — the erase step should just clean everywhere.
+            # Passing occlusion_mask here restores original frame (with
+            # MELBOURNE text) under the player, creating a visible
+            # white margin around the feet.
+            occlusion_mask=occlusion_mask if erase_only else None,
         )
 
     # In erase-only mode, skip logo overlay entirely.
