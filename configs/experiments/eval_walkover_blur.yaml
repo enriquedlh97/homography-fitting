@@ -18,17 +18,24 @@ pipeline:
       quad_pad_px: 20
       local_color_match: true
       blend_mode: led
+      erase_only: true
     surface_overrides:
       court_floor:
         padding: 0.0
-        alpha_scale: 0.95
-        alpha_feather_px: 3
-        erase_text: true
-        erase_dilate_px: 12
-        erase_feather_px: 20
-        occlusion_dilate_px: 10
-        occlusion_feather_ksize: 21
-        occlusion_feather_sigma: 4.0
+        alpha_scale: 1.0
+        alpha_feather_px: 25
+        # Pure overlay (like tennis-virtual-ads): NO frame modification.
+        # Court-colored canvas covers MELBOURNE, occlusion keeps player.
+        erase_text: false
+        erase_only: false
+        # shade_strength=0.0 for our use case — shade map at 1.0 picks up
+        # MELBOURNE text as bright spots in the illumination, recreating
+        # the text through the canvas. Tennis-virtual-ads can use 1.0
+        # because they overlay on clean court (no existing text).
+        shade_strength: 0.0
+        quad_expand_px: 80
+        logo_blur_px: 2
+        occlusion_dilate_px: 2
       side_panel:
         inpaint_method: ns
         inpaint_radius: 3
@@ -37,8 +44,15 @@ pipeline:
         local_color_match: false
         lum_strength: 0.0
   occlusion_masker:
-    type: person
+    type: sam2_video
     confidence_threshold: 0.5
+    prompt_frame_idx: 0
+    # Match tennis-virtual-ads exactly: SAM2 large + smoother + 5px dilate
+    checkpoint: sam2/checkpoints/sam2.1_hiera_large.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_l.yaml
+    mask_smooth: true
+    mask_close_px: 5
+    mask_dilate_px: 2
   tracking:
     corner_source: bbox
   camera:
@@ -47,7 +61,6 @@ input:
   video: data/melbourne-walking-over-logo.mov
   logo: data/logos/redbull_white.png
   prompts:
-  # === Back banner slots (visible in this clip) ===
   - obj_id: 1
     points:
     - - 537
@@ -64,7 +77,6 @@ input:
       - 37
     labels: [1]
     box: [1109, 26, 1136, 50]
-  # === Court floor: MELBOURNE (y=924-954) ===
   - obj_id: 3
     surface_type: court_floor
     points:
@@ -76,7 +88,6 @@ input:
       - 939
     labels: [1, 1, 1]
     box: [729, 920, 1188, 958]
-  # === Court floor: YoPRO (left court) ===
   - obj_id: 4
     surface_type: court_floor
     points:

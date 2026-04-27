@@ -23,12 +23,6 @@ pipeline:
         padding: 0.0
         alpha_scale: 0.95
         alpha_feather_px: 3
-        erase_text: true
-        erase_dilate_px: 12
-        erase_feather_px: 20
-        occlusion_dilate_px: 10
-        occlusion_feather_ksize: 21
-        occlusion_feather_sigma: 4.0
       side_panel:
         inpaint_method: ns
         inpaint_radius: 3
@@ -37,7 +31,7 @@ pipeline:
         local_color_match: false
         lum_strength: 0.0
   occlusion_masker:
-    type: person
+    type: disabled
     confidence_threshold: 0.5
   tracking:
     corner_source: bbox

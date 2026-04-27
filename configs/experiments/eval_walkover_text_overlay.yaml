@@ -21,14 +21,10 @@ pipeline:
     surface_overrides:
       court_floor:
         padding: 0.0
-        alpha_scale: 0.95
+        alpha_scale: 1.0
         alpha_feather_px: 3
-        erase_text: true
-        erase_dilate_px: 12
-        erase_feather_px: 20
-        occlusion_dilate_px: 10
-        occlusion_feather_ksize: 21
-        occlusion_feather_sigma: 4.0
+        erase_text: false
+        shade_strength: 0.3
       side_panel:
         inpaint_method: ns
         inpaint_radius: 3
@@ -45,7 +41,7 @@ pipeline:
     focal_length: null
 input:
   video: data/melbourne-walking-over-logo.mov
-  logo: data/logos/redbull_white.png
+  logo: data/logos/redbull_text_wide.png
   prompts:
   # === Back banner slots (visible in this clip) ===
   - obj_id: 1

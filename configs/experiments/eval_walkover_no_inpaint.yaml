@@ -21,14 +21,10 @@ pipeline:
     surface_overrides:
       court_floor:
         padding: 0.0
-        alpha_scale: 0.95
-        alpha_feather_px: 3
-        erase_text: true
-        erase_dilate_px: 12
-        erase_feather_px: 20
-        occlusion_dilate_px: 10
-        occlusion_feather_ksize: 21
-        occlusion_feather_sigma: 4.0
+        alpha_scale: 1.0
+        alpha_feather_px: 5
+        erase_text: false
+        shade_strength: 0.3
       side_panel:
         inpaint_method: ns
         inpaint_radius: 3
@@ -36,9 +32,10 @@ pipeline:
         inpaint_feather_px: 5
         local_color_match: false
         lum_strength: 0.0
-  occlusion_masker:
-    type: person
-    confidence_threshold: 0.5
+  # No separate occlusion masker — SAM2 mask handles occlusion natively.
+  # When SAM2 tracks the text region, players create natural "holes"
+  # in the mask, so no Mask R-CNN / RVM needed.
+  occlusion_masker: {}
   tracking:
     corner_source: bbox
   camera:

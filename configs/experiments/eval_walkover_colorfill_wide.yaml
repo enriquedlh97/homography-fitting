@@ -21,14 +21,15 @@ pipeline:
     surface_overrides:
       court_floor:
         padding: 0.0
-        alpha_scale: 0.95
-        alpha_feather_px: 3
+        alpha_scale: 1.0
+        alpha_feather_px: 5
         erase_text: true
-        erase_dilate_px: 12
-        erase_feather_px: 20
-        occlusion_dilate_px: 10
-        occlusion_feather_ksize: 21
-        occlusion_feather_sigma: 4.0
+        erase_dilate_px: 30
+        erase_feather_px: 50
+        shade_strength: 0.5
+        occlusion_dilate_px: 20
+        occlusion_feather_ksize: 5
+        occlusion_feather_sigma: 1.0
       side_panel:
         inpaint_method: ns
         inpaint_radius: 3

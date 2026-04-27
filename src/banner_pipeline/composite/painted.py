@@ -43,6 +43,10 @@ def painted_court_composite(
     quad_expand_px: int = 0,
     # --- Erase-only mode ---
     erase_only: bool = False,
+    # --- Clean plate (pre-built text-free court region) ---
+    clean_plate: np.ndarray | None = None,
+    # --- Logo motion blur (production trick) ---
+    logo_blur_px: int = 0,
 ) -> np.ndarray:
     """Composite a logo onto the court surface with painted-on look.
 
@@ -128,35 +132,37 @@ def painted_court_composite(
     # If erasing text, transparent canvas is fine (text already erased).
     canvas = np.zeros((canvas_h, canvas_w, 4), dtype=np.uint8)
     if not erase_text:
-        # Un-warp the court region from the frame into canvas space.
-        # This captures the actual court illumination and texture (not
-        # just a flat color). Then blur heavily to remove text details
-        # while preserving the natural illumination gradient.
-        src_pts = np.array(
-            [[0, 0], [canvas_w - 1, 0], [canvas_w - 1, canvas_h - 1], [0, canvas_h - 1]],
-            dtype=np.float32,
-        )
-        dst_pts = corners.astype(np.float32)
-        M_inv = cv2.getPerspectiveTransform(dst_pts, src_pts)
-        court_region = cv2.warpPerspective(
-            frame,
-            M_inv,
-            (canvas_w, canvas_h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_REPLICATE,
-        )
-        # Pre-fill bright pixels (text) with median court color before
-        # blurring — prevents white text from contaminating the blur.
-        gray = cv2.cvtColor(court_region, cv2.COLOR_BGR2GRAY)
-        text_pixels = gray > 180
-        if np.any(text_pixels):
-            non_text = court_region[~text_pixels]
-            if len(non_text) > 0:
-                med = np.median(non_text.reshape(-1, 3), axis=0).astype(np.uint8)
-                court_region[text_pixels] = med
-        # Heavy blur removes remaining artifacts, preserves illumination.
-        court_blurred = cv2.GaussianBlur(court_region, (101, 101), 0)
-        canvas[:, :, :3] = court_blurred
+        if clean_plate is not None:
+            # Clean plate approach: use pre-built text-free court region.
+            # No per-frame processing needed — the plate was built offline
+            # from frames where no player covers the text. There is no
+            # MELBOURNE text to leak through the mask boundary.
+            plate_resized = cv2.resize(clean_plate, (canvas_w, canvas_h))
+            canvas[:, :, :3] = plate_resized
+        else:
+            # Per-frame un-warp + blur approach (original fallback).
+            src_pts = np.array(
+                [[0, 0], [canvas_w - 1, 0], [canvas_w - 1, canvas_h - 1], [0, canvas_h - 1]],
+                dtype=np.float32,
+            )
+            dst_pts = corners.astype(np.float32)
+            M_inv = cv2.getPerspectiveTransform(dst_pts, src_pts)
+            court_region = cv2.warpPerspective(
+                frame,
+                M_inv,
+                (canvas_w, canvas_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+            gray = cv2.cvtColor(court_region, cv2.COLOR_BGR2GRAY)
+            text_pixels = gray > 180
+            if np.any(text_pixels):
+                non_text = court_region[~text_pixels]
+                if len(non_text) > 0:
+                    med = np.median(non_text.reshape(-1, 3), axis=0).astype(np.uint8)
+                    court_region[text_pixels] = med
+            court_blurred = cv2.GaussianBlur(court_region, (101, 101), 0)
+            canvas[:, :, :3] = court_blurred
         canvas[:, :, 3] = 255
     x_off = (canvas_w - new_w) // 2
     y_off = (canvas_h - new_h) // 2

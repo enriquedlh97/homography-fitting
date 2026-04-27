@@ -2161,6 +2161,60 @@ def run_pipeline_video_hybrid(
         _mask_smoother = MaskSmoother(close_px=_close_px)
         print(f"[hybrid] MaskSmoother enabled (close_px={_close_px})")
 
+    # --- Step 2d: Build clean plates for court_floor objects (once) ---
+    # Un-warp the court region from frame 0, remove text via inpainting,
+    # and store as a reusable plate. This eliminates MELBOURNE text from
+    # the canvas so nothing can leak through the mask boundary.
+    _clean_plates: dict[int, np.ndarray] = {}
+    surface_overrides = pipeline_cfg["compositor"].get("surface_overrides", {})
+    court_overrides = surface_overrides.get("court_floor", {})
+    if court_overrides.get("use_clean_plate", False):
+        for obj_id, corners_arr in (static_corners or corners_frame0).items():
+            prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
+            if prompt is None or _normalize_surface_type(prompt.surface_type) != "court_floor":
+                continue
+            # Expand corners for clean plate
+            _qep = int(court_overrides.get("quad_expand_px", 0))
+            if _qep > 0:
+                _center = np.mean(corners_arr, axis=0)
+                _expanded = corners_arr.copy()
+                for _ci in range(4):
+                    _dir = corners_arr[_ci] - _center
+                    _dlen = max(float(np.linalg.norm(_dir)), 1.0)
+                    _expanded[_ci] = corners_arr[_ci] + (_dir / _dlen) * _qep
+                plate_corners = _expanded
+            else:
+                plate_corners = corners_arr
+            # Un-warp from frame 0
+            _w_top = float(np.linalg.norm(plate_corners[1] - plate_corners[0]))
+            _w_bot = float(np.linalg.norm(plate_corners[2] - plate_corners[3]))
+            _h_left = float(np.linalg.norm(plate_corners[3] - plate_corners[0]))
+            _h_right = float(np.linalg.norm(plate_corners[2] - plate_corners[1]))
+            _pw = max(int((_w_top + _w_bot) / 2), 1)
+            _ph = max(int((_h_left + _h_right) / 2), 1)
+            _src = np.array(
+                [[0, 0], [_pw - 1, 0], [_pw - 1, _ph - 1], [0, _ph - 1]], dtype=np.float32
+            )
+            _M_inv = cv2.getPerspectiveTransform(plate_corners.astype(np.float32), _src)
+            _plate = cv2.warpPerspective(
+                frame0_bgr,
+                _M_inv,
+                (_pw, _ph),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+            # Remove text: pre-fill bright pixels + heavy blur
+            _g = cv2.cvtColor(_plate, cv2.COLOR_BGR2GRAY)
+            _tp = _g > 180
+            if np.any(_tp):
+                _nt = _plate[~_tp]
+                if len(_nt) > 0:
+                    _med = np.median(_nt.reshape(-1, 3), axis=0).astype(np.uint8)
+                    _plate[_tp] = _med
+            _plate = cv2.GaussianBlur(_plate, (101, 101), 0)
+            _clean_plates[obj_id] = _plate
+            print(f"[hybrid] Clean plate built for obj {obj_id}: {_pw}x{_ph}")
+
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
     logo_path = input_cfg.get("logo")
@@ -2386,6 +2440,8 @@ def run_pipeline_video_hybrid(
                             ),
                             quad_expand_px=int(court_overrides.get("quad_expand_px", 0)),
                             erase_only=bool(court_overrides.get("erase_only", _erase_only)),
+                            clean_plate=_clean_plates.get(obj_id),
+                            logo_blur_px=int(court_overrides.get("logo_blur_px", 0)),
                         )
                         continue
 

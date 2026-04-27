@@ -29,41 +29,64 @@ pipeline:
         occlusion_dilate_px: 10
         occlusion_feather_ksize: 21
         occlusion_feather_sigma: 4.0
+      side_panel:
+        inpaint_method: ns
+        inpaint_radius: 3
+        mask_dilate_px: 10
+        inpaint_feather_px: 5
+        local_color_match: false
+        lum_strength: 0.0
   occlusion_masker:
     type: person
-    confidence_threshold: 0.5
+    confidence_threshold: 0.3
   tracking:
-    corner_source: mask_refit
-    ema_alpha: 0.5
+    corner_source: bbox
   camera:
     focal_length: null
 input:
-  video: data/zoom-clip-melbourne.mov
+  video: data/melbourne-walking-over-logo.mov
   logo: data/logos/redbull_white.png
   prompts:
-  # === Court floor: MELBOURNE (mid-frame in this clip) ===
+  # === Back banner slots (visible in this clip) ===
   - obj_id: 1
-    surface_type: court_floor
     points:
-    - - 700
-      - 680
-    - - 900
-      - 680
-    - - 1050
-      - 680
+    - - 537
+      - 47
+    - - 572
+      - 34
+    - - 599
+      - 33
     labels: [1, 1, 1]
-    box: [474, 650, 1199, 711]
-  # === Court floor: realestate.com (left court, angled text) ===
+    box: [519, 22, 615, 56]
   - obj_id: 2
+    points:
+    - - 1122
+      - 37
+    labels: [1]
+    box: [1109, 26, 1136, 50]
+  # === Court floor: MELBOURNE (y=924-954) ===
+  - obj_id: 3
     surface_type: court_floor
     points:
-    - - 435
-      - 531
-    - - 185
-      - 449
-    - - 129
-      - 492
+    - - 758
+      - 939
+    - - 957
+      - 939
+    - - 1117
+      - 939
     labels: [1, 1, 1]
-    box: [50, 360, 465, 550]
+    box: [729, 920, 1188, 958]
+  # === Court floor: YoPRO (left court) ===
+  - obj_id: 4
+    surface_type: court_floor
+    points:
+    - - 198
+      - 611
+    - - 285
+      - 611
+    - - 324
+      - 611
+    labels: [1, 1, 1]
+    box: [180, 598, 346, 625]
 output:
   dir: experiments/
