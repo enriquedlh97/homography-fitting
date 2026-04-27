@@ -232,6 +232,17 @@ def run_on_gpu(
     # Point the config at the cached checkpoint.
     config_dict["pipeline"]["segmenter"]["checkpoint"] = cached_checkpoint
 
+    # Also rewrite the occlusion masker checkpoint if it uses a SAM2 model.
+    occ_cfg = config_dict.get("pipeline", {}).get("occlusion_masker", {})
+    if occ_cfg.get("checkpoint"):
+        occ_ckpt_filename = os.path.basename(occ_cfg["checkpoint"])
+        occ_cached = f"/checkpoints/{occ_ckpt_filename}"
+        if occ_ckpt_filename != checkpoint_filename and not os.path.exists(occ_cached):
+            print(f"Downloading occlusion masker checkpoint: {occ_ckpt_filename} …")
+            _download_checkpoint(occ_ckpt_filename, occ_cached)
+            checkpoints_volume.commit()
+        occ_cfg["checkpoint"] = occ_cached if os.path.exists(occ_cached) else cached_checkpoint
+
     # --- Write input files to temp dir ---
     tmpdir = tempfile.mkdtemp()
     video_path = os.path.join(tmpdir, "input.mp4")

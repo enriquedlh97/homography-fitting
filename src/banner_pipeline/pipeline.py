@@ -2086,16 +2086,45 @@ def run_pipeline_video_hybrid(
         raise ValueError(f"Unknown corner_source: {corner_source!r}")
 
     # --- Step 2b: Initialize person masker for occlusion ---
-    _person_masker = None
+    _person_masker: Any = None
     _occlusion_cfg = pipeline_cfg.get("occlusion_masker", {})
-    if _occlusion_cfg.get("type") == "person":
+    _occ_type = _occlusion_cfg.get("type", "")
+    if _occ_type == "sam2_video":
+        # SAM2 video propagation for player segmentation — best quality.
+        # Pre-computes all player masks at init; per-frame lookup is O(1).
+        # Needs frame_dir from text segmentation (already available).
+        from banner_pipeline.masking import SAM2VideoPersonMasker
+
+        # Free the text segmenter's SAM2 model to make room.
+        del video_segmenter
+
+        _person_masker = SAM2VideoPersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            checkpoint=_occlusion_cfg.get("checkpoint", "sam2/checkpoints/sam2.1_hiera_tiny.pt"),
+            model_cfg=_occlusion_cfg.get("model_cfg", "configs/sam2.1/sam2.1_hiera_t.yaml"),
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] SAM2VideoPersonMasker enabled — pre-computed player masks")
+    elif _occ_type == "rvm":
+        from banner_pipeline.masking import RVMMasker
+
+        _person_masker = RVMMasker(
+            backbone=_occlusion_cfg.get("backbone", "mobilenetv3"),
+            downsample_ratio=_occlusion_cfg.get("downsample_ratio", 0.25),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] RVMMasker (RobustVideoMatting) enabled — continuous alpha")
+    elif _occ_type == "person":
         from banner_pipeline.masking import PersonMasker
 
         _person_masker = PersonMasker(
             confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
             device=_occlusion_cfg.get("device"),
         )
-        print("[hybrid] PersonMasker enabled for occlusion")
+        print("[hybrid] PersonMasker (Mask R-CNN) enabled for occlusion")
 
     # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
     overlay = None
@@ -2105,7 +2134,7 @@ def run_pipeline_video_hybrid(
     if logo_path:
         overlay = _load_overlay(logo_path)
     elif _erase_only:
-        overlay = np.zeros((1, 1, 3), dtype=np.uint8)  # dummy for erase-only
+        overlay = np.zeros((1, 1, 4), dtype=np.uint8)  # dummy BGRA for erase-only
 
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     _surface_compositors: dict[str, Any] = {}  # per-surface instances
@@ -2252,9 +2281,16 @@ def run_pipeline_video_hybrid(
 
             # Detect person occlusion mask (once per frame).
             person_mask: np.ndarray | None = None
+            person_mask_raw: np.ndarray | None = None
             if _person_masker is not None:
-                person_mask = _person_masker.mask(frame_bgr)
+                if _occ_type == "sam2_video":
+                    person_mask_raw = _person_masker.mask(frame_idx)
+                else:
+                    person_mask_raw = _person_masker.mask(frame_bgr)
+                person_mask = person_mask_raw.copy()  # type: ignore[union-attr]
                 # Small dilation to cover racket/limb edges the model misses.
+                # Note: court_floor uses its own dilation in painted.py,
+                # so this only affects banner/side_panel surfaces.
                 occ_dilate = int(_occlusion_cfg.get("mask_dilate_px", 3))
                 if occ_dilate > 0 and np.any(person_mask > 0):
                     kern = cv2.getStructuringElement(
@@ -2276,44 +2312,41 @@ def run_pipeline_video_hybrid(
                         else "banner"
                     )
 
-                    # Court floor: use painted compositor (full-frame warp).
+                    # Court floor: two-phase approach.
+                    # Phase 1: Erase original text via inpainting.
+                    # Phase 2: Overlay new logo with shade map + occlusion.
+                    # Uses RAW person mask — painted.py handles its own
+                    # dilation + feathering for better foot coverage.
                     if st == "court_floor":
                         from banner_pipeline.composite.painted import (
                             painted_court_composite,
                         )
 
                         court_overrides = surface_overrides.get("court_floor", {})
-                        # First inpaint (erase original text) using SAM mask.
-                        sam_mask = masks_2d.get(obj_id)
-                        if sam_mask is not None and np.any(sam_mask > 0):
-                            mask_u8 = (sam_mask > 0).astype(np.uint8) * 255
-                            dilate_px = int(court_overrides.get("mask_dilate_px", 8))
-                            kern = cv2.getStructuringElement(
-                                cv2.MORPH_ELLIPSE, (dilate_px, dilate_px)
-                            )
-                            mask_u8 = cv2.dilate(mask_u8, kern)
-                            # Subtract person mask from inpainting mask so we
-                            # don't inpaint under the player (causes artifacts).
-                            if person_mask is not None:
-                                person_u8 = (person_mask > 0.5).astype(np.uint8) * 255
-                                person_dilated = cv2.dilate(
-                                    person_u8,
-                                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
-                                )
-                                mask_u8 = cv2.bitwise_and(mask_u8, cv2.bitwise_not(person_dilated))
-                            if np.any(mask_u8 > 0):
-                                frame_bgr = cv2.inpaint(frame_bgr, mask_u8, 3, cv2.INPAINT_NS)
-                        # Then composite the logo with painted blend.
-                        # Pass SAM mask for natural occlusion (SAM excludes
-                        # players walking over the text automatically).
                         painted_court_composite(
                             frame_bgr,
                             current_corners[obj_id],
                             overlay,
-                            sam_mask=sam_mask,
-                            occlusion_mask=person_mask,
-                            alpha_scale=float(court_overrides.get("alpha_scale", 0.75)),
+                            sam_mask=masks_2d.get(obj_id),
+                            occlusion_mask=person_mask_raw,
+                            alpha_scale=float(court_overrides.get("alpha_scale", 0.95)),
                             alpha_feather_px=int(court_overrides.get("alpha_feather_px", 3)),
+                            erase_text=court_overrides.get("erase_text", True),
+                            erase_dilate_px=int(court_overrides.get("erase_dilate_px", 12)),
+                            erase_feather_px=int(court_overrides.get("erase_feather_px", 20)),
+                            erase_inpaint_radius=int(
+                                court_overrides.get("erase_inpaint_radius", 7)
+                            ),
+                            shade_strength=float(court_overrides.get("shade_strength", 1.0)),
+                            occlusion_dilate_px=int(court_overrides.get("occlusion_dilate_px", 10)),
+                            occlusion_feather_ksize=int(
+                                court_overrides.get("occlusion_feather_ksize", 21)
+                            ),
+                            occlusion_feather_sigma=float(
+                                court_overrides.get("occlusion_feather_sigma", 4.0)
+                            ),
+                            quad_expand_px=int(court_overrides.get("quad_expand_px", 0)),
+                            erase_only=bool(court_overrides.get("erase_only", _erase_only)),
                         )
                         continue
 
