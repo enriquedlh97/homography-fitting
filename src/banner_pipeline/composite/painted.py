@@ -128,51 +128,35 @@ def painted_court_composite(
     # If erasing text, transparent canvas is fine (text already erased).
     canvas = np.zeros((canvas_h, canvas_w, 4), dtype=np.uint8)
     if not erase_text:
-        # Sample court color from regions LEFT and RIGHT of the ORIGINAL
-        # text bbox (before quad expansion). These positions are on the
-        # same court surface as the text, giving the best color match.
-        # Use the prompt bbox corners (pre-expansion) for reference.
-        x_min = int(np.min(corners[:, 0]))
-        x_max = int(np.max(corners[:, 0]))
-        y_min = int(np.min(corners[:, 1]))
-        y_max = int(np.max(corners[:, 1]))
-        # Ensure we sample from the vertical CENTER of the quad
-        # (not at edges which might be off the court surface).
-        y_mid = (y_min + y_max) // 2
-        y_half = max((y_max - y_min) // 2, 10)
-        pad = 20  # distance outside quad to sample
-        sample_w = 40  # width of sampling region
-        samples = []
-        # Left of quad
-        left = frame[
-            max(0, y_mid - y_half) : min(fh, y_mid + y_half),
-            max(0, x_min - pad - sample_w) : max(1, x_min - pad),
-        ]
-        if left.size > 0:
-            samples.append(left.reshape(-1, 3))
-        # Right of quad
-        right = frame[
-            max(0, y_mid - y_half) : min(fh, y_mid + y_half),
-            min(fw - 1, x_max + pad) : min(fw, x_max + pad + sample_w),
-        ]
-        if right.size > 0:
-            samples.append(right.reshape(-1, 3))
-        # Above quad (small strip)
-        above = frame[
-            max(0, y_min - pad - 15) : max(1, y_min - pad),
-            max(0, x_min) : min(fw, x_max),
-        ]
-        if above.size > 0:
-            samples.append(above.reshape(-1, 3))
-        if samples:
-            all_samples = np.concatenate(samples, axis=0)
-            court_bgr = np.median(all_samples, axis=0).astype(np.uint8)
-        else:
-            court_bgr = np.array([158, 102, 66], dtype=np.uint8)
-        # Fill canvas with court color (fully opaque).
-        canvas[:, :, 0] = court_bgr[0]
-        canvas[:, :, 1] = court_bgr[1]
-        canvas[:, :, 2] = court_bgr[2]
+        # Un-warp the court region from the frame into canvas space.
+        # This captures the actual court illumination and texture (not
+        # just a flat color). Then blur heavily to remove text details
+        # while preserving the natural illumination gradient.
+        src_pts = np.array(
+            [[0, 0], [canvas_w - 1, 0], [canvas_w - 1, canvas_h - 1], [0, canvas_h - 1]],
+            dtype=np.float32,
+        )
+        dst_pts = corners.astype(np.float32)
+        M_inv = cv2.getPerspectiveTransform(dst_pts, src_pts)
+        court_region = cv2.warpPerspective(
+            frame,
+            M_inv,
+            (canvas_w, canvas_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        # Pre-fill bright pixels (text) with median court color before
+        # blurring — prevents white text from contaminating the blur.
+        gray = cv2.cvtColor(court_region, cv2.COLOR_BGR2GRAY)
+        text_pixels = gray > 180
+        if np.any(text_pixels):
+            non_text = court_region[~text_pixels]
+            if len(non_text) > 0:
+                med = np.median(non_text.reshape(-1, 3), axis=0).astype(np.uint8)
+                court_region[text_pixels] = med
+        # Heavy blur removes remaining artifacts, preserves illumination.
+        court_blurred = cv2.GaussianBlur(court_region, (81, 81), 0)
+        canvas[:, :, :3] = court_blurred
         canvas[:, :, 3] = 255
     x_off = (canvas_w - new_w) // 2
     y_off = (canvas_h - new_h) // 2
