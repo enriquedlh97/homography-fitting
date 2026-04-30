@@ -618,6 +618,9 @@ def _build_seed_retry_prompt(
         compositor_params=dict(prompt.compositor_params)
         if prompt.compositor_params is not None
         else None,
+        court_plane_placement=dict(prompt.court_plane_placement)
+        if prompt.court_plane_placement is not None
+        else None,
     )
 
 

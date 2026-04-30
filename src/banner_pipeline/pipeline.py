@@ -117,6 +117,29 @@ def _merged_compositor_kwargs(
     return extra_kw
 
 
+def _project_court_plane_rectangle(
+    court_homography: np.ndarray,
+    court_rectangle: list[float] | tuple[float, float, float, float],
+) -> np.ndarray:
+    """Project a canonical court-space rectangle into image coordinates."""
+    if len(court_rectangle) != 4:
+        raise ValueError("court_plane_placement.court_rect must contain [u0, v0, u1, v1].")
+    u0, v0, u1, v1 = [float(value) for value in court_rectangle]
+    local_corners = np.array(
+        [[[u0, v0], [u1, v0], [u1, v1], [u0, v1]]],
+        dtype=np.float32,
+    )
+    projected = cv2.perspectiveTransform(
+        local_corners,
+        court_homography.astype(np.float32),
+    ).reshape(-1, 2)
+    return projected.astype(np.float32)
+
+
+def _court_plane_placement_prompts(prompts: list[ObjectPrompt]) -> list[ObjectPrompt]:
+    return [prompt for prompt in prompts if prompt.court_plane_placement]
+
+
 def _normalize_geometry_model(geometry_model: object | None) -> str | None:
     return court_geometry_mod.normalize_geometry_model(geometry_model)
 
@@ -176,6 +199,10 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
         raw_comp = p.get("compositor_params")
         if isinstance(raw_comp, dict):
             compositor_params = dict(raw_comp)
+        court_plane_placement = None
+        raw_court_plane_placement = p.get("court_plane_placement")
+        if isinstance(raw_court_plane_placement, dict):
+            court_plane_placement = dict(raw_court_plane_placement)
         out.append(
             ObjectPrompt(
                 obj_id=p["obj_id"],
@@ -187,6 +214,7 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
                 box=box,
                 placement_quad=placement_quad,
                 compositor_params=compositor_params,
+                court_plane_placement=court_plane_placement,
             )
         )
     return out
@@ -206,6 +234,8 @@ def _prompt_to_config_entry(prompt: ObjectPrompt) -> dict[str, Any]:
         entry["geometry_model"] = _normalize_geometry_model(prompt.geometry_model)
     if prompt.compositor_params:
         entry["compositor_params"] = dict(prompt.compositor_params)
+    if prompt.court_plane_placement:
+        entry["court_plane_placement"] = dict(prompt.court_plane_placement)
     return entry
 
 
@@ -2726,6 +2756,21 @@ def run_pipeline_video_hybrid(
         compositor_params = pipeline_cfg["compositor"].get("params", {})
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
+    court_plane_projection_prompts = _court_plane_placement_prompts(prompts)
+    court_plane_projection_estimator = None
+    court_plane_projection_projected_frames = 0
+    court_plane_projection_fallback_frames = 0
+    metrics["court_plane_placement_enabled"] = bool(court_plane_projection_prompts)
+    if court_plane_projection_prompts:
+        if not _geometry_enabled(pipeline_cfg):
+            raise RuntimeError("court_plane_placement requires pipeline.geometry.enabled: true.")
+        court_plane_projection_estimator = court_geometry_mod.CourtGeometryEstimator(
+            court_geometry_mod.GeometryConfig.from_dict(pipeline_cfg.get("geometry"))
+        )
+        metrics["court_plane_placement_objects"] = [
+            int(prompt.obj_id) for prompt in court_plane_projection_prompts
+        ]
+
     composite_times: list[float] = []
     tracking_times: list[float] = []
     write_video_s = 0.0
@@ -2975,6 +3020,40 @@ def run_pipeline_video_hybrid(
                         else:
                             smoothed_corners[obj_id] = rc_f
                     current_corners = {oid: c.copy() for oid, c in smoothed_corners.items()}
+
+            per_frame_compositor_overrides: dict[int, dict[str, Any]] = {}
+            if court_plane_projection_estimator is not None:
+                court_plane_estimate = court_plane_projection_estimator.estimate(original_frame_bgr)
+                if court_plane_estimate.court_homography is None:
+                    court_plane_projection_fallback_frames += 1
+                else:
+                    projected_this_frame = False
+                    for prompt in court_plane_projection_prompts:
+                        placement_cfg = prompt.court_plane_placement or {}
+                        court_rectangle = placement_cfg.get("court_rect")
+                        if court_rectangle is None:
+                            raise ValueError("court_plane_placement requires a court_rect value.")
+                        projected_corners = _project_court_plane_rectangle(
+                            court_plane_estimate.court_homography,
+                            court_rectangle,
+                        )
+                        target = str(placement_cfg.get("target", "corners"))
+                        if target == "corners":
+                            if current_corners is None:
+                                current_corners = {}
+                            current_corners[int(prompt.obj_id)] = projected_corners
+                        elif target == "logo_placement_quad":
+                            per_frame_compositor_overrides.setdefault(
+                                int(prompt.obj_id),
+                                {},
+                            )["logo_placement_quad"] = projected_corners.tolist()
+                        else:
+                            raise ValueError(
+                                f"Unsupported court_plane_placement target: {target!r}"
+                            )
+                        projected_this_frame = True
+                    if projected_this_frame:
+                        court_plane_projection_projected_frames += 1
             tracking_times.append(time.perf_counter() - t_track)
 
             # Detect person occlusion mask (once per frame).
@@ -3257,6 +3336,7 @@ def run_pipeline_video_hybrid(
                         surface_type=st,
                         prompt=prompt,
                     )
+                    extra_kw.update(per_frame_compositor_overrides.get(obj_id, {}))
                     # Pass person occlusion mask for side panel objects.
                     if person_mask is not None and st == "side_panel":
                         extra_kw["occlusion_mask"] = person_mask
@@ -3293,6 +3373,9 @@ def run_pipeline_video_hybrid(
             _clean_video_cap.release()
 
     metrics["write_video_s"] = round(write_video_s, 4)
+    if court_plane_projection_prompts:
+        metrics["court_plane_placement_projected_frames"] = court_plane_projection_projected_frames
+        metrics["court_plane_placement_fallback_frames"] = court_plane_projection_fallback_frames
     print(f"[hybrid] Wrote {num_written} frames -> {output_path}")
 
     if tracking_times:

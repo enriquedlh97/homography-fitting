@@ -143,14 +143,16 @@ As of April 10, 2026, PyPI only publishes `flash-attn-4` as prereleases, so the 
 
 ### Current Walking-Over Checkpoint
 
-- Config: `configs/experiments/eval_walkover_v61_all_redbulls_compact_court.yaml`
-- Output: `experiments/2026-04-30_14-31-16_walkover_v61_all_redbulls_compact_court_full_H200/outputs/composited.mp4`
-- Review crops: `experiments/comparisons/walkover_v61_all_redbulls_compact_court_full_H200_crops/`
+- Config: `configs/experiments/eval_walkover_v68_clicked_homography_static_preview.yaml`
+- Output: `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/outputs/composited.mp4`
+- Review crops: `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/crops/`
+- Presentation notes: `docs/walkover-redbull-demo-approach.md`
 
-This checkpoint renders all five accepted Red Bull placements together: the
+This checkpoint keeps all five accepted Red Bull placements together: the
 MELBOURNE court replacement, the left-court Red Bull, and the three black-wall
-Red Bulls. The next controlled iteration is court-plane perspective correction
-for the two court logos only.
+Red Bulls. The two court-floor logos use a fixed court-plane homography
+calibrated from a reference frame, which improves perspective while preserving
+the stable no-jitter behavior needed for the demo.
 
 ### Benchmarking across GPUs
 

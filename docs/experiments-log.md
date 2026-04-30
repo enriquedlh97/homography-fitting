@@ -8,32 +8,42 @@ must look natural (no MELBOURNE leak-through, solid feet, no halos).
 
 ## Current Checkpoints (2026-04-30)
 
-These are the source-of-truth outputs to use before starting the next
-homography/perspective phase.
+These are the source-of-truth outputs to use for the current walking-over
+Red Bull demo and for future homography/perspective experiments.
 
 ### Full-showcase checkpoint: walking-over clip
 
 **Clip:** `data/melbourne-walking-over-logo.mov`
-**Final config:** `configs/experiments/eval_walkover_v61_all_redbulls_compact_court.yaml`
-**Final output:** `experiments/2026-04-30_14-31-16_walkover_v61_all_redbulls_compact_court_full_H200/outputs/composited.mp4`
-**Review crops:** `experiments/comparisons/walkover_v61_all_redbulls_compact_court_full_H200_crops/`
+**Baseline config:** `configs/experiments/eval_walkover_v68_clicked_homography_static_preview.yaml`
+**Baseline output:** `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/outputs/composited.mp4`
+**Review crops:** `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/crops/`
+**Presentation notes:** `docs/walkover-redbull-demo-approach.md`
 
-**Decision:** Treat `v61_all_redbulls_compact_court_full_H200` as the current
-walking-over full-showcase checkpoint. It renders all accepted Red Bull
-placements in one run: the MELBOURNE court replacement with player occlusion,
-the cleaned left-court Red Bull, and all three black-wall Red Bulls.
+**Decision:** Treat `v68_clicked_homography_static_preview_H200` as the current
+walking-over demo baseline. It keeps the accepted v61 composition stack while
+upgrading the two court-floor logo placements to a fixed court-plane homography
+calibrated from a reference frame. The result preserves temporal stability while
+making the left-court Red Bull read much more naturally as a floor graphic.
 
-**What changed since v53/v59:** The left-court Red Bull no longer uses the broad
-blue court patch from the earlier court-floor route. It uses a compact erase/fill
-quad plus a separate visible-logo quad, which keeps the logo size while pulling
-the patch edge away from the doubles line. The back-wall Red Bulls use the
-accepted v57 black-wall treatment.
+**What changed since v61:** v61 remains the accepted full-length composite for
+all five placements, but its two court-floor logos used manually supplied
+screen-space quads. v68 fits a single court quadrilateral from user-selected
+court-boundary samples, computes a fixed homography from normalized court space
+to image space, and projects the court-logo rectangles through that matrix. This
+keeps the no-jitter behavior of static placement while improving the perspective
+of the floor logos.
 
-**Remaining next phase:** Perspective/homography fixes for the court logos. The
-current checkpoint is visually accepted but still uses manually supplied
-screen-space quads for court-logo placement, not a full court-plane calibration.
+**Validation:** The v68 H200 preview rendered 120 frames. Focused metrics passed
+for jitter ratio, corner jump, logo area coefficient of variation, overlay
+acceleration, and temporal SSIM. The evaluation script reports `inpaint_color_de`
+as `N/A` for this setup, so the run exits nonzero even though the stability
+metrics pass.
 
 **Superseded outputs:**
+- `experiments/2026-04-30_14-31-16_walkover_v61_all_redbulls_compact_court_full_H200/outputs/composited.mp4`
+  remains the previous full-length showcase and the base composition stack for
+  v68, but its court-logo perspective is less natural than the clicked
+  homography baseline.
 - `experiments/2026-04-29_16-32-37_walkover_v53_full_showcase_checkpoint/outputs/composited.mp4`
   was the previous full-showcase checkpoint.
 - `experiments/2026-04-30_13-48-44_walkover_v59_v58_court_plus_v57_wall_full/outputs/composited.mp4`

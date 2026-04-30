@@ -26,6 +26,7 @@ class ObjectPrompt:
                     When set, used instead of points for building prompt_bboxes.
     compositor_params: Optional dict of compositor kwargs merged for this object only
                     (after global and surface_overrides), e.g. ``inpaint_feather_px``.
+    court_plane_placement: Optional court-space projection config for this object.
     """
 
     obj_id: int
@@ -37,6 +38,7 @@ class ObjectPrompt:
     box: np.ndarray | None = None
     placement_quad: np.ndarray | None = None
     compositor_params: dict[str, Any] | None = None
+    court_plane_placement: dict[str, Any] | None = None
 
 
 class SegmentationModel(ABC):

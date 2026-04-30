@@ -238,6 +238,50 @@ def test_prompt_compositor_params_round_trip(tmp_path: Path) -> None:
     assert round_trip[0].compositor_params == {"inpaint_feather_px": 12}
 
 
+def test_prompt_court_plane_placement_round_trip(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config = {"input": {"video": "data/tennis-clip.mp4"}}
+    placement_config = {
+        "target": "logo_placement_quad",
+        "court_rect": [-0.6, 0.77, -0.16, 0.83],
+    }
+    prompts = [
+        ObjectPrompt(
+            obj_id=1,
+            points=np.array([[10.0, 20.0]], dtype=np.float32),
+            labels=np.array([1], dtype=np.int32),
+            court_plane_placement=placement_config,
+        )
+    ]
+
+    pipeline_mod._save_prompts_to_config(config, prompts, str(config_path))
+
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["input"]["prompts"][0]["court_plane_placement"] == placement_config
+    round_trip = pipeline_mod._prompts_from_config(saved["input"]["prompts"])
+    assert round_trip[0].court_plane_placement == placement_config
+
+
+def test_project_court_plane_rectangle() -> None:
+    homography = np.array(
+        [[10.0, 0.0, 100.0], [0.0, 20.0, 200.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+
+    projected = pipeline_mod._project_court_plane_rectangle(
+        homography,
+        [1.0, 2.0, 3.0, 4.0],
+    )
+
+    np.testing.assert_allclose(
+        projected,
+        np.array(
+            [[110.0, 240.0], [130.0, 240.0], [130.0, 280.0], [110.0, 280.0]],
+            dtype=np.float32,
+        ),
+    )
+
+
 def test_merged_compositor_kwargs_per_prompt_overrides_surface_and_base() -> None:
     prompt = ObjectPrompt(
         obj_id=1,
