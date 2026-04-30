@@ -1,0 +1,46 @@
+pipeline:
+  mode: video
+  segmenter:
+    type: sam3_video
+  fitter:
+    type: pca
+    params:
+      axis: short
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.0
+      lum_strength: 1.0           # full luminosity matching in LAB space
+      shade_blend: true
+      inpaint_radius: 3
+      mask_dilate_px: 9            # was 3 — bigger cushion around SAM mask
+      inpaint_method: median_fill  # solid colour from border median (vs Telea per-frame paintbrush)
+      fill_color_ema_alpha: 0.1    # EMA smoothing of the fill colour across frames
+      quad_pad_px: 10              # extra px around the quad (covers anti-alias halo of original logo)
+  camera:
+    focal_length: null
+  detection_filter:
+    min_area_frac: 0.0005         # ≥0.05% of frame — drop tiny noise
+    min_confidence: 0.5            # SAM3 mean per-frame confidence ≥ 0.5
+    min_frame_count: 5             # must persist for ≥5 frames
+  stabilization:
+    enabled: true
+    mode: hybrid
+    static_motion_threshold_px: 0.75
+    hold_corner_rms_px: 1.25
+    mask_iou_gate: 0.55
+    max_hold_frames: 6
+    predicted_mask_weight: 0.65
+    morph_kernel_px: 3
+  tracking:
+    ema_alpha: 0.3                 # EMA on corners (0=infinite smoothing, 1=no smoothing)
+    fb_threshold: 2.0
+    lk_win_size: 21
+input:
+  video: data/tennis-clip.mp4
+  logo: data/logos/redbull_white.png
+  prompts:
+    - obj_id: 1
+      text: logo
+output:
+  dir: experiments/

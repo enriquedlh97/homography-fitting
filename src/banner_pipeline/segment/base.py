@@ -19,6 +19,10 @@ class ObjectPrompt:
     labels:    (N,) int32 array; 1 = positive, 0 = negative click.
     frame_idx: Frame index these prompts apply to (default 0).
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
+    text:      Optional natural-language prompt (e.g. ``"logo"``) for
+               text-conditioned segmenters such as SAM3. When set, the
+               segmenter performs auto-detection and ``points``/``box``
+               are ignored.
     """
 
     obj_id: int
@@ -26,6 +30,7 @@ class ObjectPrompt:
     labels: np.ndarray
     frame_idx: int = 0
     box: np.ndarray | None = None
+    text: str | None = None
 
 
 class SegmentationModel(ABC):

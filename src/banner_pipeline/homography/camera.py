@@ -93,6 +93,19 @@ def compute_oriented_homography(
     # Canonical destination rectangle (preserves aspect ratio).
     DST_H = 256
     DST_W = max(1, int(round(DST_H * aspect)))
+
+    # Defensive cap: degenerate quads (tiny / very oblique / near-collinear)
+    # can yield an `aspect` of thousands, which would push DST_W past
+    # cv2.warpPerspective's SHRT_MAX (32767) limit. Clamp to a sane max
+    # while preserving the aspect ratio direction.
+    MAX_DIM = 4096
+    if DST_W > MAX_DIM:
+        DST_H = max(1, int(round(DST_H * MAX_DIM / DST_W)))
+        DST_W = MAX_DIM
+    elif DST_H > MAX_DIM:  # paranoia — DST_H is constant 256, but stay safe.
+        DST_W = max(1, int(round(DST_W * MAX_DIM / DST_H)))
+        DST_H = MAX_DIM
+
     dst_rect = np.array(
         [[0, 0], [DST_W, 0], [DST_W, DST_H], [0, DST_H]],
         dtype=np.float32,

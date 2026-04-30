@@ -10,13 +10,17 @@ import numpy as np
 import yaml
 
 from banner_pipeline import _perf
+from banner_pipeline import stabilization as stabilization_mod
 from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
 from banner_pipeline.fitting.base import QuadFitter
+from banner_pipeline.fitting.fronto_parallel import FrontoParallelBannerFitter
 from banner_pipeline.fitting.hull_fit import HullFitter
 from banner_pipeline.fitting.lp_fit import LPFitter
 from banner_pipeline.fitting.pca_fit import PCAFitter
+from banner_pipeline.fitting.vp_constrained import VPConstrainedBannerFitter
+from banner_pipeline.tracking import CornerTracker
 from banner_pipeline.homography.camera import compute_oriented_homography, estimate_camera_matrix
 from banner_pipeline.io import StreamingVideoWriter, get_video_fps, load_frame
 from banner_pipeline.segment.base import ObjectPrompt, SegmentationModel
@@ -32,10 +36,15 @@ SEGMENTERS: dict[str, type] = {
     "sam2_image": SAM2ImageSegmenter,
 }
 
+# Video-mode segmenters are registered lazily (they import heavy GPU deps).
+VIDEO_SEGMENTER_TYPES: tuple[str, ...] = ("sam2_video", "sam3_video")
+
 FITTERS: dict[str, type[QuadFitter]] = {
     "pca": PCAFitter,
     "lp": LPFitter,
     "hull": HullFitter,
+    "fronto_parallel": FrontoParallelBannerFitter,
+    "vp_constrained": VPConstrainedBannerFitter,
 }
 
 COMPOSITORS: dict[str, type[Compositor]] = {
@@ -80,19 +89,32 @@ def load_config(path: str) -> dict:
 
 
 def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
-    """Convert a list of prompt dicts from YAML to ObjectPrompt instances."""
+    """Convert a list of prompt dicts from YAML to ObjectPrompt instances.
+
+    Each dict must provide either ``points`` (point/click prompts for SAM2) or
+    ``text`` (natural-language prompt for SAM3 auto-detection). When ``text``
+    is given, ``points`` may be omitted.
+    """
     out = []
     for p in prompts_cfg:
-        pts = np.array(p["points"], dtype=np.float32)
-        labels = np.ones(len(pts), dtype=np.int32)
-        if "labels" in p:
-            labels = np.array(p["labels"], dtype=np.int32)
+        text = p.get("text")
+        if "points" in p:
+            pts = np.array(p["points"], dtype=np.float32)
+            labels = (
+                np.array(p["labels"], dtype=np.int32)
+                if "labels" in p
+                else np.ones(len(pts), dtype=np.int32)
+            )
+        else:
+            pts = np.zeros((0, 2), dtype=np.float32)
+            labels = np.zeros((0,), dtype=np.int32)
         out.append(
             ObjectPrompt(
                 obj_id=p["obj_id"],
                 points=pts,
                 labels=labels,
                 frame_idx=p.get("frame_idx", 0),
+                text=text,
             )
         )
     return out
@@ -259,7 +281,20 @@ def run_pipeline(
 # ---------------------------------------------------------------------------
 
 
-def build_video_segmenter(cfg: dict) -> SAM2VideoSegmenter:
+def build_video_segmenter(cfg: dict):
+    """Build a video segmenter (SAM2 or SAM3) based on ``cfg['type']``."""
+    seg_type = cfg.get("type", "sam2_video")
+    if seg_type == "sam3_video":
+        from banner_pipeline.segment.sam3_video import SAM3VideoSegmenter
+
+        kwargs = {}
+        if "bpe_path" in cfg:
+            kwargs["bpe_path"] = cfg["bpe_path"]
+        if "device" in cfg:
+            kwargs["device"] = cfg["device"]
+        return SAM3VideoSegmenter(**kwargs)
+
+    # Default: SAM2 video.
     kwargs = {}
     if "checkpoint" in cfg:
         kwargs["checkpoint"] = cfg["checkpoint"]
@@ -268,6 +303,89 @@ def build_video_segmenter(cfg: dict) -> SAM2VideoSegmenter:
     if "device" in cfg:
         kwargs["device"] = cfg["device"]
     return SAM2VideoSegmenter(**kwargs)
+
+
+def _apply_detection_filter(
+    *,
+    video_segments: dict[int, dict[int, np.ndarray]],
+    frame_shape: tuple[int, int],
+    confidence_by_obj: dict[int, list[float]],
+    cfg: dict,
+    candidate_obj_ids: set[int],
+) -> tuple[dict[int, dict[int, np.ndarray]], set[int], dict]:
+    """Filter detections by max mask area, mean confidence, and persistence.
+
+    Parameters
+    ----------
+    video_segments       : per-frame masks (obj_id -> 2D bool array)
+    frame_shape          : (H, W) of the source frames
+    confidence_by_obj    : optional {obj_id -> [per-frame confidences]} from SAM3
+    cfg                  : detection_filter config dict (all fields optional)
+    candidate_obj_ids    : ids that already have at least one non-empty mask
+
+    Returns
+    -------
+    filtered_segments : video_segments with rejected obj_ids removed
+    kept_obj_ids      : the surviving obj_id set
+    metrics           : telemetry dict ready to merge into pipeline metrics
+    """
+    min_area_frac = float(cfg.get("min_area_frac", 0.0))
+    min_confidence = float(cfg.get("min_confidence", 0.0))
+    min_frame_count = int(cfg.get("min_frame_count", 0))
+
+    h, w = int(frame_shape[0]), int(frame_shape[1])
+    frame_area = float(max(1, h * w))
+
+    # Per-obj statistics over the whole video.
+    max_area: dict[int, int] = {}
+    n_frames: dict[int, int] = {}
+    for masks_for_frame in video_segments.values():
+        for obj_id, mask in masks_for_frame.items():
+            if mask is None:
+                continue
+            area = int(np.count_nonzero(mask))
+            if area == 0:
+                continue
+            oid = int(obj_id)
+            if area > max_area.get(oid, 0):
+                max_area[oid] = area
+            n_frames[oid] = n_frames.get(oid, 0) + 1
+
+    kept: set[int] = set()
+    rejected_reasons = {"area": 0, "confidence": 0, "persistence": 0}
+    for oid in candidate_obj_ids:
+        oid = int(oid)
+        max_area_frac_val = max_area.get(oid, 0) / frame_area
+        if max_area_frac_val < min_area_frac:
+            rejected_reasons["area"] += 1
+            continue
+        confs = confidence_by_obj.get(oid, [])
+        mean_conf = float(np.mean(confs)) if confs else 1.0
+        if mean_conf < min_confidence:
+            rejected_reasons["confidence"] += 1
+            continue
+        if n_frames.get(oid, 0) < min_frame_count:
+            rejected_reasons["persistence"] += 1
+            continue
+        kept.add(oid)
+
+    # Drop rejected obj_ids from every frame's mask dict.
+    filtered: dict[int, dict[int, np.ndarray]] = {}
+    for f_idx, masks_for_frame in video_segments.items():
+        filtered[f_idx] = {
+            oid: m for oid, m in masks_for_frame.items() if int(oid) in kept
+        }
+
+    metrics = {
+        "filter_min_area_frac": min_area_frac,
+        "filter_min_confidence": min_confidence,
+        "filter_min_frame_count": min_frame_count,
+        "filter_rejected_by_area": rejected_reasons["area"],
+        "filter_rejected_by_confidence": rejected_reasons["confidence"],
+        "filter_rejected_by_persistence": rejected_reasons["persistence"],
+        "filter_rejected_total": sum(rejected_reasons.values()),
+    }
+    return filtered, kept, metrics
 
 
 def run_pipeline_video(
@@ -332,9 +450,56 @@ def run_pipeline_video(
     metrics["segment_total_s"] = time.perf_counter() - t0
     metrics["num_frames"] = len(frame_names)
     metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
-    print(
-        f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s",
+
+    # --- Detection counters (raw, pre-filter) ---
+    # `num_detected_objects` = unique tracker IDs the segmenter ever produced.
+    detected_obj_ids: set[int] = set()
+    raw_obj_with_mask: set[int] = set()
+    for masks_for_frame in video_segments.values():
+        for obj_id, mask in masks_for_frame.items():
+            detected_obj_ids.add(int(obj_id))
+            if mask is not None and np.any(mask):
+                raw_obj_with_mask.add(int(obj_id))
+    metrics["num_detected_objects"] = len(detected_obj_ids)
+
+    # --- Detection filter (area / confidence / persistence) ---
+    # Drops noisy / spurious detections (very common with auto-detection
+    # via SAM3 text prompts). The kept set is what the rest of the
+    # pipeline (stabilization, fit, composite) operates on.
+    filter_cfg = pipeline_cfg.get("detection_filter") or {}
+    confidence_by_obj: dict[int, list[float]] = getattr(
+        video_segmenter, "confidence_by_obj", {}
     )
+    video_segments, segmented_obj_ids, filter_metrics = _apply_detection_filter(
+        video_segments=video_segments,
+        frame_shape=(metrics["frame_height"], metrics["frame_width"]),
+        confidence_by_obj=confidence_by_obj,
+        cfg=filter_cfg,
+        candidate_obj_ids=raw_obj_with_mask,
+    )
+    metrics["num_segmented_objects"] = len(segmented_obj_ids)
+    metrics.update(filter_metrics)
+
+    print(
+        f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s — "
+        f"detected={metrics['num_detected_objects']}, "
+        f"segmented(post-filter)={metrics['num_segmented_objects']}",
+    )
+
+    # --- Optional temporal mask stabilization ---
+    stabilization_cfg = pipeline_cfg.get("stabilization")
+    if stabilization_cfg:
+        video_segments, stab_metrics = stabilization_mod.stabilize_video_segments(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            video_segments=video_segments,
+            tracked_obj_ids=sorted(segmented_obj_ids),
+            config=stabilization_cfg,
+        )
+        # Surface only top-level scalar timings; nested dicts stay out of metrics.
+        for k, v in stab_metrics.items():
+            if isinstance(v, (int, float, str, bool)):
+                metrics[f"stab_{k}"] = v
 
     # --- Per-frame: fit + composite ---
     fitter = build_fitter(pipeline_cfg["fitter"])
@@ -355,6 +520,24 @@ def run_pipeline_video(
     composite_times: list[float] = []
     write_video_s = 0.0  # accumulated time spent piping frames to ffmpeg
     num_written = 0
+    substituted_obj_ids: set[int] = set()  # obj_ids with ≥1 successful composite
+
+    # --- Optional EMA corner tracker ---
+    # When `pipeline.tracking.ema_alpha` is set in the config, the per-frame
+    # quad corners are smoothed temporally via Lucas-Kanade optical flow +
+    # exponential moving average. This significantly reduces the jitter that
+    # would otherwise come from frame-to-frame mask wobble.
+    tracking_cfg = pipeline_cfg.get("tracking") or {}
+    tracking_enabled = "ema_alpha" in tracking_cfg
+    corner_tracker: CornerTracker | None = None
+    if tracking_enabled:
+        corner_tracker = CornerTracker(
+            ema_alpha=float(tracking_cfg.get("ema_alpha", 0.3)),
+            fb_threshold=float(tracking_cfg.get("fb_threshold", 2.0)),
+            lk_win_size=int(tracking_cfg.get("lk_win_size", 21)),
+        )
+        print(f"[video] CornerTracker enabled (ema_alpha={corner_tracker.ema_alpha})")
+    metrics["tracking_enabled"] = tracking_enabled
 
     # Reset perf counters before the per-frame loop. PERF_ENABLED is False
     # by default, so the Timer blocks in compositors are no-ops unless the
@@ -395,22 +578,52 @@ def run_pipeline_video(
                     corners_map[obj_id] = corners
             fit_times.append(time.perf_counter() - t_fit)
 
+            # Optional: EMA-smooth corners across frames via optical flow.
+            if corner_tracker is not None:
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                # Seed/refresh tracker state with the freshly-fitted corners
+                # of objects we don't yet track (or whose IDs disappeared and
+                # came back). For everything else, the optical-flow update
+                # provides the smoothed corners.
+                for obj_id, c in corners_map.items():
+                    if obj_id not in corner_tracker._corners:
+                        corner_tracker.init(obj_id, c, gray)
+                if corner_tracker._corners:
+                    smoothed = corner_tracker.update(gray)
+                    # Replace the raw fit with the EMA-smoothed corners,
+                    # but only for objects that have a fresh fit this frame.
+                    for obj_id in list(corners_map.keys()):
+                        if obj_id in smoothed:
+                            corners_map[obj_id] = smoothed[obj_id]
+
             # Composite for this frame.
             if overlay is not None and compositor is not None and corners_map:
                 t_comp = time.perf_counter()
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
                 for obj_id in sorted(corners_map):
                     extra_kw = dict(compositor_params)
-                    if compositor.name == "alpha":
-                        homo = compute_oriented_homography(corners_map[obj_id], K)
-                        extra_kw["homo"] = homo
-                    frame_bgr = compositor.composite(
-                        frame_bgr,
-                        corners_map[obj_id],
-                        overlay,
-                        mask=masks_2d.get(obj_id),
-                        **extra_kw,
-                    )
+                    extra_kw["obj_id"] = int(obj_id)
+                    try:
+                        if compositor.name == "alpha":
+                            homo = compute_oriented_homography(corners_map[obj_id], K)
+                            extra_kw["homo"] = homo
+                        frame_bgr = compositor.composite(
+                            frame_bgr,
+                            corners_map[obj_id],
+                            overlay,
+                            mask=masks_2d.get(obj_id),
+                            **extra_kw,
+                        )
+                        substituted_obj_ids.add(int(obj_id))
+                    except (cv2.error, ValueError, np.linalg.LinAlgError) as e:
+                        # Degenerate / tiny / oblique detections (more common
+                        # with auto-detection like SAM3) can break the
+                        # homography or warp. Skip the offending object and
+                        # keep the run alive.
+                        print(
+                            f"[video] frame {frame_idx} obj_id={obj_id}: "
+                            f"composite skipped — {type(e).__name__}: {e}"
+                        )
                 composite_times.append(time.perf_counter() - t_comp)
 
             # Stream this frame to ffmpeg immediately (no in-memory buffer).
@@ -427,7 +640,11 @@ def run_pipeline_video(
         shutil.rmtree(frame_dir, ignore_errors=True)
 
     metrics["write_video_s"] = round(write_video_s, 4)
-    print(f"[video] Wrote {num_written} frames → {output_path}")
+    metrics["num_substituted_objects"] = len(substituted_obj_ids)
+    print(
+        f"[video] Wrote {num_written} frames "
+        f"({metrics['num_substituted_objects']} substituted objects) → {output_path}"
+    )
 
     # --- Aggregate metrics ---
     fit_arr = np.array(fit_times) * 1000  # ms
