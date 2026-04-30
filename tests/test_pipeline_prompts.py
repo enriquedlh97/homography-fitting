@@ -218,6 +218,43 @@ def test_prompt_config_round_trip_preserves_labels_frame_idx_and_surface_type(
     assert round_trip[0].geometry_model == "court_plane"
 
 
+def test_prompt_compositor_params_round_trip(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config = {"input": {"video": "data/tennis-clip.mp4"}}
+    prompts = [
+        ObjectPrompt(
+            obj_id=1,
+            points=np.array([[10.0, 20.0]], dtype=np.float32),
+            labels=np.array([1], dtype=np.int32),
+            compositor_params={"inpaint_feather_px": 12},
+        )
+    ]
+
+    pipeline_mod._save_prompts_to_config(config, prompts, str(config_path))
+
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["input"]["prompts"][0]["compositor_params"] == {"inpaint_feather_px": 12}
+    round_trip = pipeline_mod._prompts_from_config(saved["input"]["prompts"])
+    assert round_trip[0].compositor_params == {"inpaint_feather_px": 12}
+
+
+def test_merged_compositor_kwargs_per_prompt_overrides_surface_and_base() -> None:
+    prompt = ObjectPrompt(
+        obj_id=1,
+        points=np.ones((1, 2), dtype=np.float32),
+        labels=np.array([1], dtype=np.int32),
+        compositor_params={"inpaint_feather_px": 99},
+    )
+    merged = pipeline_mod._merged_compositor_kwargs(
+        base_params={"inpaint_feather_px": 5, "quad_pad_px": 20},
+        surface_overrides={"banner": {"inpaint_feather_px": 10}},
+        surface_type="banner",
+        prompt=prompt,
+    )
+    assert merged["inpaint_feather_px"] == 99
+    assert merged["quad_pad_px"] == 20
+
+
 class _PreviewGeometryEngine:
     def __init__(self, *, prompts, **_kwargs) -> None:
         self.prompts = prompts

@@ -101,6 +101,22 @@ def _surface_skip_reason(surface_type: str) -> str:
     return f"unsupported_surface_type:{surface_type}"
 
 
+def _merged_compositor_kwargs(
+    *,
+    base_params: dict[str, Any],
+    surface_overrides: dict[str, Any] | None,
+    surface_type: str,
+    prompt: ObjectPrompt | None,
+) -> dict[str, Any]:
+    """Global compositor params, then surface overrides, then per-prompt overrides."""
+    extra_kw = dict(base_params)
+    if prompt is not None and surface_overrides:
+        extra_kw.update(surface_overrides.get(surface_type, {}))
+    if prompt is not None and prompt.compositor_params:
+        extra_kw.update(prompt.compositor_params)
+    return extra_kw
+
+
 def _normalize_geometry_model(geometry_model: object | None) -> str | None:
     return court_geometry_mod.normalize_geometry_model(geometry_model)
 
@@ -156,6 +172,10 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
         placement_quad = None
         if "placement_quad" in p:
             placement_quad = np.array(p["placement_quad"], dtype=np.float32)
+        compositor_params = None
+        raw_comp = p.get("compositor_params")
+        if isinstance(raw_comp, dict):
+            compositor_params = dict(raw_comp)
         out.append(
             ObjectPrompt(
                 obj_id=p["obj_id"],
@@ -166,6 +186,7 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
                 geometry_model=_normalize_geometry_model(p.get("geometry_model")),
                 box=box,
                 placement_quad=placement_quad,
+                compositor_params=compositor_params,
             )
         )
     return out
@@ -183,6 +204,8 @@ def _prompt_to_config_entry(prompt: ObjectPrompt) -> dict[str, Any]:
         entry["surface_type"] = _normalize_surface_type(prompt.surface_type)
     if _normalize_geometry_model(prompt.geometry_model) is not None:
         entry["geometry_model"] = _normalize_geometry_model(prompt.geometry_model)
+    if prompt.compositor_params:
+        entry["compositor_params"] = dict(prompt.compositor_params)
     return entry
 
 
@@ -235,6 +258,410 @@ def _warn_if_legacy_sam3_prompts(segmenter_type: str, prompts: list[ObjectPrompt
         "positive clicks inside the banner plus negative clicks on nearby background.",
         flush=True,
     )
+
+
+def _sanitize_clean_video_player_residue(
+    clean_frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Remove player-shaped residue from a clean court plate.
+
+    DiffuEraser is strong at erasing MELBOURNE, but its temporal propagation can
+    leave wrong-pose player smears in the clean video. This opt-in sanitizer
+    detects local dark outliers inside the court quad and inpaints only those
+    pixels, so existing configs keep their exact behavior unless enabled.
+    """
+    if not bool(input_cfg.get("clean_video_residue_cleanup", False)):
+        return clean_frame_bgr
+
+    if clean_quad_mask is None:
+        return clean_frame_bgr
+
+    quad_pixels = clean_quad_mask > 0
+    if not np.any(quad_pixels):
+        return clean_frame_bgr
+
+    gray_frame = cv2.cvtColor(clean_frame_bgr, cv2.COLOR_BGR2GRAY)
+    local_blur_radius = int(input_cfg.get("clean_video_residue_blur_px", 35))
+    local_blur_kernel_size = max(3, local_blur_radius * 2 + 1)
+    if local_blur_kernel_size % 2 == 0:
+        local_blur_kernel_size += 1
+
+    local_background_gray = cv2.GaussianBlur(
+        gray_frame,
+        (local_blur_kernel_size, local_blur_kernel_size),
+        0,
+    )
+    dark_delta_threshold = int(input_cfg.get("clean_video_residue_dark_delta", 10))
+    dark_ceiling = int(input_cfg.get("clean_video_residue_dark_ceiling", 105))
+    residue_pixels = (
+        quad_pixels
+        & (gray_frame < dark_ceiling)
+        & (
+            local_background_gray.astype(np.int16) - gray_frame.astype(np.int16)
+            > dark_delta_threshold
+        )
+    )
+
+    residue_mask = residue_pixels.astype(np.uint8) * 255
+    close_radius = int(input_cfg.get("clean_video_residue_close_px", 3))
+    if close_radius > 0 and np.any(residue_mask > 0):
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_radius * 2 + 1, close_radius * 2 + 1),
+        )
+        residue_mask = cv2.morphologyEx(residue_mask, cv2.MORPH_CLOSE, close_kernel)
+
+    min_component_area = int(input_cfg.get("clean_video_residue_min_area", 25))
+    max_component_area = int(input_cfg.get("clean_video_residue_max_area", 50000))
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        residue_mask,
+        connectivity=8,
+    )
+    filtered_mask = np.zeros_like(residue_mask)
+    for component_index in range(1, component_count):
+        component_area = int(stats[component_index, cv2.CC_STAT_AREA])
+        if min_component_area <= component_area <= max_component_area:
+            filtered_mask[labels == component_index] = 255
+
+    if not np.any(filtered_mask > 0):
+        return clean_frame_bgr
+
+    inpaint_radius = int(input_cfg.get("clean_video_residue_inpaint_radius", 9))
+    return cv2.inpaint(
+        clean_frame_bgr,
+        filtered_mask,
+        inpaint_radius,
+        cv2.INPAINT_TELEA,
+    )
+
+
+def _build_scaled_box_mask(
+    frame_shape: tuple[int, int, int],
+    box_xyxy: list[float],
+    reference_size: tuple[float, float],
+) -> np.ndarray:
+    """Build a mask from a reference-space XYXY box, scaled to frame size."""
+    frame_height, frame_width = frame_shape[:2]
+    reference_width, reference_height = reference_size
+    scale_x = frame_width / max(reference_width, 1.0)
+    scale_y = frame_height / max(reference_height, 1.0)
+    x1, y1, x2, y2 = box_xyxy
+    sx1 = int(np.floor(x1 * scale_x))
+    sy1 = int(np.floor(y1 * scale_y))
+    sx2 = int(np.ceil(x2 * scale_x))
+    sy2 = int(np.ceil(y2 * scale_y))
+    sx1 = int(np.clip(sx1, 0, frame_width))
+    sx2 = int(np.clip(sx2, 0, frame_width))
+    sy1 = int(np.clip(sy1, 0, frame_height))
+    sy2 = int(np.clip(sy2, 0, frame_height))
+    mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+    if sx2 > sx1 and sy2 > sy1:
+        mask[sy1:sy2, sx1:sx2] = 255
+    return mask
+
+
+def _apply_text_focus_cleanup(
+    frame_bgr: np.ndarray,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Aggressively replace likely text-leak pixels in a configured focus zone."""
+    if not bool(input_cfg.get("clean_video_text_focus_cleanup", False)):
+        return frame_bgr
+    if clean_frame_bgr is None or clean_quad_mask is None or person_mask_raw is None:
+        return frame_bgr
+
+    focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return frame_bgr
+
+    reference_width = float(input_cfg.get("clean_video_text_focus_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_text_focus_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    if not np.any(focus_mask > 0):
+        return frame_bgr
+
+    focus_dilate_px = int(input_cfg.get("clean_video_text_focus_dilate_px", 0))
+    if focus_dilate_px > 0:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    focus_bright_threshold = int(input_cfg.get("clean_video_text_focus_threshold", 105))
+    focus_alpha_threshold = float(input_cfg.get("clean_video_text_focus_alpha_thresh", 0.9))
+    gray_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    focus_pixels = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (gray_frame > focus_bright_threshold)
+        & (person_mask_raw < focus_alpha_threshold)
+    )
+    if not np.any(focus_pixels):
+        return frame_bgr
+
+    replacement_alpha = float(input_cfg.get("clean_video_text_focus_replace_alpha", 1.0))
+    replacement_alpha = float(np.clip(replacement_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    if replacement_alpha >= 1.0:
+        output_frame[focus_pixels] = clean_frame_bgr[focus_pixels]
+    else:
+        blended_pixels = (
+            frame_bgr[focus_pixels].astype(np.float32) * (1.0 - replacement_alpha)
+            + clean_frame_bgr[focus_pixels].astype(np.float32) * replacement_alpha
+        )
+        output_frame[focus_pixels] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _build_underfoot_text_leak_mask(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray,
+    clean_frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray,
+    person_mask_raw: np.ndarray,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Find original-like text pixels surviving in the soft under-foot matte band."""
+    focus_box = input_cfg.get("clean_video_underfoot_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return np.zeros(clean_quad_mask.shape, dtype=bool)
+
+    reference_width = float(input_cfg.get("clean_video_underfoot_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_underfoot_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    focus_dilate_px = int(input_cfg.get("clean_video_underfoot_dilate_px", 0))
+    if focus_dilate_px > 0 and np.any(focus_mask > 0):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    original_clean_delta = np.mean(
+        np.abs(original_frame_bgr.astype(np.int16) - clean_frame_bgr.astype(np.int16)),
+        axis=2,
+    )
+    original_vector = original_frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    composite_vector = frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    survival_numerator = np.sum(original_vector * composite_vector, axis=2)
+    survival_denominator = np.sum(original_vector * original_vector, axis=2) + 1e-6
+    original_survival = np.clip(survival_numerator / survival_denominator, 0.0, 1.0)
+
+    original_gray = cv2.cvtColor(original_frame_bgr, cv2.COLOR_BGR2GRAY)
+    alpha_min = float(input_cfg.get("clean_video_underfoot_alpha_min", 0.03))
+    alpha_max = float(input_cfg.get("clean_video_underfoot_alpha_max", 0.72))
+    delta_threshold = float(input_cfg.get("clean_video_underfoot_delta_threshold", 22.0))
+    survival_threshold = float(input_cfg.get("clean_video_underfoot_survival_threshold", 0.55))
+    bright_threshold = int(input_cfg.get("clean_video_underfoot_bright_threshold", 118))
+
+    leak_mask = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (person_mask_raw >= alpha_min)
+        & (person_mask_raw < alpha_max)
+        & (original_clean_delta > delta_threshold)
+        & (original_survival > survival_threshold)
+        & (original_gray > bright_threshold)
+    )
+
+    close_px = int(input_cfg.get("clean_video_underfoot_close_px", 1))
+    if close_px > 0 and np.any(leak_mask):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_px * 2 + 1, close_px * 2 + 1),
+        )
+        leak_mask_uint8 = cv2.morphologyEx(
+            leak_mask.astype(np.uint8) * 255,
+            cv2.MORPH_CLOSE,
+            kernel,
+        )
+        leak_mask = leak_mask_uint8 > 0
+
+    return leak_mask
+
+
+def _apply_underfoot_text_decontamination(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Replace only original-like MELBOURNE pixels in the soft sole band."""
+    if not bool(input_cfg.get("clean_video_underfoot_decontaminate", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    leak_mask = _build_underfoot_text_leak_mask(
+        frame_bgr=frame_bgr,
+        original_frame_bgr=original_frame_bgr,
+        clean_frame_bgr=clean_frame_bgr,
+        clean_quad_mask=clean_quad_mask,
+        person_mask_raw=person_mask_raw,
+        input_cfg=input_cfg,
+    )
+    if not np.any(leak_mask):
+        return frame_bgr
+
+    replace_alpha = float(input_cfg.get("clean_video_underfoot_replace_alpha", 0.9))
+    replace_alpha = float(np.clip(replace_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[leak_mask].astype(np.float32) * (1.0 - replace_alpha)
+        + clean_frame_bgr[leak_mask].astype(np.float32) * replace_alpha
+    )
+    output_frame[leak_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _apply_shoe_edge_color_extension(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Pull shoe-core color into contaminated soft edge pixels."""
+    if not bool(input_cfg.get("clean_video_shoe_edge_extend", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    leak_mask = _build_underfoot_text_leak_mask(
+        frame_bgr=frame_bgr,
+        original_frame_bgr=original_frame_bgr,
+        clean_frame_bgr=clean_frame_bgr,
+        clean_quad_mask=clean_quad_mask,
+        person_mask_raw=person_mask_raw,
+        input_cfg=input_cfg,
+    )
+    if not np.any(leak_mask):
+        return frame_bgr
+
+    core_alpha = float(input_cfg.get("clean_video_shoe_edge_core_alpha", 0.86))
+    core_mask = person_mask_raw >= core_alpha
+    if not np.any(core_mask):
+        return frame_bgr
+
+    blur_px = int(input_cfg.get("clean_video_shoe_edge_extend_blur_px", 19))
+    kernel_size = max(3, blur_px * 2 + 1)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    core_weight = core_mask.astype(np.float32)
+    weighted_frame = frame_bgr.astype(np.float32) * core_weight[:, :, None]
+    blurred_weight = cv2.GaussianBlur(core_weight, (kernel_size, kernel_size), 0)
+    blurred_color = cv2.GaussianBlur(weighted_frame, (kernel_size, kernel_size), 0)
+    valid_extension = blurred_weight > float(
+        input_cfg.get("clean_video_shoe_edge_min_core_weight", 0.002)
+    )
+    target_mask = leak_mask & valid_extension
+    if not np.any(target_mask):
+        return frame_bgr
+
+    extended_color = blurred_color / np.maximum(blurred_weight[:, :, None], 1e-6)
+    extension_alpha = float(input_cfg.get("clean_video_shoe_edge_extend_alpha", 0.65))
+    extension_alpha = float(np.clip(extension_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[target_mask].astype(np.float32) * (1.0 - extension_alpha)
+        + extended_color[target_mask].astype(np.float32) * extension_alpha
+    )
+    output_frame[target_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _harmonize_quad_edge_tones(
+    frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray | None,
+    input_cfg: dict[str, Any],
+    temporal_state: dict[str, np.ndarray] | None = None,
+) -> np.ndarray:
+    """Blend quad-edge tones toward surrounding court to hide rectangle seams."""
+    if not bool(input_cfg.get("clean_video_quad_harmonize", False)):
+        return frame_bgr
+    if clean_quad_mask is None:
+        return frame_bgr
+    if not np.any(clean_quad_mask > 0):
+        return frame_bgr
+
+    ring_width_px = int(input_cfg.get("clean_video_quad_harmonize_ring_px", 24))
+    harmonize_strength = float(input_cfg.get("clean_video_quad_harmonize_strength", 0.65))
+    max_channel_delta = float(input_cfg.get("clean_video_quad_harmonize_max_delta", 16.0))
+    if ring_width_px <= 0 or harmonize_strength <= 0.0:
+        return frame_bgr
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (ring_width_px * 2 + 1, ring_width_px * 2 + 1),
+    )
+    dilated_quad = cv2.dilate(clean_quad_mask, kernel, iterations=1)
+    outer_ring = (dilated_quad > 0) & (clean_quad_mask == 0)
+    if not np.any(outer_ring):
+        return frame_bgr
+
+    distance_inside = cv2.distanceTransform(clean_quad_mask, cv2.DIST_L2, 5)
+    inner_ring = (clean_quad_mask > 0) & (distance_inside <= float(ring_width_px))
+    if not np.any(inner_ring):
+        return frame_bgr
+
+    inner_mean_bgr = frame_bgr[inner_ring].astype(np.float32).mean(axis=0)
+    outer_mean_bgr = frame_bgr[outer_ring].astype(np.float32).mean(axis=0)
+    channel_delta = (outer_mean_bgr - inner_mean_bgr) * harmonize_strength
+    channel_delta = np.clip(channel_delta, -max_channel_delta, max_channel_delta)
+    temporal_alpha = float(input_cfg.get("clean_video_quad_harmonize_temporal_alpha", 1.0))
+    if temporal_state is not None and temporal_alpha < 1.0:
+        temporal_alpha = float(np.clip(temporal_alpha, 0.0, 1.0))
+        previous_channel_delta = temporal_state.get("quad_harmonize_channel_delta")
+        if previous_channel_delta is not None:
+            channel_delta = (
+                temporal_alpha * channel_delta + (1.0 - temporal_alpha) * previous_channel_delta
+            )
+        temporal_state["quad_harmonize_channel_delta"] = channel_delta.copy()
+
+    edge_weight = np.clip(
+        (float(ring_width_px) - distance_inside) / max(float(ring_width_px), 1.0),
+        0.0,
+        1.0,
+    ) * (clean_quad_mask > 0).astype(np.float32)
+    if not np.any(edge_weight > 0.0):
+        return frame_bgr
+
+    output_frame = frame_bgr.astype(np.float32)
+    output_frame += edge_weight[:, :, None] * channel_delta[None, None, :]
+    return np.clip(output_frame, 0.0, 255.0).astype(np.uint8)
 
 
 def _validate_prompt_points(segmenter_type: str, prompts: list[ObjectPrompt]) -> None:
@@ -536,6 +963,7 @@ def _composite_preview_with_diagnostics(
     corners_map: dict[int, np.ndarray],
     preview_object_diagnostics: dict[str, dict[str, Any]],
     focal_length: float | None,
+    prompts: list[ObjectPrompt] | None = None,
 ) -> tuple[np.ndarray, float | None, list[str]]:
     preview = frame.copy()
     if overlay is None:
@@ -549,6 +977,8 @@ def _composite_preview_with_diagnostics(
     K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
     t0 = time.perf_counter()
     failures: list[str] = []
+    prompt_by_id = {int(p.obj_id): p for p in prompts} if prompts else {}
+    surface_overrides_cfg = compositor_cfg.get("surface_overrides", {})
 
     for obj_id_text, diag in preview_object_diagnostics.items():
         obj_id = int(obj_id_text)
@@ -563,7 +993,13 @@ def _composite_preview_with_diagnostics(
                 diag["composite_failure_reason"] = "fit_unavailable"
             continue
 
-        extra_kw = dict(compositor_params)
+        prompt = prompt_by_id.get(obj_id)
+        extra_kw = _merged_compositor_kwargs(
+            base_params=compositor_params,
+            surface_overrides=surface_overrides_cfg,
+            surface_type=_normalize_surface_type(prompt.surface_type) if prompt else "banner",
+            prompt=prompt,
+        )
         debug_info: dict[str, object] = {}
 
         try:
@@ -971,8 +1407,21 @@ def run_pipeline(
         focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
         K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
 
+        prompt_by_id = {int(p.obj_id): p for p in prompts}
+        surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
         for obj_id in sorted(corners_map):
-            extra_kw = dict(compositor_params)
+            prompt_for_object: ObjectPrompt | None = prompt_by_id.get(obj_id)
+            st = (
+                _normalize_surface_type(prompt_for_object.surface_type)
+                if prompt_for_object is not None
+                else "banner"
+            )
+            extra_kw = _merged_compositor_kwargs(
+                base_params=compositor_params,
+                surface_overrides=surface_overrides_cfg,
+                surface_type=st,
+                prompt=prompt_for_object,
+            )
             if compositor.name == "alpha":
                 homo = compute_oriented_homography(corners_map[obj_id], K)
                 extra_kw["homo"] = homo
@@ -1108,6 +1557,7 @@ def _run_sam3_image_preview(
         corners_map=corners_map,
         preview_object_diagnostics=preview_object_diagnostics,
         focal_length=pipeline_cfg.get("camera", {}).get("focal_length"),
+        prompts=prompts,
     )
     composited = _annotate_preview_frame(composited, masks, corners_map)
     preview_failure_reasons = _summarize_preview_failures(
@@ -1468,6 +1918,9 @@ def run_pipeline_video(
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
+    prompt_by_id = {int(p.obj_id): p for p in prompts}
+    surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
+
     fit_times: list[float] = []
     composite_times: list[float] = []
     write_video_s = 0.0  # accumulated time spent piping frames to ffmpeg
@@ -1549,7 +2002,18 @@ def run_pipeline_video(
                 t_comp = time.perf_counter()
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
                 for obj_id in sorted(corners_map):
-                    extra_kw = dict(compositor_params)
+                    prompt = prompt_by_id.get(obj_id)
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides_cfg,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
                     if compositor.name == "alpha":
                         homo = compute_oriented_homography(corners_map[obj_id], K)
                         extra_kw["homo"] = homo
@@ -1769,6 +2233,9 @@ def run_pipeline_video_tracking(
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
+    prompt_by_id = {int(p.obj_id): p for p in prompts}
+    surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
+
     composite_times: list[float] = []
     tracking_times: list[float] = []
 
@@ -1799,7 +2266,18 @@ def run_pipeline_video_tracking(
                 t_comp = time.perf_counter()
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
                 for obj_id in sorted(current_corners):
-                    extra_kw = dict(compositor_params)
+                    prompt = prompt_by_id.get(obj_id)
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides_cfg,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
                     if compositor.name == "alpha":
                         homo = compute_oriented_homography(current_corners[obj_id], K)
                         extra_kw["homo"] = homo
@@ -1986,7 +2464,7 @@ def run_pipeline_video_hybrid(
     banner_ids = {
         oid
         for oid, p in prompt_by_id.items()
-        if _normalize_surface_type(p.surface_type) == "banner"
+        if _normalize_surface_type(p.surface_type) == "banner" and p.placement_quad is None
     }
     if banner_ids:
         banner_heights = {
@@ -2134,6 +2612,23 @@ def run_pipeline_video_hybrid(
             device=_occlusion_cfg.get("device"),
         )
         print("[hybrid] MatAnyonePersonMasker enabled — continuous alpha matting")
+    elif _occ_type == "matanyone2":
+        # CVPR 2026 — same author, learned Quality Evaluator, better fine
+        # boundary detail under fast motion. Pre-computes alpha for all
+        # frames at init via process_video.
+        from banner_pipeline.masking import MatAnyone2PersonMasker
+
+        del video_segmenter
+
+        _person_masker = MatAnyone2PersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            box_padding=_occlusion_cfg.get("box_padding", 10),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] MatAnyone2PersonMasker enabled — CVPR 2026 alpha matting")
     elif _occ_type == "rvm":
         from banner_pipeline.masking import RVMMasker
 
@@ -2240,6 +2735,39 @@ def run_pipeline_video_hybrid(
 
     fh, fw = frame0_bgr.shape[:2]
     video_writer = StreamingVideoWriter(output_path, fw, fh, fps=input_fps)
+    clean_video_temporal_state: dict[str, np.ndarray] = {}
+
+    # --- Clean video source (for inpaint-first pipeline) ---
+    # If input.clean_video is set, replace the MELBOURNE court region of each
+    # frame with the corresponding clean (inpainted) frame BEFORE compositing.
+    # This eliminates text leak-through at SAM mask boundaries by construction.
+    _clean_video_cap = None
+    _clean_quad_mask = None
+    _clean_video_path = input_cfg.get("clean_video")
+    if _clean_video_path and os.path.exists(_clean_video_path):
+        _clean_video_cap = cv2.VideoCapture(_clean_video_path)
+        if not _clean_video_cap.isOpened():
+            print(f"[hybrid] WARNING: could not open clean video {_clean_video_path}")
+            _clean_video_cap = None
+        else:
+            # Build inpaint quad mask (hardcoded to match scripts/video_inpaint.py)
+            _inpaint_quad_cfg = input_cfg.get(
+                "clean_video_quad", [[649, 840], [1268, 840], [1268, 1038], [649, 1038]]
+            )
+            _inpaint_dilate_px = int(input_cfg.get("clean_video_dilate_px", 25))
+            _quad = np.array(_inpaint_quad_cfg, dtype=np.int32)
+            _clean_quad_mask = np.zeros((fh, fw), dtype=np.uint8)
+            cv2.fillPoly(_clean_quad_mask, [_quad], 255)
+            if _inpaint_dilate_px > 0:
+                _kern = cv2.getStructuringElement(
+                    cv2.MORPH_RECT, (_inpaint_dilate_px, _inpaint_dilate_px)
+                )
+                _clean_quad_mask = cv2.dilate(_clean_quad_mask, _kern, iterations=1)
+            assert _clean_quad_mask is not None
+            print(
+                f"[hybrid] Clean video opened: {_clean_video_path} "
+                f"(quad area {int(np.sum(_clean_quad_mask > 0))} px)"
+            )
 
     try:
         for frame_idx, fname in enumerate(frame_names):
@@ -2249,6 +2777,87 @@ def run_pipeline_video_hybrid(
                 frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
                 if frame_bgr is None:
                     raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+            original_frame_bgr = frame_bgr.copy()
+
+            # Read corresponding clean frame (sequential, aligned by index)
+            _clean_frame_resized = None
+            if _clean_video_cap is not None:
+                _ret_c, _clean_frame = _clean_video_cap.read()
+                if _ret_c:
+                    if _clean_frame.shape[:2] != (fh, fw):
+                        _clean_frame_resized = cv2.resize(
+                            _clean_frame, (fw, fh), interpolation=cv2.INTER_CUBIC
+                        )
+                    else:
+                        _clean_frame_resized = _clean_frame
+                    _clean_frame_resized = _sanitize_clean_video_player_residue(
+                        _clean_frame_resized,
+                        _clean_quad_mask,
+                        input_cfg,
+                    )
+                    # --- Luminance matching (v12) ---
+                    # The inpaint model removes the player's natural shadow on
+                    # the court along with the MELBOURNE text → clean court is
+                    # uniformly bright while original has natural shadow gradient.
+                    # Compute low-frequency luminance ratio (orig/clean) and
+                    # apply to clean inside the inpaint zone, restoring the
+                    # natural lighting/shadow.
+                    if (
+                        bool(input_cfg.get("clean_video_lumin_match", False))
+                        and _clean_quad_mask is not None
+                    ):
+                        _lumin_blur = int(input_cfg.get("clean_video_lumin_blur_px", 51))
+                        _yuv_orig = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YUV).astype(np.float32)
+                        _yuv_clean = cv2.cvtColor(_clean_frame_resized, cv2.COLOR_BGR2YUV).astype(
+                            np.float32
+                        )
+                        # Suppress BOTH MELBOURNE white text AND dark player
+                        # pixels in original Y so the blur reflects only the
+                        # COURT brightness gradient. Without this, the player
+                        # creates a dark blob in blurred Y → ratio darkens
+                        # clean court → "ghost legs" appear on court.
+                        _y_o = _yuv_orig[:, :, 0]
+                        _text_pix = _y_o > 200
+                        _player_pix = _y_o < 80  # player legs/shorts are darker
+                        _outlier_pix = _text_pix | _player_pix
+                        _y_o_clean = _y_o.copy()
+                        if np.any(_outlier_pix) and np.any(~_outlier_pix):
+                            _y_o_clean[_outlier_pix] = float(np.median(_y_o[~_outlier_pix]))
+                        _kk = _lumin_blur * 2 + 1
+                        _y_o_blur = cv2.GaussianBlur(_y_o_clean, (_kk, _kk), 0)
+                        _y_c_blur = cv2.GaussianBlur(_yuv_clean[:, :, 0], (_kk, _kk), 0)
+                        _ratio = np.clip(_y_o_blur / np.maximum(_y_c_blur, 1.0), 0.7, 1.3)
+                        # Apply only within the inpaint quad
+                        _ratio_in_quad = np.where(_clean_quad_mask > 0, _ratio, 1.0)
+                        _yuv_clean[:, :, 0] = np.clip(_yuv_clean[:, :, 0] * _ratio_in_quad, 0, 255)
+                        _clean_frame_resized = cv2.cvtColor(
+                            _yuv_clean.astype(np.uint8), cv2.COLOR_YUV2BGR
+                        )
+                    # --- Outlier cleanup of clean video ---
+                    # Clean BOTH bright (MELBOURNE residue, hallucinations) AND
+                    # dark (DiffuEraser's player-position smearing) outliers.
+                    # DE sometimes renders the player at a different pose in
+                    # clean → dark "ghost legs" in the inpaint zone. Replace
+                    # anything outside [dark_thresh, bright_thresh] with court.
+                    if (
+                        bool(input_cfg.get("clean_video_text_cleanup", False))
+                        and _clean_quad_mask is not None
+                        and _clean_frame_resized is not None
+                    ):
+                        _bright_thresh = int(input_cfg.get("clean_video_text_threshold", 150))
+                        _dark_thresh = int(input_cfg.get("clean_video_dark_threshold", 60))
+                        _gray_c = cv2.cvtColor(_clean_frame_resized, cv2.COLOR_BGR2GRAY)
+                        _outlier_c = (
+                            ((_gray_c > _bright_thresh) | (_gray_c < _dark_thresh))
+                            & (_clean_quad_mask > 0)
+                        ).astype(np.uint8) * 255
+                        if np.any(_outlier_c > 0):
+                            _clean_frame_resized = cv2.inpaint(
+                                _clean_frame_resized,
+                                _outlier_c,
+                                9,
+                                cv2.INPAINT_TELEA,
+                            )
 
             # Get SAM masks for this frame (for inpainting).
             masks_for_frame = video_segments.get(frame_idx, {})
@@ -2373,7 +2982,7 @@ def run_pipeline_video_hybrid(
             person_mask: np.ndarray | None = None
             person_mask_raw: np.ndarray | None = None
             if _person_masker is not None:
-                if _occ_type in ("sam2_video", "sam3_video"):
+                if _occ_type in ("sam2_video", "sam3_video", "matanyone2"):
                     person_mask_raw = _person_masker.mask(frame_idx)
                 else:
                     person_mask_raw = _person_masker.mask(frame_bgr)
@@ -2391,6 +3000,195 @@ def run_pipeline_video_hybrid(
                         (2 * occ_dilate + 1, 2 * occ_dilate + 1),
                     )
                     person_mask = cv2.dilate(person_mask, kern, iterations=1)
+
+            # --- Original-frame bright-pixel cleanup ---
+            # Remove MELBOURNE residue from motion-blur halo around the player
+            # in the ORIGINAL frame, before the composite blend uses it. This
+            # prevents the white halo at player edges that comes from the
+            # feather zone blending original (with MELBOURNE residue) with clean.
+            if (
+                bool(input_cfg.get("clean_video_text_cleanup", False))
+                and _clean_quad_mask is not None
+                and person_mask_raw is not None
+            ):
+                _bright_thresh_o = int(input_cfg.get("clean_video_text_threshold", 150))
+                _gray_o = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                # MatAnyone returns continuous alpha [0,1]. Aggressive cleanup:
+                # use threshold 0.5 to catch motion-blur halo (alpha 0.3-0.5).
+                # Replace bright outliers with the dark-pixel median (court color)
+                # instead of cv2.inpaint to be more decisive.
+                _alpha_thresh = float(input_cfg.get("clean_video_text_alpha_thresh", 0.5))
+                _bright_in_quad_o = (
+                    (_gray_o > _bright_thresh_o)
+                    & (_clean_quad_mask > 0)
+                    & (person_mask_raw < _alpha_thresh)
+                )
+                if np.any(_bright_in_quad_o) and _clean_frame_resized is not None:
+                    # Replace bright original pixels with the corresponding
+                    # clean video pixel (same location).
+                    frame_bgr = frame_bgr.copy()
+                    frame_bgr[_bright_in_quad_o] = _clean_frame_resized[_bright_in_quad_o]
+                frame_bgr = _apply_text_focus_cleanup(
+                    frame_bgr=frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                # NEW: cv2.inpaint the entire halo zone of original frame —
+                # forcefully erase ALL pixels (bright OR dim) outside the
+                # player core in the inpaint quad. Replaces with surrounding
+                # court color. Most aggressive cleanup possible.
+                if (
+                    bool(input_cfg.get("clean_video_full_inpaint", False))
+                    and _clean_quad_mask is not None
+                    and person_mask_raw is not None
+                ):
+                    _full_alpha = float(input_cfg.get("clean_video_full_inpaint_alpha", 0.4))
+                    _full_radius = int(input_cfg.get("clean_video_full_inpaint_radius", 11))
+                    _full_zone = ((_clean_quad_mask > 0) & (person_mask_raw < _full_alpha)).astype(
+                        np.uint8
+                    ) * 255
+                    if np.any(_full_zone > 0):
+                        frame_bgr = cv2.inpaint(
+                            frame_bgr, _full_zone, _full_radius, cv2.INPAINT_TELEA
+                        )
+                # Optional: blend original toward clean in the entire halo
+                # zone (alpha 0.0-0.5) within the inpaint quad. This smooths
+                # out any residual pixel-level anomalies that threshold-based
+                # cleanup misses.
+                if (
+                    bool(input_cfg.get("clean_video_halo_smooth", False))
+                    and _clean_quad_mask is not None
+                    and person_mask_raw is not None
+                    and _clean_frame_resized is not None
+                ):
+                    _halo_alpha = float(input_cfg.get("clean_video_halo_alpha", 0.5))
+                    _halo_zone = (_clean_quad_mask > 0) & (person_mask_raw < _halo_alpha)
+                    if np.any(_halo_zone):
+                        frame_bgr = frame_bgr.copy()
+                        frame_bgr[_halo_zone] = _clean_frame_resized[_halo_zone]
+
+            # --- Inpaint-first frame replacement (feathered blend) ---
+            # Smoothly blend original frame and clean (inpainted) frame.
+            # Combined alpha = player_alpha * quad_alpha:
+            #   player_alpha: 0 inside player core, 0→1 ramp over feather_px,
+            #                 1 outside (preserves player solidity)
+            #   quad_alpha:   1 in quad center, 1→0 ramp over quad_feather_px
+            #                 inward from boundary (eliminates visible rectangle)
+            # Player core is a TEMPORAL UNION over [N-K, N+K] frames, so
+            # ProPainter/DiffuEraser ghost-leg artifacts (caused by inpaint
+            # model trying to erase the player) get covered by original.
+            if _clean_frame_resized is not None and _clean_quad_mask is not None:
+                _core_dilate = int(input_cfg.get("clean_video_core_dilate_px", 3))
+                _feather_px = int(input_cfg.get("clean_video_feather_px", 20))
+                _quad_feather_px = int(input_cfg.get("clean_video_quad_feather_px", 40))
+                _temporal_window = int(input_cfg.get("clean_video_temporal_window", 8))
+
+                # Build temporal union of player masks: [N-K, N+K]
+                _temporal_player = None
+                if (
+                    person_mask_raw is not None
+                    and _person_masker is not None
+                    and _occ_type in ("sam2_video", "sam3_video")
+                ):
+                    _temporal_player_mask = np.zeros((fh, fw), dtype=np.uint8)
+                    for _dk in range(-_temporal_window, _temporal_window + 1):
+                        _fi = frame_idx + _dk
+                        if _fi < 0 or _fi >= len(frame_names):
+                            continue
+                        _m = _person_masker.mask(_fi)
+                        if _m.shape != (fh, fw):
+                            continue
+                        _bm = (_m > 0.5).astype(np.uint8) * 255
+                        _temporal_player_mask = np.maximum(_temporal_player_mask, _bm)
+                    _temporal_player = _temporal_player_mask
+                else:
+                    _temporal_player = person_mask_raw
+
+                # Player edge feather (from temporal union core)
+                if _temporal_player is not None and np.any(_temporal_player > 0):
+                    if _core_dilate > 0:
+                        _kern_c = cv2.getStructuringElement(
+                            cv2.MORPH_ELLIPSE,
+                            (2 * _core_dilate + 1, 2 * _core_dilate + 1),
+                        )
+                        _core_mask = cv2.dilate(_temporal_player, _kern_c, iterations=1)
+                    else:
+                        _core_mask = _temporal_player
+                    _outside_core = (_core_mask == 0).astype(np.uint8)
+                    _dist_p = cv2.distanceTransform(_outside_core, cv2.DIST_L2, 5)
+                    _player_alpha = np.clip(_dist_p / max(_feather_px, 1), 0.0, 1.0)
+                else:
+                    _player_alpha = np.ones((fh, fw), dtype=np.float32)
+
+                # Quad boundary feather (distance INSIDE quad from edge)
+                if _quad_feather_px > 0:
+                    _dist_q = cv2.distanceTransform(_clean_quad_mask, cv2.DIST_L2, 5)
+                    _quad_alpha = np.clip(_dist_q / max(_quad_feather_px, 1), 0.0, 1.0)
+                else:
+                    _quad_alpha = (_clean_quad_mask > 0).astype(np.float32)
+
+                _alpha = _player_alpha * _quad_alpha
+
+                if np.any(_alpha > 0):
+                    _alpha_3 = _alpha[:, :, None]
+                    frame_bgr = (
+                        frame_bgr.astype(np.float32) * (1.0 - _alpha_3)
+                        + _clean_frame_resized.astype(np.float32) * _alpha_3
+                    ).astype(np.uint8)
+
+                # --- Post-blend cleanup + smoothing ---
+                # Replace bright outliers with clean video pixel, AND apply
+                # Gaussian blur to the entire halo zone (alpha < 0.3) to
+                # smooth out any subtle discontinuities.
+                if (
+                    bool(input_cfg.get("clean_video_post_blend_cleanup", False))
+                    and _clean_frame_resized is not None
+                    and person_mask_raw is not None
+                ):
+                    _post_thresh = int(input_cfg.get("clean_video_post_blend_threshold", 130))
+                    _post_alpha = float(input_cfg.get("clean_video_post_blend_alpha", 0.3))
+                    _gray_p = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    _bright_post = (
+                        (_gray_p > _post_thresh)
+                        & (_clean_quad_mask > 0)
+                        & (person_mask_raw < _post_alpha)
+                    )
+                    if np.any(_bright_post):
+                        frame_bgr = frame_bgr.copy()
+                        frame_bgr[_bright_post] = _clean_frame_resized[_bright_post]
+                    # Gaussian blur the halo zone for smoothness
+                    _blur_px = int(input_cfg.get("clean_video_post_blend_blur_px", 0))
+                    if _blur_px > 0:
+                        _kk = _blur_px * 2 + 1
+                        _blurred = cv2.GaussianBlur(frame_bgr, (_kk, _kk), 0)
+                        _halo_zone = (_clean_quad_mask > 0) & (person_mask_raw < _post_alpha)
+                        if np.any(_halo_zone):
+                            frame_bgr = frame_bgr.copy()
+                            frame_bgr[_halo_zone] = _blurred[_halo_zone]
+                frame_bgr = _apply_underfoot_text_decontamination(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                frame_bgr = _apply_shoe_edge_color_extension(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                frame_bgr = _harmonize_quad_edge_tones(
+                    frame_bgr=frame_bgr,
+                    clean_quad_mask=_clean_quad_mask,
+                    input_cfg=input_cfg,
+                    temporal_state=clean_video_temporal_state,
+                )
 
             # Composite: SAM mask for inpaint, tracked corners for logo warp.
             if overlay is not None and compositor is not None and current_corners:
@@ -2415,7 +3213,12 @@ def run_pipeline_video_hybrid(
                             painted_court_composite,
                         )
 
-                        court_overrides = surface_overrides.get("court_floor", {})
+                        court_overrides = _merged_compositor_kwargs(
+                            base_params={},
+                            surface_overrides=surface_overrides,
+                            surface_type=st,
+                            prompt=prompt,
+                        )
                         painted_court_composite(
                             frame_bgr,
                             current_corners[obj_id],
@@ -2441,15 +3244,19 @@ def run_pipeline_video_hybrid(
                             quad_expand_px=int(court_overrides.get("quad_expand_px", 0)),
                             erase_only=bool(court_overrides.get("erase_only", _erase_only)),
                             clean_plate=_clean_plates.get(obj_id),
+                            fill_canvas_background=bool(
+                                court_overrides.get("fill_canvas_background", True)
+                            ),
                             logo_blur_px=int(court_overrides.get("logo_blur_px", 0)),
                         )
                         continue
 
-                    extra_kw = dict(compositor_params)
-                    # Apply per-surface-type compositor overrides.
-                    if prompt is not None:
-                        overrides = surface_overrides.get(st, {})
-                        extra_kw.update(overrides)
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
                     # Pass person occlusion mask for side panel objects.
                     if person_mask is not None and st == "side_panel":
                         extra_kw["occlusion_mask"] = person_mask
@@ -2482,6 +3289,8 @@ def run_pipeline_video_hybrid(
     finally:
         video_writer.close()
         shutil.rmtree(frame_dir, ignore_errors=True)
+        if _clean_video_cap is not None:
+            _clean_video_cap.release()
 
     metrics["write_video_s"] = round(write_video_s, 4)
     print(f"[hybrid] Wrote {num_written} frames -> {output_path}")

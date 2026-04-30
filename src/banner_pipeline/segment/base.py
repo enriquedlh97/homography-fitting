@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -23,6 +24,8 @@ class ObjectPrompt:
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
     placement_quad: Optional (4, 2) float32 quad corners for logo placement.
                     When set, used instead of points for building prompt_bboxes.
+    compositor_params: Optional dict of compositor kwargs merged for this object only
+                    (after global and surface_overrides), e.g. ``inpaint_feather_px``.
     """
 
     obj_id: int
@@ -33,6 +36,7 @@ class ObjectPrompt:
     geometry_model: str | None = None
     box: np.ndarray | None = None
     placement_quad: np.ndarray | None = None
+    compositor_params: dict[str, Any] | None = None
 
 
 class SegmentationModel(ABC):

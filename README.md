@@ -47,6 +47,10 @@ This opens the selected frame of the video and saves the prompt points into the 
 
 ### Step 2: Run on a GPU via Modal
 
+For walking-over renders, use only `H200` or `B200`. Use `H200` as the practical
+default for short previews, and launch paired `H200` + `B200` jobs for heavy
+checkpoint renders, keeping the first successful result.
+
 ```bash
 # Video mode (processes all frames, outputs .mp4)
 uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode video
@@ -136,6 +140,17 @@ SAM3 GPU support:
 - `B200`: `SAM3` via FlashAttention-4
 
 As of April 10, 2026, PyPI only publishes `flash-attn-4` as prereleases, so the Modal B200 image pins `flash-attn-4==4.0.0b8` instead of relying on pip to resolve a final release. See [PyPI](https://pypi.org/project/flash-attn-4/) and the [upstream README](https://github.com/Dao-AILab/flash-attention).
+
+### Current Walking-Over Checkpoint
+
+- Config: `configs/experiments/eval_walkover_v61_all_redbulls_compact_court.yaml`
+- Output: `experiments/2026-04-30_14-31-16_walkover_v61_all_redbulls_compact_court_full_H200/outputs/composited.mp4`
+- Review crops: `experiments/comparisons/walkover_v61_all_redbulls_compact_court_full_H200_crops/`
+
+This checkpoint renders all five accepted Red Bull placements together: the
+MELBOURNE court replacement, the left-court Red Bull, and the three black-wall
+Red Bulls. The next controlled iteration is court-plane perspective correction
+for the two court logos only.
 
 ### Benchmarking across GPUs
 

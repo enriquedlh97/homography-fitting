@@ -45,6 +45,8 @@ def painted_court_composite(
     erase_only: bool = False,
     # --- Clean plate (pre-built text-free court region) ---
     clean_plate: np.ndarray | None = None,
+    # --- Canvas background ---
+    fill_canvas_background: bool = True,
     # --- Logo motion blur (production trick) ---
     logo_blur_px: int = 0,
 ) -> np.ndarray:
@@ -131,7 +133,7 @@ def painted_court_composite(
     # opaque background covers original text (e.g. MELBOURNE).
     # If erasing text, transparent canvas is fine (text already erased).
     canvas = np.zeros((canvas_h, canvas_w, 4), dtype=np.uint8)
-    if not erase_text:
+    if not erase_text and fill_canvas_background:
         if clean_plate is not None:
             # Clean plate approach: use pre-built text-free court region.
             # No per-frame processing needed — the plate was built offline

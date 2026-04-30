@@ -91,11 +91,23 @@ class InpaintCompositor(Compositor):
 
         frame_h, frame_w = frame.shape[:2]
 
-        # --- Compute ROI bbox from quad corners (with padding for inpaint
-        #     dilation + alpha feather). Everything below operates on the
-        #     small ROI, not the full frame. ---
+        logo_placement_quad = kwargs.get("logo_placement_quad")
+        explicit_logo_corners = (
+            np.array(logo_placement_quad, dtype=np.float32)
+            if logo_placement_quad is not None
+            else None
+        )
+
+        # --- Compute ROI bbox from erase and logo quad corners (with padding
+        #     for inpaint dilation + alpha feather). Everything below operates
+        #     on the small ROI, not the full frame. ---
         with Timer("inpaint.roi_setup"):
-            xs, ys = corners[:, 0], corners[:, 1]
+            roi_corners = (
+                np.vstack([corners, explicit_logo_corners])
+                if explicit_logo_corners is not None
+                else corners
+            )
+            xs, ys = roi_corners[:, 0], roi_corners[:, 1]
             roi_pad = 32
             x0 = max(0, int(xs.min()) - roi_pad)
             y0 = max(0, int(ys.min()) - roi_pad)
@@ -289,8 +301,10 @@ class InpaintCompositor(Compositor):
         # --- Step 2: build logo + alpha canvases ---
         # When using black_fill, expand the logo placement to match the
         # expanded fill region so logos are visible on all banner slots.
-        logo_corners = corners.copy()
-        logo_corners_roi = corners_roi.copy()
+        logo_corners = (
+            explicit_logo_corners.copy() if explicit_logo_corners is not None else corners.copy()
+        )
+        logo_corners_roi = logo_corners - np.array([x0, y0], dtype=logo_corners.dtype)
         if inpaint_method == "black_fill":
             quad_pad = int(kwargs.get("quad_pad_px", 8))
             if quad_pad > 0:

@@ -109,6 +109,16 @@ def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image
             "pip install --no-deps git+https://github.com/pq-yang/MatAnyone.git",
             "pip install ftfy regex einops fvcore imageio",
         )
+        .run_commands(
+            # MatAnyone 2 (CVPR 2026) — install package directly from git.
+            # Skip dep resolution (it pulls many already-installed/heavy pkgs).
+            "pip install --no-deps git+https://github.com/pq-yang/MatAnyone2.git",
+            # Lightweight runtime deps actually used by inference.
+            # PyAV is needed by torchvision.io.read_video.
+            "pip install av hickle "
+            "thinplate@git+https://github.com/cheind/py-thin-plate-spline "
+            "gitpython tensorboard pyyaml",
+        )
         .add_local_dir("src", remote_path="/root/src")
     )
 
@@ -193,11 +203,13 @@ checkpoints_volume = modal.Volume.from_name(
     volumes={"/checkpoints": checkpoints_volume},
     secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=86400,  # 24h — Modal's max
+    memory=65536,  # 64 GB RAM (with streaming MatAnyone 2 inference, less needed)
 )
 def run_on_gpu(
     config_dict: dict,
     video_bytes: bytes,
     logo_bytes: bytes | None,
+    clean_video_bytes: bytes | None = None,
     benchmark_runs: int = 1,
     profile: bool = False,
 ) -> dict:
@@ -261,6 +273,13 @@ def run_on_gpu(
         with open(logo_path, "wb") as f:
             f.write(logo_bytes)
         config_dict["input"]["logo"] = logo_path
+
+    if clean_video_bytes:
+        clean_video_path = os.path.join(tmpdir, "clean_video.mp4")
+        with open(clean_video_path, "wb") as f:
+            f.write(clean_video_bytes)
+        config_dict["input"]["clean_video"] = clean_video_path
+        print(f"Clean video: {clean_video_path} ({len(clean_video_bytes) / 1024:.0f} KB)")
 
     # --- Report GPU info ---
     if torch.cuda.is_available():
@@ -412,6 +431,13 @@ def main(
             logo_bytes = f.read()
         print(f"Logo: {logo_path} ({len(logo_bytes) / 1024:.0f} KB)")
 
+    clean_video_bytes = None
+    clean_video_path = config_dict["input"].get("clean_video")
+    if clean_video_path and os.path.exists(clean_video_path):
+        with open(clean_video_path, "rb") as f:
+            clean_video_bytes = f.read()
+        print(f"Clean video: {clean_video_path} ({len(clean_video_bytes) / 1024:.0f} KB)")
+
     print(f"GPU: {gpu}")
     print(f"Benchmark runs: {benchmark}")
     if profile:
@@ -422,6 +448,7 @@ def main(
         config_dict=config_dict,
         video_bytes=video_bytes,
         logo_bytes=logo_bytes,
+        clean_video_bytes=clean_video_bytes,
         benchmark_runs=benchmark,
         profile=profile,
     )

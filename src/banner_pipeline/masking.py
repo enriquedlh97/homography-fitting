@@ -653,6 +653,164 @@ class MatAnyonePersonMasker:
         return alpha
 
 
+class MatAnyone2PersonMasker:
+    """Pre-compute continuous alpha mattes for all frames via MatAnyone 2 (CVPR 2026).
+
+    Improvements over MatAnyone v1:
+    - Learned Matting Quality Evaluator (MQE) — identifies erroneous regions
+    - Trained on VMReal (28K real-world clips, 2.4M frames)
+    - State-of-the-art on synthetic + real-world benchmarks
+    - Better fine-detail boundary preservation under fast motion
+
+    Process: extracts frames from video, generates first-frame person mask
+    via Mask R-CNN, runs MatAnyone 2 process_video which produces an alpha
+    video. Loads alpha frames into memory for O(1) per-frame lookup.
+
+    Install: pip install matanyone2@git+https://github.com/pq-yang/MatAnyone2.git
+    """
+
+    def __init__(
+        self,
+        frame_dir: str,
+        frame_names: list[str],
+        confidence_threshold: float = 0.5,
+        box_padding: int = 10,
+        n_warmup: int = 5,
+        prompt_frame_idx: int = 0,
+        device: str | None = None,
+    ) -> None:
+        """Streaming per-frame inference (avoids loading all frames into memory)."""
+        import os
+
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device = device
+        self._masks: dict[int, np.ndarray] = {}
+
+        # 1. Read prompt frame and detect persons via Mask R-CNN
+        prompt_path = os.path.join(frame_dir, frame_names[prompt_frame_idx])
+        prompt_bgr = cv2.imread(prompt_path)
+        if prompt_bgr is None:
+            raise RuntimeError(f"Cannot read prompt frame: {prompt_path}")
+        fh, fw = prompt_bgr.shape[:2]
+
+        boxes = self._detect_persons(prompt_bgr, confidence_threshold, device)
+        if not boxes:
+            print("[MatAnyone2] No persons detected — empty masks for all frames")
+            for i in range(len(frame_names)):
+                self._masks[i] = np.zeros((fh, fw), dtype=np.float32)
+            return
+
+        # 2. Build first-frame binary mask from detection boxes
+        first_mask = np.zeros((fh, fw), dtype=np.float32)
+        for box in boxes:
+            x1, y1, x2, y2 = [int(v) for v in box]
+            x1 = max(0, x1 - box_padding)
+            y1 = max(0, y1 - box_padding)
+            x2 = min(fw, x2 + box_padding)
+            y2 = min(fh, y2 + box_padding)
+            first_mask[y1:y2, x1:x2] = 255.0
+        print(f"[MatAnyone2] Detected {len(boxes)} persons, initializing model")
+
+        # 3. Load MatAnyone 2 model + InferenceCore
+        from matanyone2 import InferenceCore, MatAnyone2
+
+        model = MatAnyone2.from_pretrained("PeiqingYang/MatAnyone2")
+        processor = InferenceCore(model, device=device)
+        print(f"[MatAnyone2] Loaded on {device}, streaming through frames …")
+
+        # 4. Initialize on first frame + warmup memory bank
+        first_image_t = self._to_tensor(prompt_bgr, device)
+        first_mask_t = torch.from_numpy(first_mask).float().to(device)
+
+        if hasattr(processor, "clear_memory"):
+            processor.clear_memory()
+
+        with torch.inference_mode():
+            processor.step(first_image_t, first_mask_t, objects=[1])
+            output_prob = processor.step(first_image_t, first_frame_pred=True)
+            for _ in range(n_warmup):
+                output_prob = processor.step(first_image_t, first_frame_pred=True)
+            self._masks[prompt_frame_idx] = self._extract_alpha(processor, output_prob, fh, fw)
+
+        # 5. Stream through remaining frames
+        for i, name in enumerate(frame_names):
+            if i == prompt_frame_idx:
+                continue
+            frame = cv2.imread(os.path.join(frame_dir, name))
+            if frame is None:
+                self._masks[i] = np.zeros((fh, fw), dtype=np.float32)
+                continue
+            image_t = self._to_tensor(frame, device)
+            with torch.inference_mode():
+                output_prob = processor.step(image_t)
+            self._masks[i] = self._extract_alpha(processor, output_prob, fh, fw)
+            if (i + 1) % 100 == 0:
+                print(f"[MatAnyone2] Processed {i + 1}/{len(frame_names)}")
+
+        n_nonempty = sum(1 for m in self._masks.values() if m.any())
+        print(
+            f"[MatAnyone2] Done — {len(self._masks)} alpha frames, "
+            f"{n_nonempty} with detected players"
+        )
+
+        del processor, model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    @staticmethod
+    def _to_tensor(frame_bgr: np.ndarray, device: str) -> torch.Tensor:
+        rgb = frame_bgr[:, :, ::-1].copy()
+        return torch.from_numpy(rgb).permute(2, 0, 1).float().div(255.0).to(device)
+
+    @staticmethod
+    def _extract_alpha(processor: Any, output_prob: Any, h: int, w: int) -> np.ndarray:
+        alpha_t = processor.output_prob_to_mask(output_prob, matting=True)
+        alpha = np.squeeze(alpha_t.cpu().numpy()).astype(np.float32)
+        alpha = np.clip(alpha, 0.0, 1.0)
+        if alpha.shape != (h, w):
+            alpha = cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        return alpha
+
+    @staticmethod
+    def _detect_persons(
+        frame_bgr: np.ndarray, confidence_threshold: float, device: str
+    ) -> list[list[float]]:
+        from torchvision.models.detection import (
+            MaskRCNN_ResNet50_FPN_Weights,
+            maskrcnn_resnet50_fpn,
+        )
+
+        weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT
+        model = maskrcnn_resnet50_fpn(weights=weights)
+        model.to(device)
+        model.eval()
+        rgb = frame_bgr[:, :, ::-1].astype(np.float32) / 255.0
+        tensor = torch.from_numpy(rgb).permute(2, 0, 1).to(device)
+        with torch.no_grad():
+            preds = model([tensor])[0]
+        labels = preds["labels"].cpu().numpy()
+        scores = preds["scores"].cpu().numpy()
+        boxes = preds["boxes"].cpu().numpy()
+        out: list[list[float]] = []
+        for i, (label, score) in enumerate(zip(labels, scores, strict=False)):
+            if label == 1 and score >= confidence_threshold:
+                out.append(boxes[i].tolist())
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return out
+
+    def mask(self, frame_idx: int) -> np.ndarray:
+        """Return (H, W) float32 continuous alpha for *frame_idx*."""
+        if frame_idx in self._masks:
+            return self._masks[frame_idx]
+        if self._masks:
+            ref = next(iter(self._masks.values()))
+            return np.zeros_like(ref, dtype=np.float32)
+        return np.zeros((1, 1), dtype=np.float32)
+
+
 class MaskSmoother:
     """Temporal mask post-processor — exact reproduction of tennis-virtual-ads.
 

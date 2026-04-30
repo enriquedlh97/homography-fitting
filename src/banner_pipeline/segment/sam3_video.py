@@ -613,6 +613,11 @@ def _build_seed_retry_prompt(
         frame_idx=int(prompt.frame_idx),
         surface_type=prompt.surface_type,
         geometry_model=prompt.geometry_model,
+        box=prompt.box,
+        placement_quad=prompt.placement_quad,
+        compositor_params=dict(prompt.compositor_params)
+        if prompt.compositor_params is not None
+        else None,
     )
 
 
