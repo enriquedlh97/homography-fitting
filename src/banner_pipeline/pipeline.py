@@ -37,7 +37,11 @@ SEGMENTERS: dict[str, type] = {
 }
 
 # Video-mode segmenters are registered lazily (they import heavy GPU deps).
-VIDEO_SEGMENTER_TYPES: tuple[str, ...] = ("sam2_video", "sam3_video")
+VIDEO_SEGMENTER_TYPES: tuple[str, ...] = (
+    "sam2_video",
+    "sam3_video",
+    "sam3_light_video",
+)
 
 FITTERS: dict[str, type[QuadFitter]] = {
     "pca": PCAFitter,
@@ -282,7 +286,7 @@ def run_pipeline(
 
 
 def build_video_segmenter(cfg: dict):
-    """Build a video segmenter (SAM2 or SAM3) based on ``cfg['type']``."""
+    """Build a video segmenter (SAM2 / SAM3 / SAM3-light) from ``cfg['type']``."""
     seg_type = cfg.get("type", "sam2_video")
     if seg_type == "sam3_video":
         from banner_pipeline.segment.sam3_video import SAM3VideoSegmenter
@@ -294,6 +298,20 @@ def build_video_segmenter(cfg: dict):
             kwargs["device"] = cfg["device"]
         return SAM3VideoSegmenter(**kwargs)
 
+    if seg_type == "sam3_light_video":
+        from banner_pipeline.segment.sam3_light_video import SAM3LightVideoSegmenter
+
+        kwargs = {}
+        if "bpe_path" in cfg:
+            kwargs["bpe_path"] = cfg["bpe_path"]
+        if "similarity_threshold" in cfg:
+            kwargs["similarity_threshold"] = cfg["similarity_threshold"]
+        if "motion_threshold_px" in cfg:
+            kwargs["motion_threshold_px"] = cfg["motion_threshold_px"]
+        if "device" in cfg:
+            kwargs["device"] = cfg["device"]
+        return SAM3LightVideoSegmenter(**kwargs)
+
     # Default: SAM2 video.
     kwargs = {}
     if "checkpoint" in cfg:
@@ -303,6 +321,68 @@ def build_video_segmenter(cfg: dict):
     if "device" in cfg:
         kwargs["device"] = cfg["device"]
     return SAM2VideoSegmenter(**kwargs)
+
+
+def _apply_iou_dedup(
+    *,
+    candidate_obj_ids: set[int],
+    video_segments: dict[int, dict[int, np.ndarray]],
+    confidence_by_obj: dict[int, list[float]],
+    iou_threshold: float,
+) -> tuple[set[int], int]:
+    """Drop obj_ids whose representative mask overlaps a higher-confidence one.
+
+    Computes a per-obj_id *representative mask* as the union of all per-frame
+    masks (works well for static / slow-moving banners). For every pair, when
+    IoU exceeds ``iou_threshold`` we keep the obj_id with higher mean
+    confidence and drop the other. Returns ``(kept, n_dropped)``.
+    """
+    if iou_threshold >= 1.0 or len(candidate_obj_ids) < 2:
+        return set(candidate_obj_ids), 0
+
+    rep_masks: dict[int, np.ndarray] = {}
+    for masks_for_frame in video_segments.values():
+        for obj_id, mask in masks_for_frame.items():
+            oid = int(obj_id)
+            if oid not in candidate_obj_ids or mask is None:
+                continue
+            m = np.asarray(mask, dtype=bool)
+            if oid not in rep_masks:
+                rep_masks[oid] = m.copy()
+            else:
+                np.logical_or(rep_masks[oid], m, out=rep_masks[oid])
+
+    mean_conf: dict[int, float] = {}
+    for oid in candidate_obj_ids:
+        confs = confidence_by_obj.get(int(oid), [])
+        mean_conf[int(oid)] = float(np.mean(confs)) if confs else 1.0
+
+    sorted_ids = sorted(candidate_obj_ids, key=lambda o: -mean_conf[int(o)])
+    kept: set[int] = set()
+    dropped = 0
+    for oid in sorted_ids:
+        rep = rep_masks.get(int(oid))
+        if rep is None:
+            continue
+        is_dup = False
+        for kept_oid in kept:
+            kept_rep = rep_masks.get(int(kept_oid))
+            if kept_rep is None:
+                continue
+            inter = int(np.logical_and(rep, kept_rep).sum())
+            if inter == 0:
+                continue
+            union = int(np.logical_or(rep, kept_rep).sum())
+            if union == 0:
+                continue
+            if inter / union > iou_threshold:
+                is_dup = True
+                break
+        if is_dup:
+            dropped += 1
+        else:
+            kept.add(int(oid))
+    return kept, dropped
 
 
 def _apply_detection_filter(
@@ -332,6 +412,22 @@ def _apply_detection_filter(
     min_area_frac = float(cfg.get("min_area_frac", 0.0))
     min_confidence = float(cfg.get("min_confidence", 0.0))
     min_frame_count = int(cfg.get("min_frame_count", 0))
+    iou_dedup_threshold = float(cfg.get("iou_dedup_threshold", 0.0))
+
+    # Spatial ROI: keep obj_ids whose mask centroid (averaged over all
+    # frames) falls inside the normalized rectangle [x_min..x_max] ×
+    # [y_min..y_max] (each in [0, 1] of frame width / height).
+    spatial_roi = cfg.get("spatial_roi") or {}
+    roi_x_min = float(spatial_roi.get("x_min", 0.0))
+    roi_x_max = float(spatial_roi.get("x_max", 1.0))
+    roi_y_min = float(spatial_roi.get("y_min", 0.0))
+    roi_y_max = float(spatial_roi.get("y_max", 1.0))
+    apply_spatial = (
+        roi_x_min > 0.0
+        or roi_x_max < 1.0
+        or roi_y_min > 0.0
+        or roi_y_max < 1.0
+    )
 
     h, w = int(frame_shape[0]), int(frame_shape[1])
     frame_area = float(max(1, h * w))
@@ -339,20 +435,29 @@ def _apply_detection_filter(
     # Per-obj statistics over the whole video.
     max_area: dict[int, int] = {}
     n_frames: dict[int, int] = {}
+    sum_y: dict[int, float] = {}
+    sum_x: dict[int, float] = {}
+    total_pix: dict[int, int] = {}
     for masks_for_frame in video_segments.values():
         for obj_id, mask in masks_for_frame.items():
             if mask is None:
                 continue
-            area = int(np.count_nonzero(mask))
+            m = np.asarray(mask, dtype=bool)
+            area = int(np.count_nonzero(m))
             if area == 0:
                 continue
             oid = int(obj_id)
             if area > max_area.get(oid, 0):
                 max_area[oid] = area
             n_frames[oid] = n_frames.get(oid, 0) + 1
+            if apply_spatial:
+                ys, xs = np.where(m)
+                sum_y[oid] = sum_y.get(oid, 0.0) + float(ys.sum())
+                sum_x[oid] = sum_x.get(oid, 0.0) + float(xs.sum())
+                total_pix[oid] = total_pix.get(oid, 0) + int(ys.size)
 
     kept: set[int] = set()
-    rejected_reasons = {"area": 0, "confidence": 0, "persistence": 0}
+    rejected_reasons = {"area": 0, "confidence": 0, "persistence": 0, "spatial_roi": 0}
     for oid in candidate_obj_ids:
         oid = int(oid)
         max_area_frac_val = max_area.get(oid, 0) / frame_area
@@ -367,7 +472,31 @@ def _apply_detection_filter(
         if n_frames.get(oid, 0) < min_frame_count:
             rejected_reasons["persistence"] += 1
             continue
+        if apply_spatial:
+            tp = total_pix.get(oid, 0)
+            if tp == 0:
+                rejected_reasons["spatial_roi"] += 1
+                continue
+            cy_norm = (sum_y[oid] / tp) / float(h)
+            cx_norm = (sum_x[oid] / tp) / float(w)
+            if not (
+                roi_x_min <= cx_norm <= roi_x_max
+                and roi_y_min <= cy_norm <= roi_y_max
+            ):
+                rejected_reasons["spatial_roi"] += 1
+                continue
         kept.add(oid)
+
+    # IoU-based dedup: drop obj_ids whose mask overlaps a higher-confidence
+    # one (typical SAM3 failure mode: same banner segmented twice).
+    iou_dropped = 0
+    if iou_dedup_threshold > 0.0:
+        kept, iou_dropped = _apply_iou_dedup(
+            candidate_obj_ids=kept,
+            video_segments=video_segments,
+            confidence_by_obj=confidence_by_obj,
+            iou_threshold=iou_dedup_threshold,
+        )
 
     # Drop rejected obj_ids from every frame's mask dict.
     filtered: dict[int, dict[int, np.ndarray]] = {}
@@ -380,10 +509,17 @@ def _apply_detection_filter(
         "filter_min_area_frac": min_area_frac,
         "filter_min_confidence": min_confidence,
         "filter_min_frame_count": min_frame_count,
+        "filter_iou_dedup_threshold": iou_dedup_threshold,
+        "filter_spatial_roi": (
+            f"x[{roi_x_min:.2f}-{roi_x_max:.2f}] y[{roi_y_min:.2f}-{roi_y_max:.2f}]"
+            if apply_spatial else "off"
+        ),
         "filter_rejected_by_area": rejected_reasons["area"],
         "filter_rejected_by_confidence": rejected_reasons["confidence"],
         "filter_rejected_by_persistence": rejected_reasons["persistence"],
-        "filter_rejected_total": sum(rejected_reasons.values()),
+        "filter_rejected_by_spatial_roi": rejected_reasons["spatial_roi"],
+        "filter_rejected_by_iou_dedup": iou_dropped,
+        "filter_rejected_total": sum(rejected_reasons.values()) + iou_dropped,
     }
     return filtered, kept, metrics
 
@@ -461,6 +597,27 @@ def run_pipeline_video(
             if mask is not None and np.any(mask):
                 raw_obj_with_mask.add(int(obj_id))
     metrics["num_detected_objects"] = len(detected_obj_ids)
+
+    # --- SAM3-light extras (only when the segmenter is sam3_light_video) ---
+    light_rerun_indices = getattr(video_segmenter, "rerun_indices", None)
+    if light_rerun_indices is not None:
+        metrics["num_rerun_frames"] = len(light_rerun_indices)
+        metrics["rerun_frame_indices"] = list(light_rerun_indices)
+        metrics["mean_similarity_score"] = round(
+            float(getattr(video_segmenter, "mean_similarity", 1.0)), 4
+        )
+        metrics["similarity_threshold"] = float(
+            getattr(video_segmenter, "similarity_threshold", 0.0)
+        )
+        metrics["motion_threshold_px"] = float(
+            getattr(video_segmenter, "motion_threshold_px", 0.0)
+        )
+        metrics["mean_motion_px"] = round(
+            float(getattr(video_segmenter, "mean_motion_px", 0.0)), 3
+        )
+        metrics["motion_triggered_reruns"] = int(
+            getattr(video_segmenter, "num_motion_triggered_reruns", 0)
+        )
 
     # --- Detection filter (area / confidence / persistence) ---
     # Drops noisy / spurious detections (very common with auto-detection

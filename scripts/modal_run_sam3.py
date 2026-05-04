@@ -77,6 +77,7 @@ def run_on_gpu(
 ) -> dict:
     """Run the SAM3 pipeline on a GPU. Returns metrics + output bytes."""
     import os
+    import subprocess
     import sys
     import tempfile
     import time
@@ -91,9 +92,24 @@ def run_on_gpu(
 
     # --- Write input files to temp dir ---
     tmpdir = tempfile.mkdtemp()
-    video_path = os.path.join(tmpdir, "input.mp4")
-    with open(video_path, "wb") as f:
+    raw_path = os.path.join(tmpdir, "input_raw.mp4")
+    with open(raw_path, "wb") as f:
         f.write(video_bytes)
+
+    # Transcode to a SAM3-safe container: H.264 + yuv420p, no audio.
+    # The container's ffmpeg/OpenCV cannot decode AV1 (no hw accel), and
+    # SAM3 itself expects an H.264 input. This step is idempotent for
+    # already-H.264 inputs and bullet-proofs the rest of the pipeline.
+    video_path = os.path.join(tmpdir, "input.mp4")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", raw_path,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+            video_path,
+        ],
+        check=True,
+    )
     config_dict["input"]["video"] = video_path
 
     if logo_bytes:
@@ -160,8 +176,19 @@ def run_on_gpu(
         "filter_rejected_by_area",
         "filter_rejected_by_confidence",
         "filter_rejected_by_persistence",
+        "filter_iou_dedup_threshold",
+        "filter_spatial_roi",
+        "filter_rejected_by_spatial_roi",
+        "filter_rejected_by_iou_dedup",
         "filter_rejected_total",
         "tracking_enabled",
+        "num_rerun_frames",
+        "rerun_frame_indices",
+        "mean_similarity_score",
+        "similarity_threshold",
+        "motion_threshold_px",
+        "mean_motion_px",
+        "motion_triggered_reruns",
         "num_frames",
         "input_fps",
         "duration_s",
