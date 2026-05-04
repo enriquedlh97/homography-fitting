@@ -18,9 +18,79 @@ Usage
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 
 import modal
+
+# Codecs the ffmpeg in the Modal Debian-slim image can decode reliably.
+# AV1, VP9 and others may lack a working decoder there, so we transcode
+# to H.264 locally before uploading.
+_MODAL_SAFE_VIDEO_CODECS = {"h264", "hevc", "h265", "mpeg4", "mpeg2video"}
+
+
+def _probe_video_codec(video_path: str) -> str:
+    """Return the lowercase codec_name of the first video stream, '' on failure."""
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=nw=1:nk=1",
+                video_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return out.stdout.strip().lower()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def _read_video_bytes_for_modal(video_path: str) -> bytes:
+    """Read video bytes, transcoding to H.264 first if the codec isn't safe.
+
+    The ffmpeg shipped in the Modal image cannot decode AV1 reliably
+    ("Missing Sequence Header"). We probe with ffprobe and, if needed,
+    re-encode locally to H.264 yuv420p before sending bytes to Modal.
+    """
+    codec = _probe_video_codec(video_path)
+    if not codec or codec in _MODAL_SAFE_VIDEO_CODECS:
+        with open(video_path, "rb") as f:
+            return f.read()
+
+    print(
+        f"⚠️  Source codec '{codec}' is not supported by Modal's ffmpeg — "
+        "transcoding to H.264 locally before upload."
+    )
+    fd, tmp = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-an",
+                "-loglevel", "error",
+                tmp,
+            ],
+            check=True,
+        )
+        with open(tmp, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 # ---------------------------------------------------------------------------
 # Parse --gpu before decorators run.
@@ -242,10 +312,10 @@ def main(
         for p in config_dict.get("input", {}).get("prompts", []):
             p["text"] = prompt_text
 
-    # Read input files as bytes.
+    # Read input files as bytes (transcoding to H.264 if Modal's ffmpeg
+    # cannot decode the source codec, e.g. AV1).
     video_path = config_dict["input"]["video"]
-    with open(video_path, "rb") as f:
-        video_bytes = f.read()
+    video_bytes = _read_video_bytes_for_modal(video_path)
     print(f"Video: {video_path} ({len(video_bytes) / 1024:.0f} KB)")
 
     logo_bytes = None
