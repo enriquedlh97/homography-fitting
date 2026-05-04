@@ -1,0 +1,48 @@
+pipeline:
+  mode: video
+  segmenter:
+    type: sam3_light_video
+    similarity_threshold: 0.85
+  fitter:
+    type: pca
+    params:
+      axis: short
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.0
+      lum_strength: 1.0
+      shade_blend: true
+      inpaint_radius: 3
+      mask_dilate_px: 9
+      inpaint_method: median_fill
+      fill_color_ema_alpha: 0.1
+      quad_pad_px: 10
+  camera:
+    focal_length: null
+  detection_filter:
+    min_area_frac: 0.0005
+    min_confidence: 0.5
+    min_frame_count: 5
+    iou_dedup_threshold: 0.5
+  stabilization:
+    enabled: true
+    mode: hybrid
+    static_motion_threshold_px: 0.75
+    hold_corner_rms_px: 1.25
+    mask_iou_gate: 0.55
+    max_hold_frames: 6
+    predicted_mask_weight: 0.65
+    morph_kernel_px: 3
+  tracking:
+    ema_alpha: 0.3
+    fb_threshold: 2.0
+    lk_win_size: 21
+input:
+  video: data/zoom_in_camera_change.mp4
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 1
+    text: logo
+output:
+  dir: experiments/
