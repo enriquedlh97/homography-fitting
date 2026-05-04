@@ -38,3 +38,4 @@ checkpoints/
 /perf/
 
 # uv lock is committed; .python-version is committed for uv auto-install
+.claude/
