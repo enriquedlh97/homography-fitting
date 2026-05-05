@@ -874,3 +874,55 @@ If a meaningful new signal arises (none expected), the loop can re-engage; other
 ---
 
 <!-- Subsequent cycles append below this line. -->
+
+## Final summary — 2026-05-05 10:00 EDT
+
+### TL;DR for the human reviewer (you)
+
+- **GOLD remains the visually best run** across 16 cycles, 14 Modal runs, 1 code change shipped, 4 sub-agent visual comparators. C016's definitive ranking shows 11 of 12 clean-pass runs are PIXEL-EQUIVALENT to GOLD (40/40 each); the one outlier (C012/A1, lum_strength=0.3) scored 39/40 — fractionally worse, not better.
+- **Only ship: per-object asset routing** (`ObjectPrompt.asset` field + 3 video pipeline paths) — commit `47b2665`. Backwards-compat verified (97 tests pass; v68 gold runs unchanged). Unblocks future per-object asset experiments.
+- **Three real bugs found, all deferred for human:**
+  1. *Dynamic-geometry activation gate* (medium fix). `run_pipeline_video_hybrid` never instantiates `GeometryFittingEngine`; `SUPPORTED_GEOMETRY_SURFACE_TYPES` excludes `court_floor` / `banner`. So `pipeline.geometry.enabled: true` is structurally inert in hybrid mode. (See C009/A1 diagnostic for file:line refs.)
+  2. *Eval framework regression-detection bug* (small fix). `src/banner_pipeline/eval/reference.py:detect_regressions` doesn't flag `roi_ssim_vs_reference_mean` cross-region drops. C009/A2's 28% back-banner SSIM drop went unflagged by exit code 3, even though the visible regression was real (sub-agent comparator caught the horizontal banner shift).
+  3. *Static-clicked path bypasses the runtime fitter* (architectural; undocumented). Explains why hull / pca / fronto_parallel are all no-ops on v68-style configs (C008/A1, C010/A2 confirmed).
+- **AI rubric path was unavailable** (no `ANTHROPIC_API_KEY` in env). Anthropic SDK is installed (`uv sync --extra ai` succeeded). Provisioning a key would let `--with-ai-review` run on the gold + candidates.
+- **Recommended next axes** (not exercised in this run):
+  1. Provision API key + run AI rubric on GOLD (~$0.20).
+  2. Fix bug #2 (small).
+  3. Decide on dynamic-geometry path (fix per #1, or retire).
+  4. Test on different clips (`zoom-clip-melbourne.mov`, `tennis-clip.mp4`) — needs new prompt configs first.
+  5. Try `matanyone` occlusion masker (~25-min Modal job; exceeded the 11-min agent harness budget tonight).
+
+### Pixel-equivalent passing candidates (any could replace GOLD with zero visual delta)
+
+| Cycle | Knob change | Experiment dir |
+|---|---|---|
+| C001/A1 | `surface_overrides.court_floor.occlusion_dilate_px: 0` | experiments/2026-05-04_21-55-06_hull_B200/ |
+| C001/A2 | `surface_overrides.court_floor.alpha_feather_px: 10` | experiments/2026-05-04_21-52-36_hull_B200/ |
+| C002/A2 | `surface_overrides.court_floor.clean_underlay_alpha: 0.3` | experiments/2026-05-04_22-11-23_hull_B200/ |
+| C004/A1 | obj_3 isolated `asset: data/logos/redbull_court_patch.png` | experiments/2026-05-04_22-26-31_hull_B200/ |
+| C005/A2 | `compositor.params.mask_dilate_px: 10` | experiments/2026-05-04_22-43-42_hull_B200/ |
+| C006/A2 | `surface_overrides.court_floor.logo_blur_px: 1` | experiments/2026-05-04_22-54-03_hull_B200/ |
+| C008/A1 | `fitter.type: pca` | experiments/2026-05-04_23-17-01_pca_B200/ |
+| C010/A2 | `fitter.type: fronto_parallel` | experiments/2026-05-04_23-49-40_fronto_parallel_B200/ |
+| C013/A1 | combined safe (mask_dilate=10 + logo_blur=1) | experiments/2026-05-05_00-18-07_hull_B200/ |
+| C014/A1 | `compositor.params.shade_blend: true` | experiments/2026-05-05_00-31-46_hull_B200/ |
+
+**Recommendation: do not promote any of them.** None offers visible upside; they're alternative configurations of the same plateau.
+
+### Visible regressions found (all clearly worse than GOLD)
+
+- **C001/A3** `quad_expand_px: 120` — fails `floor_walkover_occlusion_iou` gate (0.44 vs gold's 1.0). exit 2.
+- **C002/A1** asset_patch global — visible patch outlines on back/left banners (sub-agent comparator). exit 3.
+- **C007/A2** `alpha_feather_px: 3` global — soft regression on back delta_E.
+- **C008/A2** `dynamic_full` config — multiple gate fails; ALSO revealed bug #1.
+- **C009/A2** `padding: 0.15` — **back banners horizontally shifted** (sub-agent comparator caught this); framework's regression detection MISSED it (bug #2).
+- **C011/A1** `local_color_match: false` — soft regression on back delta_E.
+- **C012/A1** `lum_strength: 0.3` — fractionally flatter back banner (only one to score 39/40 in the C016 ranking).
+- **C015/A1** `blend_mode: screen` — soft regression on left delta_E.
+
+### Where to look first
+
+The full per-cycle table is in the **DRAFT FINDINGS** section above (search for `DRAFT FINDINGS`). Each cycle has its agent's verbatim report in a fenced code block. Visual artifacts live under each `experiments/<run>/eval/` directory: `back_banners/`, `left_logo/`, `floor_logo/`, `walkover/`, `full/`, plus a top-level `report.md` and `quality_metrics.json`. The most informative single artifact for each run is `eval/walkover/consecutive_frames.png` — 16 consecutive frames showing the player walking on the floor logo.
+
+Loop ends here. No more agents will be dispatched.
