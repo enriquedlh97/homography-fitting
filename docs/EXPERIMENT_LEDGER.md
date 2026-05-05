@@ -770,6 +770,71 @@ Manager hypothesis: `compositor.params.blend_mode: led → screen` (currently `l
 
 Status: dispatched in background.
 
+### C015 results — 2026-05-05 01:00 EDT
+
+```
+=== CYCLE C015 SLOT A1 REPORT ===
+Hypothesis: blend_mode led -> screen in compositor.params
+Run dir: experiments/2026-05-05_00-46-05_hull_B200
+Exit code: 0
+Pass: all P
+Regression vs gold: yes (left_roi_delta_E_lab)
+back_roi_ssim_vs_reference_mean: 0.9857 (slight drop)
+left_roi_ssim_vs_reference_mean: 0.9798
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: +0.06% flat
+Cost: Modal-B200 ~11min
+Recommendation: dead end — `screen` blend_mode shifts left logo color without compensating gain.
+```
+Manager note: soft regression. Same plateau pattern. Knobs exhausted.
+
+### Knob axes covered (final tally as of 2026-05-05 01:00 EDT)
+
+15 cycles, 13 Modal runs, 1 code change, 3 visual comparators. All reasonable safe knob perturbations of the v68 base config tested. Specifically:
+
+| Knob | Value(s) tried | Outcome |
+|---|---|---|
+| occlusion_dilate_px (court_floor) | 2→0 | clean pass, no movement |
+| alpha_feather_px (court_floor) | 25→10 | clean pass, no movement |
+| quad_expand_px (court_floor) | 80→120 | regression (occlusion_iou fails gate) |
+| floor logo asset (global) | white→court_patch | regression (back/left visibly broken) |
+| floor logo asset (per-object via new code) | white→court_patch | clean pass, no movement |
+| clean_underlay_alpha (court_floor) | 0.0→0.3 | clean pass, no movement |
+| mask_dilate_px (global) | 20→10 | clean pass, no movement |
+| logo_blur_px (court_floor, new field) | absent→1 | clean pass, no movement |
+| alpha_feather_px (global) | 1→3 | soft regression (back delta_E) |
+| fitter.type | hull→pca, hull→fronto_parallel | both no-ops (fitter inert under static-clicked path) |
+| dynamic geometry | enable | broken: hybrid never builds GeometryFittingEngine |
+| padding (global) | 0.1→0.15 | **VISIBLE REGRESSION** (back banner shifted) — framework didn't flag |
+| local_color_match | true→false | soft regression (back delta_E) |
+| lum_strength | 0.0→0.3 | clean pass, slight left_ssim hint, no real movement |
+| combined: mask_dilate=10 + logo_blur=1 | both | clean pass, additive composition |
+| shade_blend | false→true | clean pass, no movement |
+| blend_mode | led→screen | soft regression (left delta_E) |
+
+---
+
+## C016 — 2026-05-05 01:01 EDT — final consolidating visual ranking
+Manager hypothesis: dispatch a vision-capable sub-agent to produce a definitive ranked list across ALL clean-pass runs (the runs with `Pass: all P AND any_regression: false` in the table above), so the human's deadline review has a single sorted candidate list. Read 2 PNGs per run (back_banners + walkover) for compactness. Score 4-dim rubric, total /8 per run.
+
+- **A1 — definitive comparator** across these runs (the no-regression clean-pass set):
+  - GOLD = experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/
+  - C001/A1 occ_dilate=0 = experiments/2026-05-04_21-55-06_hull_B200/
+  - C001/A2 alpha_feather=10 = experiments/2026-05-04_21-52-36_hull_B200/
+  - C002/A2 clean_underlay=0.3 = experiments/2026-05-04_22-11-23_hull_B200/
+  - C004/A1 isolated patch = experiments/2026-05-04_22-26-31_hull_B200/
+  - C005/A2 mask_dilate=10 = experiments/2026-05-04_22-43-42_hull_B200/
+  - C006/A2 logo_blur=1 = experiments/2026-05-04_22-54-03_hull_B200/
+  - C008/A1 fitter=pca = experiments/2026-05-04_23-17-01_pca_B200/
+  - C010/A2 fitter=fronto_parallel = experiments/2026-05-04_23-49-40_fronto_parallel_B200/
+  - C012/A1 lum_strength=0.3 = experiments/2026-05-05_00-09-02_hull_B200/
+  - C013/A1 combined safe = experiments/2026-05-05_00-18-07_hull_B200/
+  - C014/A1 shade_blend=true = experiments/2026-05-05_00-31-46_hull_B200/
+
+  12 runs × 2 PNGs = 24 reads. Sequential.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
