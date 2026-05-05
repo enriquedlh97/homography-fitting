@@ -1292,6 +1292,20 @@ Run dirs: A1 `2026-05-05_15-45-51`, A2 `15-45-15`, A3 `15-44-43`, A4 `15-45-08`,
 
 With the existing line-based estimator, no setting of `tolerance_px`, `vp_smoothing_alpha`, `ramp_min_frames`, `ramp_motion_px_per_frame`, or `court_quad` calibration produces a Pareto improvement over the always-locked baseline (= v68 gold). The hybrid_lock infrastructure (HybridLockState, gate decision, ramp state machine) is sound and well-instrumented — it just lacks an upstream estimator reliable enough to gate on. **GOLD remains v68 manually-clicked static-homography.**
 
+### Estimator-noise direct measurement (2026-05-05 15:55 EDT)
+
+Local-side reproduction via `scripts/dump_estimator_displacement.py` running `CourtGeometryEstimator` over all 767 frames of the Melbourne walkover clip and computing per-frame max-corner displacement between v68 placement_quad seed and projected court_quad through that frame's H:
+
+```
+max_disp_px: mean=23.77  median=23.12  p5=8.85  p25=16.68  p75=30.99  p95=39.96  max=58.41
+  frames with max_disp >  4 px: 759/767 (99%)
+  frames with max_disp >  8 px: 739/767 (96%)
+  frames with max_disp > 15 px: 619/767 (81%)
+  frames with max_disp > 30 px: 213/767 (28%)
+```
+
+The displacement distribution is very wide: even the *best 5%* of frames show ≥9 px error — already larger than line-thickness (~3-5 px), so a tight gate has no quiet floor to ride on. Median is 23 px, far above any meaningful tolerance for floor-logo placement. p95 ≈ 40 px, max ≈ 58 px. **The line-based estimator is intrinsically too noisy to power a hybrid-with-tolerance gate, regardless of court_rect/court_quad calibration or downstream smoothing.** Same conclusion as the gate-counter table, now from direct measurement.
+
 
 
 
