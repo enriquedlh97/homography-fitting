@@ -1167,3 +1167,79 @@ Floor failures: `floor_roi_jitter_ratio`, `floor_walkover_occlusion_iou`.
 ---
 
 <!-- Subsequent Phase 2 cycles append below this line. -->
+
+## P2-C006 — court_quad calibration + tolerance sweep (in flight, dispatched 2026-05-05 ~14:48 EDT)
+
+**Hypothesis:** P2-C005 showed tol=99999 (sanity) gold-equivalent but tol≤12 regressed floor by ~7/12 visual rubric points. Root cause from rubric report: estimator's per-frame line-based homography projected through the original `court_rect=[0.421, 1.002, 0.559, 1.015]` produces image-space corners that round-trip ~25px off the v68 clicked `placement_quad`. So even at frame 0, the gate sees a 25px displacement and either ramps or estimates → regression.
+
+**Fix:** added `_project_court_plane_quad` and a `court_quad` field to `court_plane_placement`. Calibration script (`scripts/calibrate_court_rect.py`) projects the v68 placement_quad through frame-0 H_inv to get the 4 court-plane points that round-trip back to the v68 clicks within 0.1px. Encoded as:
+
+```
+court_quad:
+- [0.3790, 0.9977]
+- [0.5924, 1.0068]
+- [0.5920, 1.0202]
+- [0.3788, 1.0110]
+```
+
+(Note this is a trapezoid in court space — image foreshortening means the v68 image-rectangle isn't axis-aligned in court coordinates. The rect-bbox approximation lost 25px; the quad preserves it exactly.)
+
+**Variants (all on H200, parallel, dispatched from main thread):**
+
+| Slot | tolerance_px | Hypothesis |
+|------|--------------|------------|
+| A1 | 4.0 | Tight gate. Should stay locked when estimator agrees with seed within line-thickness noise. Most ambitious. |
+| A2 | 8.0 | Moderate gate. Allows some camera-motion deviation before ramping. |
+| A3 | 15.0 | Loose gate. Ramps when estimator strongly disagrees with seed. |
+| A4 | 30.0 | Very loose; mostly locked, only ramps on big jumps. |
+| A5 | 99999.0 | Always-locked sanity (control). Should equal P2-C005/A1 (gold-equivalent). |
+
+**Pre-dispatch sanity:** running the calibrated court_quad through warmup-8 frame-0 H produces image corners within 0.1px of v68's clicked placement_quad. Means the gate's frame-0 displacement should be sub-pixel — confirming the seed-vs-projected mismatch from P2-C005 is fixed.
+
+### P2-C006 results — 2026-05-05 15:09 EDT
+
+| Slot | tol_px | back | left | floor | full | any_reg | floor SSIM vs gold | walkover_logo% | walkover_iou |
+|------|--------|------|------|-------|------|---------|-------------------|----------------|--------------|
+| A1   | 4      | P    | P    | **F**  | P    | yes     | 0.208             | 18.1%          | 0.154        |
+| A2   | 8      | P    | P    | **F**  | P    | yes     | 0.254             | 16.7%          | 0.162        |
+| A3   | 15     | P    | P    | **F**  | P    | yes     | 0.437             | 16.0%          | 0.274        |
+| A4   | 30     | P    | P    | **F**  | P    | yes     | 0.853             | 17.0%          | 0.646        |
+| A5   | 99999  | P    | P    | P     | P    | **no**  | 0.9996            | 17.8%          | 0.985        |
+
+Run dirs: A1 `2026-05-05_15-01-47_hull_H200`, A2 `2026-05-05_15-02-51_hull_H200`, A3 `2026-05-05_15-03-47_hull_H200`, A4 `2026-05-05_15-04-12_hull_H200`, A5 `2026-05-05_15-01-53_hull_H200`.
+
+**Diagnostic interpretation:**
+
+- A1–A4 still regress floor monotonically. Floor SSIM grows from 0.21 (tol=4) → 0.85 (tol=30), suggesting the estimator's per-frame H is **frame-to-frame noisy** — not just frame-0 misaligned. Even with the calibrated court_quad whose frame-0 round-trip is sub-pixel, the *per-frame* projected corners deviate from seed enough to fire the ramp gate on a substantial fraction of frames.
+- A5 (sanity) confirms hybrid_lock infrastructure is sound: with always-locked behavior, output ≈ v68 gold (floor SSIM 0.9996, no regression).
+- `hybrid_lock_locked_frames` / `ramp_frames` / `estimate_frames` STILL None across all 5 runs — same as P2-C005. The hybrid_lock code is firing (we see the regression pattern across tolerances), but the metric-write path doesn't surface the counters in `quality_metrics.json`. This is a wiring gap in `pipeline.py` to investigate, not a code-not-deployed issue (the gate itself is clearly active).
+- **Court_quad calibration alone is NOT enough.** Foreshortening misalignment was indeed real (25px → 0.1px round-trip improvement), but the dominant failure mode is *per-frame estimator noise*, not frame-0 seed offset. Two structural issues at play; we fixed one.
+
+**Best candidate so far (unchanged from P2-C005):** A5 (tol=99999, sanity-locked) = gold-equivalent. Real tolerances still regress floor.
+
+**Path forward:**
+
+- Per-frame estimator noise is the dominant problem. Two options to mitigate without a learned-keypoint port:
+  1. Smooth the estimate more aggressively (raise alpha, use median-of-N filter on H), then re-test tolerances.
+  2. Slow-ramp (`ramp_min_frames=20`, `ramp_motion_px_per_frame=0.5`) so noisy estimates don't dominate output even when gate fires.
+- Alternatively: confirm the moving-camera sub-segment of the clip is where hybrid_lock could shine — Melbourne walkover may be too camera-static for the always-locked baseline to be beatable.
+
+## P2-C007 — smoothed-H estimator + slow-ramp combos (dispatched 2026-05-05 ~15:11 EDT)
+
+**Hypothesis:** P2-C006 isolated frame-to-frame estimator noise as the dominant failure. Two knobs to attack it without a learned-keypoint port:
+- `pipeline.geometry.vp_smoothing_alpha` (default 0.7) — EMA weight on new H estimate. Lower = heavier smoothing across frames.
+- `hybrid_lock.ramp_min_frames` and `ramp_motion_px_per_frame` — slow-ramping mitigates the impact of any single noisy estimate.
+
+If smoothing the estimator brings the per-frame projected_corners closer to a stable trajectory, we can use lower tolerances usefully. If slow-ramp masks remaining noise, we can use moderate tolerances safely.
+
+**Variants (all on H200, parallel, main-thread dispatch):**
+
+| Slot | vp_alpha | tol_px | ramp_min | ramp_motion | Hypothesis |
+|------|----------|--------|----------|-------------|------------|
+| A1   | 0.2      | 8      | 3        | 2.0         | Heavy smoothing alone (tight gate) |
+| A2   | 0.2      | 30     | 20       | 0.5         | Heavy smoothing + slow ramp |
+| A3   | 0.4      | 30     | 20       | 0.5         | Moderate smoothing + slow ramp |
+| A4   | 0.7      | 30     | 30       | 0.3         | Default smoothing, very slow ramp only |
+| A5   | 0.7      | 99999  | 3        | 2.0         | Sanity (control = always-locked) |
+
+
