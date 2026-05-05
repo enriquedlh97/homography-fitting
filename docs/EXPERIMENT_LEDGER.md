@@ -421,6 +421,52 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C008 results — 2026-05-04 23:31 EDT
+
+```
+=== CYCLE C008 SLOT A1 REPORT ===
+Hypothesis: fitter.type hull -> pca
+Run dir: experiments/2026-05-04_23-17-01_pca_B200/
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+back_roi_ssim_vs_reference_mean: 0.9983
+left_roi_ssim_vs_reference_mean: 0.9977
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1788, delta=+0.06%
+floor_walkover_occlusion_iou: 0.9823
+Cost: Modal-B200 ~5.5min
+Recommendation: low-risk variant; visually near-identical to hull baseline.
+=== END REPORT ===
+```
+Manager note: clean pass, no movement. Different fitter algorithms produce indistinguishable output for this clip+placement.
+
+```
+=== CYCLE C008 SLOT A2 REPORT ===
+Hypothesis: dynamic court geometry via existing v68 dynamic config
+Run dir: experiments/2026-05-04_23-17-23_hull_B200/
+Exit code: 2
+Pass: back=P left=F floor=F full=F
+Regression vs gold: yes
+geometric_source: static_fallback (geometry_runtime_enabled=false; geometry_active_objects=[])
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1404, delta=-21.4%
+left_roi_ssim_vs_reference_mean: 0.378 / floor_roi_ssim_vs_reference_mean: 0.2223
+Failed metrics: left_roi_jitter_ratio, left_roi_temporal_ssim_mean, floor_roi_jitter_ratio, floor_roi_temporal_ssim_mean, floor_walkover_occlusion_iou, full_roi_jitter_ratio
+Cost: Modal-B200 ~5.7min
+Recommendation: dead end. Config-as-written did NOT activate dynamic geometry. Output is degraded for unrelated reasons.
+```
+Manager note: KEY DISCOVERY — the repo's "dynamic" config has a latent activation bug. `geometry.enabled: true` doesn't reach runtime. Heavy regression (visible_pct -21.4%, SSIMs 0.22-0.38) is from some OTHER mismatch in the dynamic config, not from dynamic geometry per se. Worth investigating in C009.
+
+---
+
+## C009 — 2026-05-04 23:31 EDT — diagnostics + continued breadth
+Manager hypotheses:
+
+- **A1 — code-reading agent: investigate the dynamic-geometry activation gate**. Read-only task. Find why `pipeline.geometry.enabled: true` in the dynamic_full yaml fails to propagate to runtime (geometry_runtime_enabled=false, geometry_active_objects=[]). Trace from `_geometry_enabled` in pipeline.py through `CourtGeometryEstimator` initialization in court_geometry.py. Report the gate that's blocking activation. Don't fix yet — just diagnose so the manager knows whether it's a one-line fix or deeper.
+- **A2 — `compositor.params.padding` 0.1 → 0.15** (config-only Modal run). Untouched knob; tests inpaint padding. Single-line change. Should be safe.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
