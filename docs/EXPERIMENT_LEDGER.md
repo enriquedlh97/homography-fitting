@@ -1079,4 +1079,20 @@ If outputs still don't appear after ~30 min, escalate: jobs may have failed on t
 
 ---
 
+### P2-C003 declared LOST — 2026-05-05 13:56 EDT
+
+`uv run modal app list` shows all 7 apps (created 13:26 EDT) in state=stopped, 0 tasks. `modal app logs ap-9ZEOdRdoZyz5QDZiL0JpfQ` shows the pipeline WAS actively running (loaded MaskRCNN + MatAnyone2 weights, "[MatAnyone2] Loaded on cuda, streaming through frames…"). It was killed mid-execution when the local agent's `Bash` call hit the 10-min cap and the `modal run` synchronous client died — Modal cancelled the platform-side execution.
+
+**Root cause:** `scripts/modal_run.py` uses `run_on_gpu.remote(...)` (synchronous), and Bash tool caps single calls at 10 min. Without the poll pattern, agents can't keep the modal client alive long enough.
+
+**Recovery:** redispatch the same 7 tolerance variants as P2-C004 with the poll pattern (memory: feedback_modal_poll_pattern.md). Agent uses `Bash(run_in_background=true)` to launch modal as a detached process, then loops short polling Bash calls — keeping the modal client alive across the agent's lifespan (which is unbounded; only individual Bash calls are capped).
+
+---
+
+## P2-C004 — 2026-05-05 13:57 EDT — redispatch P2-C003 sweep with POLL PATTERN
+
+Same 7 variants (sanity, tol=2/4/6/10/15, plus tol=6+ramp_motion=4). H200. POLL PATTERN: `Bash(run_in_background=True)` + grep loop. Agents stay alive 20+ min.
+
+Status: dispatching in background now.
+
 <!-- Subsequent Phase 2 cycles append below this line. -->
