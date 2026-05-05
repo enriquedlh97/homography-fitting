@@ -1,0 +1,3 @@
+# full
+
+At full-court resolution the original and composite frames are visually indistinguishable across the five sampled frames in crops_strip. Court geometry, color, lighting and overall scene composition match the original perfectly. The Kia → Red Bull, YoPRO → Red Bull and MELBOURNE → Red Bull substitutions are not detectable as defects at this zoom level — a casual broadcast viewer scrubbing the timeline would not flag the inserts. The artifacts that surface in the per-region cropped strips (floor logo halo, mild left-banner edge reflex) are below visibility threshold here. Frame-to-frame stability looks good and there is no full-court jitter or geometry pop.
