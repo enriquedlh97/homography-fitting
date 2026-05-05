@@ -1556,6 +1556,18 @@ Reference images cached at `/Users/enriquediazdeleonhicks/.claude/image-cache/60
 
 **Plan:** dispatch axes 1, 2, 3 as parallel code-fork agents (each in its own worktree). Axis 4 is a quick prerequisite to ensure agents on 1/2/3 score artifacts honestly. All agents return their `Lessons learned` blocks per the updated AGENT_BRIEFING.md.
 
+## Phase 3 kickoff — 2026-05-05 18:12 EDT (deadline extended to 2026-05-06 08:00 EDT)
+
+User extended deadline to give Phase 3 a full overnight run. ~14 hours wall clock. Manager dispatches the four axes in parallel:
+
+- **P3-A1: BallTrackerNet port** — code-fork sub-agent in `worktree`. Port the learned 14-keypoint detector + RANSAC homography fit from sibling `tennis-virtual-ads`. Add as a new `geometry.court_backend: ball_tracker_net_v1` option alongside `classical_lines_v1`. Multi-hour task; if model weights aren't accessible the agent should at least scaffold the integration and document what's needed.
+- **P3-A2: Motion-aware adaptive alpha** — code-fork sub-agent in `worktree`. Modify `CourtGeometryEstimator` in `src/banner_pipeline/court_geometry.py` to vary `vp_smoothing_alpha` per frame based on frame-to-frame H delta magnitude. High alpha (smooth) when delta is small; low alpha (responsive) when delta exceeds a threshold. Then run the standard 5-variant tolerance/threshold sweep.
+- **P3-A3: Rubric calibration** — code-fork sub-agent in `worktree`. Edit `src/banner_pipeline/eval/rubric.py` and `src/banner_pipeline/eval/ai_review.py` to add explicit dimensions for "halo presence" (floor logo glow/halo) and "letter-edge reflex" (banner letter edge artifacts). Update the rubric prompt in `MANIFEST.md` so future visual reviews score these dimensions explicitly. No Modal cycle needed; just code change + a smoke test on an existing run.
+- **P3-A4: Compositor halo fix** — five parallel per-cycle workers (config-only, no worktree). Sweep `compositor.surface_overrides.court_floor` parameters to reduce the bright halo around the floor logo: `alpha_feather_px` (currently 25, way above default 1), `mask_dilate_px`, and `quad_expand_px`. Also sweep banner-region params for the left-logo reflex/smearing.
+
+Manager dispatches all in parallel and harvests as reports come in.
+
+
 
 
 
