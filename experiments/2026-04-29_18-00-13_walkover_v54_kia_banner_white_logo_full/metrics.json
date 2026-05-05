@@ -1,0 +1,97 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA H200",
+  "gpu_memory_gb": 139.8,
+  "mode": "video",
+  "num_prompts": 3,
+  "num_prompt_points": 43,
+  "num_frames": 767,
+  "input_fps": 59.23857868020305,
+  "duration_s": 12.95,
+  "frame_width": 1912,
+  "frame_height": 1074,
+  "video_path": "/tmp/tmp3uzwkj44/input.mp4",
+  "fitter_type": "hull",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "object_frame_coverage": {
+    "1": {
+      "frames_with_masks": 767,
+      "coverage_ratio": 1.0
+    },
+    "2": {
+      "frames_with_masks": 767,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_with_masks": 767,
+      "coverage_ratio": 1.0
+    }
+  },
+  "object_valid_frame_coverage": {
+    "1": {
+      "frames_valid": 400,
+      "coverage_ratio": 0.5215
+    },
+    "2": {
+      "frames_valid": 114,
+      "coverage_ratio": 0.1486
+    },
+    "3": {
+      "frames_valid": 200,
+      "coverage_ratio": 0.2608
+    }
+  },
+  "object_rejection_counts": {
+    "1": 367,
+    "2": 653,
+    "3": 567
+  },
+  "object_rejection_reasons": {
+    "1": {
+      "quad_edge_too_short": 367,
+      "quad_aspect_ratio_too_high": 367,
+      "quad_area_too_small": 1,
+      "quad_mask_iou_low": 1,
+      "mask_coverage_low": 1
+    },
+    "2": {
+      "quad_edge_too_short": 653,
+      "quad_aspect_ratio_too_high": 653,
+      "mask_coverage_low": 32,
+      "quad_area_too_small": 24,
+      "quad_mask_iou_low": 24
+    },
+    "3": {
+      "quad_edge_too_short": 567,
+      "quad_aspect_ratio_too_high": 567
+    }
+  },
+  "geometry_config_enabled": false,
+  "geometry_runtime_enabled": false,
+  "geometry_active_objects": [],
+  "stabilization_config_enabled": false,
+  "stabilization_runtime_enabled": false,
+  "segment_total_s": 76.182219567,
+  "fit_mean_ms": 32.86,
+  "fit_std_ms": 2.82,
+  "composite_mean_ms": 5.17,
+  "composite_std_ms": 4.05,
+  "write_video_s": 5.8962,
+  "total_s": 110.2256,
+  "run_total_s": 121.78269153900001,
+  "output_fps": 6.96,
+  "frames_with_masks": 767,
+  "frames_with_valid_objects": 570,
+  "frames_with_quads": 570,
+  "frames_composited": 570,
+  "object_masks_total": 2301,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 766,
+  "max_consecutive_mask_gap": 0,
+  "git_branch": "feat/quality-fixes",
+  "git_commit_sha": "97a5d8596b5053a08bcc715d8ba95eb7fb0dac0c",
+  "requested_config_path": "/Users/enriquediazdeleonhicks/repositories/capstone-data-candidates/homography-fitting/configs/experiments/eval_walkover_v54_kia_banner_prompt_collect.yaml",
+  "frozen_config_path": "/Users/enriquediazdeleonhicks/repositories/capstone-data-candidates/homography-fitting/experiments/2026-04-29_18-00-13_walkover_v54_kia_banner_white_logo_full/config.yaml",
+  "frozen_config_sha256": "bbb97b1ac93b75333e7896a6e84744934688958f2defa8c20a5bb5f39881753f"
+}

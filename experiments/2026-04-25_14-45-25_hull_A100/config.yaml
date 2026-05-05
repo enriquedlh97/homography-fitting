@@ -1,0 +1,72 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.1
+      lum_strength: 0.0
+      shade_blend: false
+      inpaint_method: median_fill
+      mask_dilate_px: 20
+      alpha_feather_px: 1
+      quad_pad_px: 20
+      local_color_match: true
+      blend_mode: led
+    surface_overrides:
+      court_floor:
+        padding: 0.0
+        inpaint_method: ns
+        inpaint_radius: 3
+        mask_dilate_px: 8
+        inpaint_feather_px: 15
+        local_color_match: false
+        shade_blend: true
+        alpha_scale: 0.75
+        lum_strength: 0.0
+        alpha_feather_px: 3
+  occlusion_masker:
+    type: person
+    confidence_threshold: 0.5
+  tracking:
+    corner_source: bbox
+  camera:
+    focal_length: null
+input:
+  video: data/melbourne-walking-over-logo.mov
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 1
+    surface_type: court_floor
+    points:
+    - - 700
+      - 795
+    - - 900
+      - 795
+    - - 1050
+      - 795
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 550
+    - 788
+    - 1199
+    - 802
+    placement_quad:
+    - - 650
+      - 770
+    - - 1100
+      - 770
+    - - 1120
+      - 820
+    - - 630
+      - 820
+output:
+  dir: experiments/

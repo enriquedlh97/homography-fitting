@@ -1,0 +1,184 @@
+pipeline:
+  mode: video
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.1
+      lum_strength: 0.0
+      shade_blend: false
+      inpaint_method: median_fill
+      mask_dilate_px: 20
+      alpha_feather_px: 1
+      quad_pad_px: 20
+      local_color_match: true
+      blend_mode: led
+    surface_overrides: {}
+  tracking:
+    corner_source: bbox
+  camera:
+    focal_length: null
+input:
+  video: experiments/2026-04-29_17-28-53_walkover_v54_court_floor_only_clean_prompt_base/outputs/composited.mp4
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 1
+    points:
+    - - 658
+      - 71
+    - - 657
+      - 88
+    - - 657
+      - 111
+    - - 676
+      - 111
+    - - 695
+      - 114
+    - - 753
+      - 115
+    - - 790
+      - 112
+    - - 821
+      - 113
+    - - 824
+      - 90
+    - - 824
+      - 74
+    - - 799
+      - 73
+    - - 775
+      - 74
+    - - 751
+      - 74
+    - - 735
+      - 72
+    - - 696
+      - 71
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 650
+    - 64
+    - 832
+    - 122
+  - obj_id: 2
+    points:
+    - - 863
+      - 112
+    - - 863
+      - 94
+    - - 862
+      - 73
+    - - 895
+      - 72
+    - - 928
+      - 73
+    - - 968
+      - 71
+    - - 999
+      - 70
+    - - 1029
+      - 72
+    - - 1030
+      - 90
+    - - 1029
+      - 108
+    - - 1010
+      - 112
+    - - 978
+      - 115
+    - - 951
+      - 113
+    - - 916
+      - 112
+    - - 889
+      - 113
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 854
+    - 63
+    - 1038
+    - 123
+  - obj_id: 3
+    points:
+    - - 1070
+      - 71
+    - - 1070
+      - 93
+    - - 1071
+      - 115
+    - - 1105
+      - 112
+    - - 1137
+      - 111
+    - - 1172
+      - 111
+    - - 1219
+      - 112
+    - - 1239
+      - 113
+    - - 1237
+      - 85
+    - - 1237
+      - 69
+    - - 1207
+      - 69
+    - - 1170
+      - 72
+    - - 1124
+      - 71
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 1062
+    - 61
+    - 1247
+    - 123
+output:
+  dir: experiments/
