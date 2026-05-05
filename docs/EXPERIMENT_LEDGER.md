@@ -713,6 +713,38 @@ Manager hypothesis: combine two independent knobs that pass clean alone (mask_di
 
 Status: dispatched in background.
 
+### C013 results — 2026-05-05 00:20 EDT
+
+```
+=== CYCLE C013 SLOT A1 REPORT ===
+Hypothesis: combined mask_dilate_px=10 + logo_blur_px=1
+Run dir: experiments/2026-05-05_00-18-07_hull_B200
+Exit code: 0
+Pass: all P
+Regression vs gold: no
+back_roi_ssim_vs_reference_mean: 0.9982
+left_roi_ssim_vs_reference_mean: 0.9977
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: +0.06% flat
+floor_walkover_occlusion_iou: 0.9823
+Cost: Modal-B200 ~5.7min
+Recommendation: CANDIDATE — clean compose; no interaction effects.
+```
+Manager note: knobs compose additively (no interaction). Same saturation. No-change clean pass.
+
+### Saturation has held 6+ consecutive cycles — throttling cadence
+
+Switching to long cadence (delay=2400, 40 min) for remaining cycles. Continuing to gather data points but at lower frequency until deadline.
+
+---
+
+## C014 — 2026-05-05 00:20 EDT — shade_blend toggle
+Manager hypothesis: `compositor.params.shade_blend: false → true` (currently false). Untouched. Single Modal run.
+
+- **A1 — `shade_blend: true`** in compositor.params. New config `eval_walkover_c014_a1_shade_blend_true.yaml`.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
