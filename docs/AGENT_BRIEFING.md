@@ -47,11 +47,19 @@ Walkover window: <start:end> (gold is 685:723)
 Cost: Modal-<GPU> ~<min>min, no AI review
 
 Recommendation for next cycle: <continue same direction with tighter step / pivot to <axis> / dead end>
+
+Lessons learned (carry-forward for sibling/future agents — non-obvious findings only, NOT a recap of metrics):
+  - <one-line: what was surprising / counter-intuitive / a gotcha you'd warn the next agent about>
+  - <one-line: what worked that wasn't in the briefing>
+  - <one-line: what didn't work that looked like it should have>
 === END REPORT ===
 ```
 
+The `Lessons learned` block is critical for **parallel agents**. The manager passes the most relevant prior lessons-learned blocks as additional context to subsequent workers (especially sibling agents working in parallel worktrees on the same axis). Keep each line concrete and actionable: "estimator's H is biased not jittery → calibrate court_quad against median H, not frame 0" beats "estimator was noisy".
+
 ## Hard rules
 
+- **Code-fork cycles use a worktree.** When the manager authorizes a code change axis (e.g., porting a new estimator, adding adaptive smoothing), the worker is dispatched with `isolation: "worktree"` so its source edits stay isolated from other parallel agents. Multiple code-fork agents can run simultaneously without stepping on each other. The worker's commits land on a worktree branch; the manager merges or cherry-picks the winning branch back to `feat/quality-fixes-next` after harvest. Config-only cycles do NOT need worktrees.
 - **Never modify code** unless the manager explicitly authorizes a code change for this cycle. Config-only changes by default.
 - **Never modify** `configs/eval/reference.yaml` — only the manager promotes a new gold.
 - **Never call the Anthropic SDK** for visual review. The visual rubric is scored by sub-agents reading PNGs via the Read tool — that's it. The eval framework auto-emits `eval/ai_review/MANIFEST.md` on every run; the manager dispatches a sub-agent against it as a separate task when a rubric score is wanted.
@@ -97,3 +105,22 @@ The manager does NOT dispatch a rubric review for every Modal cycle. Costs (sub-
 - **Always:** at the end of an axis (e.g., after several cycles converge), to score the best-performing run.
 - **Sometimes:** when a run produces a surprising metric movement (numerical signal that the change actually did something) — the rubric lets us judge whether the movement is improvement or regression.
 - **Never:** when a run fails a gate. The numerical signal is enough; visual review on a failed run is wasted overhead.
+
+---
+
+## Parallelism (manager guidance)
+
+The user pays for parallel Modal capacity (10 H200 slots) and parallel agent dispatch. Use it.
+
+**Per-cycle workers (parallel slots):** when an axis has independent variants (different tolerances, different alphas, different ramp params), fan out 5–8 in parallel as separate sub-agent cycles. Each worker writes its own config, dispatches its own Modal job, evals, commits. They share the same source tree (config-only changes don't conflict).
+
+**Code-fork agents (parallel worktrees):** when two axes both require source edits (e.g., axis A is "port BallTrackerNet" and axis B is "add motion-aware adaptive alpha"), dispatch each as a separate sub-agent with `isolation: "worktree"`. Each agent gets its own copy of the repo on its own branch. They cannot conflict on source files. The manager merges/cherry-picks winning branches back later. **Do not run code-fork axes against the same source tree without worktrees** — concurrent edits will collide.
+
+**Cross-agent knowledge sharing:** the `Lessons learned` block in each cycle report carries forward. The manager extracts non-obvious findings from completed sibling-agent reports and appends them to the next worker's brief. Pattern: "Sibling agent on axis X found <lesson>. Apply if relevant."
+
+**When to wait, when to fan out:**
+- Sequential dependency (cycle B's hypothesis depends on cycle A's outcome): wait, then dispatch B with A's findings.
+- Independent variants of the same hypothesis: fan out 5–8 in parallel, harvest all, then plan next axis.
+- Independent axes (e.g., logo-quality fix vs estimator port): fan out as parallel code-fork agents in worktrees, no harvest dependency.
+
+**Visual rubric reviews are short-lived sub-agents.** Always dispatch them as sub-agents (per cadence rules above), never run rubric scoring from the manager thread. They're cheap and parallel — fan out one rubric agent per qualifying run.

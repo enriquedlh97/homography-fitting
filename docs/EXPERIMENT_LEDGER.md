@@ -1518,5 +1518,44 @@ Run dirs: A1 `2026-05-05_17-38-01`, A2 `17-38-25`, A3 `17-38-05`, A4 `17-37-50`,
 
 **Visual comparison recommended:** scrub the floor logo on both runs side-by-side, especially the late frames (~723-767 where user noticed subtle motion) — does P2-C012/A2 visibly track motion better than P2-C010/A2 there?
 
+### P2-C012/A2 sub-agent visual rubric — 2026-05-05 17:48 EDT
+
+19/19 PNGs read; CHECKLIST verified.
+
+| Region | min_score |
+|--------|-----------|
+| back   | 5 |
+| left   | 5 |
+| floor  | 5 |
+| full   | 5 |
+| walkover | 4 (`player_contact_shadow=4`, system limitation, not gate-related) |
+
+Sub-agent verdict (paraphrased): visually indistinguishable from P2-C010/A2 (gate-dormant) at broadcast resolution. The 16 ramping frames produced no visible wobble. **Ship the gate-active variant** — strict superset of dormant at zero visible cost; gate is dormant on this clip but ready to engage on motion clips.
+
+### User visual review of both candidates — 2026-05-05 17:50 EDT
+
+User scrubbed both output videos and reports: **no visible difference between the two**. Both show the same vertical drift in the late frames (camera motion at second 12→13) — the gate is *not catching* the motion in either variant. Margin between top of banner and the line-marking grows visibly from start to end of that segment in both.
+
+**Diagnosis:** the line-based estimator's vertical sensitivity is the bottleneck. Subtle vertical camera tilt produces estimator-vs-seed displacements below the gate threshold (even at vp=0.5/tol=30) because the line detector smooths vertical line offsets via line-family fitting. **No tuning of the existing estimator can fix this.** A structurally different estimator is required.
+
+### Red Bull logo quality observations — 2026-05-05 17:50 EDT (new axis for Phase 3)
+
+User flagged compositor quality artifacts in the production output that the Phase 2 visual rubric scored as 5/5 (rubric calibration miss):
+
+- **Floor logo:** bright halo / glow around the logo that doesn't match the matte court paint.
+- **Left logo:** rings around the bulls visible "paint drift" + "reflex" (not a mirror reflection — something subtler) at top and bottom edges of letters.
+
+Reference images cached at `/Users/enriquediazdeleonhicks/.claude/image-cache/60e5738e-c309-4180-9b3d-36fa587fd46b/{5,6}.png`.
+
+**Phase 3 axes (parallel, code-fork via worktrees):**
+
+1. **BallTrackerNet port** (axis from sibling repo `tennis-virtual-ads`). Replace line-based estimator with learned 14-keypoint detector + RANSAC homography. Unblocks: subtle motion sensitivity, full automation (no manual clicks).
+2. **Motion-aware adaptive `vp_smoothing_alpha`**. Code change in `court_geometry.py`: detect frame-to-frame H delta; high alpha when small (smooth), low alpha when large (responsive). Cheaper than #1, attacks the same vertical-sensitivity gap.
+3. **Compositor quality fix** (Red Bull logo artifacts). Config-only sweep first: `mask_dilate_px`, `alpha_feather_px`, `inpaint_feather_px`, `lum_strength`, `local_color_match`. If config-only doesn't suffice, code change in compositor module.
+4. **Rubric calibration** — update `rubric.py` to add explicit "halo presence" and "letter-edge reflex" dimensions; the current rubric rounds these artifacts to 5/5.
+
+**Plan:** dispatch axes 1, 2, 3 as parallel code-fork agents (each in its own worktree). Axis 4 is a quick prerequisite to ensure agents on 1/2/3 score artifacts honestly. All agents return their `Lessons learned` blocks per the updated AGENT_BRIEFING.md.
+
+
 
 
