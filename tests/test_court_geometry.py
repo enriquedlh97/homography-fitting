@@ -172,3 +172,165 @@ def test_court_geometry_estimator_resets_state_on_large_cut() -> None:
     assert cut_estimate.geometry_confidence == 0.0
     assert cut_estimate.width_family_confidence == 0.0
     assert cut_estimate.depth_family_confidence == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 axis P3-A2: motion-aware adaptive vp_smoothing_alpha tests.
+# ---------------------------------------------------------------------------
+
+
+def _identity_h() -> np.ndarray:
+    return np.eye(3, dtype=np.float32)
+
+
+def _translate_h(dx: float, dy: float) -> np.ndarray:
+    h = np.eye(3, dtype=np.float32)
+    h[0, 2] = dx
+    h[1, 2] = dy
+    return h
+
+
+def test_select_alpha_backward_compat_no_adaptive_params() -> None:
+    """Without alpha_high/alpha_low set, returns the legacy fixed alpha."""
+    config = court_geometry_mod.GeometryConfig(
+        enabled=True,
+        vp_smoothing_alpha=0.7,
+    )
+    estimator = court_geometry_mod.CourtGeometryEstimator(config)
+    estimator._court_homography = _identity_h()
+
+    alpha = estimator._select_alpha(_translate_h(50.0, 50.0))
+    assert alpha == 0.7
+    # Adaptive counters stay zero since adaptive is disabled.
+    assert estimator.adaptive_alpha_high_frames == 0
+    assert estimator.adaptive_alpha_low_frames == 0
+
+
+def test_select_alpha_picks_high_when_delta_below_threshold() -> None:
+    """Static-camera regime: small delta -> alpha_high (heavy smoothing)."""
+    config = court_geometry_mod.GeometryConfig(
+        enabled=True,
+        vp_smoothing_alpha=0.5,
+        vp_smoothing_alpha_high=0.7,
+        vp_smoothing_alpha_low=0.3,
+        motion_delta_threshold_px=10.0,
+    )
+    estimator = court_geometry_mod.CourtGeometryEstimator(config)
+    estimator._court_homography = _identity_h()
+
+    # 1 px translation -> mean delta is 1 px (well below 10.0 threshold).
+    alpha = estimator._select_alpha(_translate_h(1.0, 0.0))
+    assert alpha == 0.7
+    assert estimator.adaptive_alpha_high_frames == 1
+    assert estimator.adaptive_alpha_low_frames == 0
+    assert estimator.last_frame_delta_px == 1.0
+
+
+def test_select_alpha_picks_low_when_delta_above_threshold() -> None:
+    """Motion regime: large delta -> alpha_low (responsive)."""
+    config = court_geometry_mod.GeometryConfig(
+        enabled=True,
+        vp_smoothing_alpha=0.5,
+        vp_smoothing_alpha_high=0.7,
+        vp_smoothing_alpha_low=0.3,
+        motion_delta_threshold_px=10.0,
+    )
+    estimator = court_geometry_mod.CourtGeometryEstimator(config)
+    estimator._court_homography = _identity_h()
+
+    # 50 px translation -> mean delta = 50 px (above threshold).
+    alpha = estimator._select_alpha(_translate_h(50.0, 0.0))
+    assert alpha == 0.3
+    assert estimator.adaptive_alpha_high_frames == 0
+    assert estimator.adaptive_alpha_low_frames == 1
+    assert estimator.last_frame_delta_px == 50.0
+
+
+def test_select_alpha_no_prior_uses_high() -> None:
+    """When no prior smoothed H exists, default to alpha_high."""
+    config = court_geometry_mod.GeometryConfig(
+        enabled=True,
+        vp_smoothing_alpha_high=0.7,
+        vp_smoothing_alpha_low=0.3,
+        motion_delta_threshold_px=10.0,
+    )
+    estimator = court_geometry_mod.CourtGeometryEstimator(config)
+    # _court_homography is None at construction.
+
+    alpha = estimator._select_alpha(_translate_h(100.0, 100.0))
+    assert alpha == 0.7
+    assert estimator.adaptive_alpha_no_prior_frames == 1
+    assert estimator.adaptive_alpha_high_frames == 0
+    assert estimator.adaptive_alpha_low_frames == 0
+
+
+def test_select_alpha_sequence_high_then_low_then_high() -> None:
+    """Sequence test: static -> motion -> static flips alpha appropriately."""
+    config = court_geometry_mod.GeometryConfig(
+        enabled=True,
+        vp_smoothing_alpha_high=0.7,
+        vp_smoothing_alpha_low=0.3,
+        motion_delta_threshold_px=10.0,
+    )
+    estimator = court_geometry_mod.CourtGeometryEstimator(config)
+    estimator._court_homography = _identity_h()
+
+    # Frame 1: small delta (0.5 px) -> high.
+    alpha1 = estimator._select_alpha(_translate_h(0.5, 0.0))
+    # Bump prev so frame 2 measures against same baseline.
+    estimator._court_homography = _identity_h()
+    # Frame 2: large delta (40 px) -> low.
+    alpha2 = estimator._select_alpha(_translate_h(40.0, 0.0))
+    estimator._court_homography = _identity_h()
+    # Frame 3: small delta (2 px) -> high.
+    alpha3 = estimator._select_alpha(_translate_h(2.0, 0.0))
+
+    assert alpha1 == 0.7
+    assert alpha2 == 0.3
+    assert alpha3 == 0.7
+    assert estimator.adaptive_alpha_high_frames == 2
+    assert estimator.adaptive_alpha_low_frames == 1
+
+
+def test_geometry_config_from_dict_parses_adaptive_params() -> None:
+    cfg = court_geometry_mod.GeometryConfig.from_dict(
+        {
+            "enabled": True,
+            "vp_smoothing_alpha": 0.5,
+            "vp_smoothing_alpha_high": 0.8,
+            "vp_smoothing_alpha_low": 0.2,
+            "motion_delta_threshold_px": 12.0,
+        }
+    )
+    assert cfg.vp_smoothing_alpha == 0.5
+    assert cfg.vp_smoothing_alpha_high == 0.8
+    assert cfg.vp_smoothing_alpha_low == 0.2
+    assert cfg.motion_delta_threshold_px == 12.0
+
+
+def test_geometry_config_from_dict_defaults_adaptive_to_none() -> None:
+    cfg = court_geometry_mod.GeometryConfig.from_dict(
+        {"enabled": True, "vp_smoothing_alpha": 0.7}
+    )
+    assert cfg.vp_smoothing_alpha_high is None
+    assert cfg.vp_smoothing_alpha_low is None
+    # threshold default is 10 px regardless of whether adaptive is active.
+    assert cfg.motion_delta_threshold_px == 10.0
+
+
+def test_project_quad_delta_px_translation_matches_distance() -> None:
+    quad = court_geometry_mod.CourtGeometryEstimator._SENTINEL_COURT_CORNERS
+    delta = court_geometry_mod._project_quad_delta_px(
+        _identity_h(), _translate_h(7.0, 0.0), quad
+    )
+    assert abs(delta - 7.0) < 1e-3
+
+
+def test_project_quad_delta_px_handles_degenerate() -> None:
+    quad = court_geometry_mod.CourtGeometryEstimator._SENTINEL_COURT_CORNERS
+    # Zero matrix is degenerate.
+    delta = court_geometry_mod._project_quad_delta_px(
+        _identity_h(), np.zeros((3, 3), dtype=np.float32), quad
+    )
+    # Either returns 0 or a non-finite handled gracefully.
+    assert np.isfinite(delta)

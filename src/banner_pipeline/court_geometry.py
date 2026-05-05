@@ -44,11 +44,23 @@ class GeometryConfig:
     fallback_after_frames: int = 3
     vp_confidence_min: float = 0.35
     tangent_margin_px: float = 2.0
+    # Phase 3 axis P3-A2: motion-aware adaptive vp_smoothing_alpha.
+    # When ``vp_smoothing_alpha_high`` and ``vp_smoothing_alpha_low`` are set
+    # (and ``motion_delta_threshold_px`` > 0), the estimator switches per-frame
+    # between the two alphas based on the projected-corner displacement
+    # between the prior smoothed homography and the new raw homography.
+    # Setting both alphas to ``None`` (default) preserves backward compat:
+    # the estimator uses the legacy fixed ``vp_smoothing_alpha``.
+    vp_smoothing_alpha_high: float | None = None
+    vp_smoothing_alpha_low: float | None = None
+    motion_delta_threshold_px: float = 10.0
 
     @classmethod
     def from_dict(cls, config: dict[str, Any] | None) -> GeometryConfig:
         if config is None:
             return cls()
+        alpha_high_raw = config.get("vp_smoothing_alpha_high", None)
+        alpha_low_raw = config.get("vp_smoothing_alpha_low", None)
         return cls(
             enabled=bool(config.get("enabled", False)),
             court_backend=str(config.get("court_backend", "classical_lines_v1")),
@@ -58,6 +70,15 @@ class GeometryConfig:
             fallback_after_frames=int(config.get("fallback_after_frames", 3)),
             vp_confidence_min=float(config.get("vp_confidence_min", 0.35)),
             tangent_margin_px=float(config.get("tangent_margin_px", 2.0)),
+            vp_smoothing_alpha_high=(
+                float(alpha_high_raw) if alpha_high_raw is not None else None
+            ),
+            vp_smoothing_alpha_low=(
+                float(alpha_low_raw) if alpha_low_raw is not None else None
+            ),
+            motion_delta_threshold_px=float(
+                config.get("motion_delta_threshold_px", 10.0)
+            ),
         )
 
 
@@ -538,6 +559,12 @@ class CourtGeometryEstimator:
         self._dir_width: np.ndarray | None = None
         self._dir_depth: np.ndarray | None = None
         self._court_homography: np.ndarray | None = None
+        # Adaptive-alpha telemetry (Phase 3 axis P3-A2). Counts which alpha
+        # branch fired this run; surfaced for debugging/sweep analysis.
+        self.adaptive_alpha_high_frames: int = 0
+        self.adaptive_alpha_low_frames: int = 0
+        self.adaptive_alpha_no_prior_frames: int = 0
+        self.last_frame_delta_px: float = 0.0
 
     def estimate(self, frame_bgr: np.ndarray) -> CourtGeometryEstimate:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
@@ -600,7 +627,7 @@ class CourtGeometryEstimator:
                 )
             raw_dir_depth = _normalize_vec(raw_vp_depth.astype(np.float64) - bottom_mid)
 
-        alpha = self.config.vp_smoothing_alpha
+        alpha = self._select_alpha(raw_h)
         self._dir_width = _blend_unit_vectors(self._dir_width, raw_dir_width, alpha)
         self._dir_depth = _blend_unit_vectors(self._dir_depth, raw_dir_depth, alpha)
         self._vp_width = _blend_points(self._vp_width, raw_vp_width, alpha)
@@ -640,6 +667,91 @@ class CourtGeometryEstimator:
             ),
             cut_reset=cut_reset,
         )
+
+    # ------------------------------------------------------------------
+    # Phase 3 axis P3-A2: motion-aware adaptive vp_smoothing_alpha.
+    # ------------------------------------------------------------------
+
+    # Sentinel court-plane unit-square corners. Projecting these through
+    # both the prior smoothed H and the new raw H gives a stable per-frame
+    # measure of how much the homography moved this frame, in pixels.
+    _SENTINEL_COURT_CORNERS: np.ndarray = np.array(
+        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        dtype=np.float32,
+    )
+
+    def _select_alpha(self, raw_h: np.ndarray | None) -> float:
+        """Pick the EMA alpha for this frame.
+
+        When ``vp_smoothing_alpha_high`` and ``vp_smoothing_alpha_low`` are
+        both configured, switches between them based on the projected
+        sentinel-quad displacement between the prior smoothed homography
+        and ``raw_h``. Otherwise returns the legacy fixed alpha.
+
+        Adaptive logic:
+          - small frame_delta (camera static, estimator stable):
+            ``alpha_high`` — heavy smoothing, keep the prior.
+          - large frame_delta (motion / real change):
+            ``alpha_low`` — light smoothing, let the new estimate through.
+
+        ``alpha`` here follows the existing convention used by
+        ``_blend_homographies``: ``smoothed = alpha * prev + (1 - alpha) * raw``.
+        Higher alpha = more weight on prior = smoother.
+        """
+        config = self.config
+        alpha_high = config.vp_smoothing_alpha_high
+        alpha_low = config.vp_smoothing_alpha_low
+        # Backward-compat: adaptive disabled.
+        if alpha_high is None or alpha_low is None:
+            self.last_frame_delta_px = 0.0
+            return float(config.vp_smoothing_alpha)
+
+        # No prior or no current estimate => can't measure delta. Use
+        # ``alpha_high`` (prefer smoothing toward whichever side has data).
+        prev_h = self._court_homography
+        if prev_h is None or raw_h is None:
+            self.adaptive_alpha_no_prior_frames += 1
+            self.last_frame_delta_px = 0.0
+            return float(alpha_high)
+
+        delta_px = _project_quad_delta_px(
+            prev_h,
+            raw_h,
+            self._SENTINEL_COURT_CORNERS,
+        )
+        self.last_frame_delta_px = float(delta_px)
+        threshold = float(config.motion_delta_threshold_px)
+        if delta_px > threshold:
+            self.adaptive_alpha_low_frames += 1
+            return float(alpha_low)
+        self.adaptive_alpha_high_frames += 1
+        return float(alpha_high)
+
+
+def _project_quad_delta_px(
+    h_a: np.ndarray,
+    h_b: np.ndarray,
+    quad: np.ndarray,
+) -> float:
+    """Return mean L2 distance between ``quad`` projected through ``h_a`` and ``h_b``.
+
+    Used by :class:`CourtGeometryEstimator` to measure how much the
+    homography moved frame-to-frame, independent of pixel coordinates of
+    the placement_quad. Returns 0.0 if either projection is non-finite or
+    a homography is degenerate.
+    """
+    try:
+        pts = np.asarray(quad, dtype=np.float32).reshape(-1, 1, 2)
+        proj_a = cv2.perspectiveTransform(pts, np.asarray(h_a, dtype=np.float64))
+        proj_b = cv2.perspectiveTransform(pts, np.asarray(h_b, dtype=np.float64))
+    except cv2.error:
+        return 0.0
+    if proj_a is None or proj_b is None:
+        return 0.0
+    if not (np.isfinite(proj_a).all() and np.isfinite(proj_b).all()):
+        return 0.0
+    diffs = proj_a.reshape(-1, 2) - proj_b.reshape(-1, 2)
+    return float(np.linalg.norm(diffs, axis=1).mean())
 
 
 def _build_court_estimator(config: GeometryConfig) -> Any:
@@ -828,6 +940,12 @@ class GeometryFittingEngine:
             "back_wall_runtime_model": self.back_wall_runtime_model,
             "side_wall_runtime_model": self.side_wall_runtime_model,
             "geometry_fit_method_counts": self.fit_method_counts,
+            # Phase 3 axis P3-A2 adaptive-alpha telemetry.
+            "adaptive_alpha_high_frames": int(self.estimator.adaptive_alpha_high_frames),
+            "adaptive_alpha_low_frames": int(self.estimator.adaptive_alpha_low_frames),
+            "adaptive_alpha_no_prior_frames": int(
+                self.estimator.adaptive_alpha_no_prior_frames
+            ),
         }
 
     def render_debug_overlay(self, frame_bgr: np.ndarray) -> np.ndarray:

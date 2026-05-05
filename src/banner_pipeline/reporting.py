@@ -88,6 +88,9 @@ _NUMERIC_KEYS = [
     "hybrid_lock_locked_frames",
     "hybrid_lock_ramp_frames",
     "hybrid_lock_estimate_frames",
+    "adaptive_alpha_high_frames",
+    "adaptive_alpha_low_frames",
+    "adaptive_alpha_no_prior_frames",
 ]
 
 
