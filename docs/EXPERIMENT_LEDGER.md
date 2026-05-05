@@ -926,3 +926,28 @@ If a meaningful new signal arises (none expected), the loop can re-engage; other
 The full per-cycle table is in the **DRAFT FINDINGS** section above (search for `DRAFT FINDINGS`). Each cycle has its agent's verbatim report in a fenced code block. Visual artifacts live under each `experiments/<run>/eval/` directory: `back_banners/`, `left_logo/`, `floor_logo/`, `walkover/`, `full/`, plus a top-level `report.md` and `quality_metrics.json`. The most informative single artifact for each run is `eval/walkover/consecutive_frames.png` — 16 consecutive frames showing the player walking on the floor logo.
 
 Loop ends here. No more agents will be dispatched.
+
+---
+
+# Phase 2 — hybrid locked-with-tolerance homography (started 2026-05-05 13:12 EDT)
+
+**Deadline:** 2026-05-05 18:30 EDT (~5.3h budget).
+**Branch:** `feat/quality-fixes-next` (continues from Phase 1).
+**Axis brief:** [docs/HOMOGRAPHY_HYBRID_AXIS.md](HOMOGRAPHY_HYBRID_AXIS.md). Read that first.
+**Goal:** preserve v68's static-camera quality + win on motion frames at end of clip.
+**Sub-agent eval framework:** v2 (paired strips + 5 walkover sheets + checklist) — see [docs/EVALUATION.md](EVALUATION.md).
+
+## P2-C001 — 2026-05-05 13:13 EDT — scoping (research-only, 2 parallel agents)
+
+Manager hypothesis: before writing any code, scope the existing terrain.
+
+- **A1 — sibling repo recon.** Read `/Users/enriquediazdeleonhicks/repositories/capstone-data-candidates/tennis-virtual-ads/` to understand the 14-point homography approach. Report what's there, what algorithm is used, what's worth lifting (or porting).
+- **A2 — existing path deep-dive.** Read `src/banner_pipeline/court_geometry.py` + `src/banner_pipeline/pipeline.py:run_pipeline_video_hybrid` here. Report what's there, what's the smallest fix to activate dynamic geometry in the hybrid path, and what a "locked-with-tolerance" wrapper would look like.
+
+Both agents are read-only; output a structured design report. Manager will synthesize for cycle P2-C002.
+
+Status: dispatched in background.
+
+---
+
+<!-- Subsequent Phase 2 cycles append below this line. -->
