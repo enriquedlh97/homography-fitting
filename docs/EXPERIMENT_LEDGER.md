@@ -202,6 +202,42 @@ After C003 lands, C004 will re-test the floor asset swap in isolation: copy v68 
 
 Status: dispatched in background.
 
+### C003 results — 2026-05-04 22:19 EDT
+
+```
+=== CYCLE C003 SLOT A1 REPORT ===
+Task: per-object asset routing on ObjectPrompt + 3 video paths.
+Files modified: src/banner_pipeline/segment/base.py, src/banner_pipeline/pipeline.py
+Lines added/changed: +49 -4
+Backwards-compat verification:
+  - syntax check: PASS
+  - pytest tests/: 97 passed, 0 failed
+  - eval on v68 gold: all 4 scorecards PASS (back, left, floor, full)
+  - import smoke test: PASS (asset attr: None)
+Per-object asset call sites updated:
+  - run_pipeline_video: yes (line 2243)
+  - run_pipeline_video_tracking: yes (line 2545)
+  - run_pipeline_video_hybrid: yes (line 3556 painted_court_composite + 3620 comp.composite)
+Loader used: _load_overlay (cv2.imread IMREAD_UNCHANGED) in video/hybrid; raw cv2 in tracking.
+Commit SHA: 47b2665
+Recommendation: ready for C004 (re-test floor asset swap with per-object isolation).
+=== END REPORT ===
+```
+Manager note: SUCCESS. Code change clean, all verifications pass. Unlocks isolated per-object asset experiments.
+
+---
+
+## C004 — 2026-05-04 22:19 EDT — isolated floor asset swap (regression-safe)
+Manager hypothesis: now that obj_3 can carry its own `asset:` field, swap ONLY obj_3's overlay to `redbull_court_patch.png` while back-wall objects (1, 2, 5) and left obj_4 keep using the global `redbull_white.png`. Expect visible_pct gain similar to C002/A1's +5.32% but WITHOUT back-banner cross-contamination — should yield `any_regression: false` and become the first true candidate.
+
+- **A1 — single agent, single config knob**
+  - Copy `eval_walkover_v68_clicked_homography_static_full.yaml` to `eval_walkover_c004_a1_floor_asset_patch_isolated.yaml`.
+  - Add `asset: data/logos/redbull_court_patch.png` to the obj_3 prompt entry only (not the global `input.logo`, not the other prompts).
+  - Run pipeline + eval + commit.
+  - Target metric: `floor_walkover_logo_visible_pct` strictly > 0.1787, `any_regression: false`, all per-region scorecards pass.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
