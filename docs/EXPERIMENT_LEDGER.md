@@ -1016,6 +1016,54 @@ Manager hypothesis: implement the inline hybrid per A2's plan. Single code-chang
 
 Status: dispatched in background.
 
+### P2-C002 results — 2026-05-05 13:30 EDT
+
+```
+=== P2-C002/A1 CODE CHANGE REPORT ===
+Files modified: src/banner_pipeline/court_geometry.py, src/banner_pipeline/pipeline.py, tests/test_hybrid_lock.py (new)
+Lines added/changed: +358 / -19 (net +339)
+Backwards-compat:
+  - syntax: PASS
+  - tests/test_hybrid_lock.py: 5/5
+  - all tests: 102/102
+  - eval on v68 gold (no flag): all 4 scorecards PASS
+  - hybrid_lock_enabled in v68 gold metrics.json: <not present> (flag-gated; existing run pre-dates code)
+Implementation:
+  - HybridLockState dataclass in court_geometry.py
+  - step() returns (corners, decision, displacement_px); decision in {locked, ramp}
+  - Per-frame schema extension: seed_corners, estimated_corners, decision, displacement_px (only when active)
+  - Counters: hybrid_lock_{locked,ramp,estimate}_frames in metrics
+Commit: 962ddf3
+Recommendation: ready for P2-C003 Modal run with flag enabled.
+=== END REPORT ===
+```
+Manager note: clean implementation; flag-gated; 102 tests pass; gold unaffected. Ready to exercise.
+
+---
+
+## P2-C003 — 2026-05-05 13:32 EDT — hybrid_lock tolerance sweep (7 parallel, H200)
+
+Manager hypothesis: validate wiring + sweep tolerance breadth in one cycle. **7 parallel Modal runs on H200** (avoids B200 queue wait). All based on `eval_walkover_v68_clicked_homography_dynamic_full.yaml` (which has `pipeline.geometry.enabled: true` + `court_plane_placement` on obj_3/obj_4 — required for the hybrid_lock gate to have something to gate on).
+
+| Slot | tolerance_px | ramp_motion_px_per_frame | Purpose |
+|---|---|---|---|
+| A1 | 99999 | 2.0 | sanity — always-locked; validates wiring doesn't break anything (should match gold) |
+| A2 | 2.0 | 2.0 | very tight; ramps almost every motion frame |
+| A3 | 4.0 | 2.0 | tight; minimum useful tolerance vs white-line thickness |
+| A4 | 6.0 | 2.0 | default; matches white-line thickness ~3-5px with margin |
+| A5 | 10.0 | 2.0 | looser; fewer ramps, more locked |
+| A6 | 15.0 | 2.0 | very loose; mostly stays locked unless a big move |
+| A7 | 6.0 | 4.0 | default tolerance + faster ramp (snap quicker once we decide to move) |
+
+Targets per region (must hold across ALL slots — these are the v68-gold-equivalent gates):
+- `back_pass=true`, `left_pass=true`, `floor_pass=true`, `full_pass=true`
+- `any_regression=false` (or close — see analysis after the sweep)
+- New diagnostics expected (only when hybrid_lock_enabled=true): `hybrid_lock_locked_frames`, `hybrid_lock_ramp_frames`, `hybrid_lock_estimate_frames`. Their distribution across 767 frames tells us whether the gate fires meaningfully.
+
+All config-only; no code changes. Each agent creates `configs/experiments/eval_walkover_p2_c003_a<N>_<slug>.yaml`, runs Modal H200, runs eval, commits + pushes own work.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent Phase 2 cycles append below this line. -->
