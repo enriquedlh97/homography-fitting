@@ -1470,6 +1470,28 @@ Compared to P2-C008 (frame-0 court_quad):
 
 (Note: P2-C007 found that *lower* vp_alpha didn't help with frame-0 court_quad — but that was because frame-0 calibration had a 25 px built-in offset that swamped any motion signal. With median quad calibrated to within ~7 px median, an unsmoothed estimator's responsiveness to motion may now matter.)
 
+### P2-C011 results — 2026-05-05 17:24 EDT
 
+| Slot | vp_alpha | locked | ramp | floor SSIM | floor pass |
+|------|----------|--------|------|-----------|-----------|
+| A1   | 0.2      | 526/767 (69%)  | 241 (31%) | 0.7765 | F |
+| A2   | 0.3      | 559/767 (73%)  | 208 (27%) | 0.8037 | F |
+| A3   | 0.4      | 595/767 (78%)  | 172 (22%) | 0.8366 | F |
+| A4   | 0.5      | 640/767 (83%)  | 127 (17%) | 0.8814 | F |
+| A5   | 0.7      | 767/767 (100%) | 0 (0%)    | 0.9998 | P |
+
+Run dirs: A1 `2026-05-05_17-19-05`, A2 `17-17-55`, A3 `17-17-05`, A4 `17-19-24`, A5 `17-17-37` (all `_hull_H200`).
+
+**Result: lowering vp_alpha makes the gate fire more, but floor SSIM regresses.** The line-based estimator at low alpha catches motion better (frame-to-frame H responds to camera motion) — but it's also proportionally noisier (frame-to-frame H also responds to noise). When the gate fires and ramps toward a noisy target, the floor logo wobbles. Net result: every alpha < 0.7 produces worse floor SSIM than the locked baseline.
+
+**The fundamental dilemma identified by user-driven inquiry (chronicled here):**
+
+The hybrid_lock axis has an intrinsic conflict with a fixed-alpha smoothing estimator:
+- **High alpha (0.7):** estimator smooth, follows motion gracefully but absorbs subtle motion before it crosses the gate → gate stays locked → on motion frames, the floor logo stays at frame-0 image-space position while the court underneath moves → visible drift. (**This is what P2-C010/A2 produces.**)
+- **Low alpha (0.2-0.5):** estimator responsive to motion but also responsive to per-frame noise → gate fires more often but ramps toward jittery targets → visible logo wobble even on static frames → much worse floor SSIM.
+
+There is no setting of alpha that gives both *stable when static* and *responsive when moving*. That requires either (a) **motion-aware adaptive alpha** (high alpha when frame-to-frame Δ is small, low when Δ is large) or (b) a **structurally less-noisy estimator** like BallTrackerNet's learned 14-keypoint H.
+
+**Best candidate stays P2-C010/A2** (`experiments/2026-05-05_16-28-51_hull_H200/`, tol=22 + median-H quad + vp=0.7). The "subtle late-frame motion" the user noticed cannot be caught by the current line-based estimator without introducing more wobble than it removes. Catching it cleanly requires a learned-keypoint detector.
 
 
