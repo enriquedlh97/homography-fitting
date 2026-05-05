@@ -45,8 +45,14 @@ def painted_court_composite(
     erase_only: bool = False,
     # --- Clean plate (pre-built text-free court region) ---
     clean_plate: np.ndarray | None = None,
+    clean_frame: np.ndarray | None = None,
     # --- Canvas background ---
     fill_canvas_background: bool = True,
+    # --- Independent clean underlay ---
+    clean_underlay_alpha: float = 0.0,
+    clean_underlay_feather_px: int = 3,
+    clean_underlay_dilate_px: int = 0,
+    clean_underlay_mask_mode: str = "quad",
     # --- Logo motion blur (production trick) ---
     logo_blur_px: int = 0,
 ) -> np.ndarray:
@@ -133,14 +139,17 @@ def painted_court_composite(
     # opaque background covers original text (e.g. MELBOURNE).
     # If erasing text, transparent canvas is fine (text already erased).
     canvas = np.zeros((canvas_h, canvas_w, 4), dtype=np.uint8)
-    if not erase_text and fill_canvas_background:
+    court_background: np.ndarray | None = None
+    needs_court_background = not erase_text and (
+        fill_canvas_background or clean_underlay_alpha > 0.0
+    )
+    if needs_court_background:
         if clean_plate is not None:
             # Clean plate approach: use pre-built text-free court region.
             # No per-frame processing needed — the plate was built offline
             # from frames where no player covers the text. There is no
             # MELBOURNE text to leak through the mask boundary.
-            plate_resized = cv2.resize(clean_plate, (canvas_w, canvas_h))
-            canvas[:, :, :3] = plate_resized
+            court_background = cv2.resize(clean_plate, (canvas_w, canvas_h))
         else:
             # Per-frame un-warp + blur approach (original fallback).
             src_pts = np.array(
@@ -163,21 +172,27 @@ def painted_court_composite(
                 if len(non_text) > 0:
                     med = np.median(non_text.reshape(-1, 3), axis=0).astype(np.uint8)
                     court_region[text_pixels] = med
-            court_blurred = cv2.GaussianBlur(court_region, (101, 101), 0)
-            canvas[:, :, :3] = court_blurred
+            court_background = cv2.GaussianBlur(court_region, (101, 101), 0)
+
+    if not erase_text and fill_canvas_background and court_background is not None:
+        canvas[:, :, :3] = court_background
         canvas[:, :, 3] = 255
     x_off = (canvas_w - new_w) // 2
     y_off = (canvas_h - new_h) // 2
-    # Alpha-composite logo onto canvas (don't overwrite — that would
-    # replace the opaque court-colored background with transparent logo
-    # pixels, letting original text bleed through).
+    # Alpha-composite logo onto an opaque court canvas when the canvas is used
+    # to hide source text. For transparent canvases, keep straight-alpha RGB so
+    # anti-aliased logo edges do not get premultiplied into black before the
+    # final frame blend.
     region = canvas[y_off : y_off + new_h, x_off : x_off + new_w]
     logo_a = logo_resized[:, :, 3:4].astype(np.float32) / 255.0
-    inv_a = 1.0 - logo_a
-    region[:, :, :3] = (
-        logo_resized[:, :, :3].astype(np.float32) * logo_a
-        + region[:, :, :3].astype(np.float32) * inv_a
-    ).astype(np.uint8)
+    if not erase_text and fill_canvas_background:
+        inv_a = 1.0 - logo_a
+        region[:, :, :3] = (
+            logo_resized[:, :, :3].astype(np.float32) * logo_a
+            + region[:, :, :3].astype(np.float32) * inv_a
+        ).astype(np.uint8)
+    else:
+        region[:, :, :3] = logo_resized[:, :, :3]
     region[:, :, 3] = np.maximum(region[:, :, 3], logo_resized[:, :, 3])
 
     # --- 2b. Warp canvas into full-frame space ---
@@ -206,6 +221,61 @@ def painted_court_composite(
         borderValue=0,
     )
     warped_mask = warped_alpha.astype(np.float32) / 255.0
+
+    # --- 2c. Optional clean underlay ---
+    # This keeps text cleanup separate from logo alpha. It restores a clean court
+    # base around the logo/foot edge without making the logo itself ride on a
+    # broad opaque canvas.
+    if clean_underlay_alpha > 0.0 and (clean_frame is not None or court_background is not None):
+        if clean_frame is not None:
+            underlay_bgr = clean_frame
+        else:
+            assert court_background is not None
+            underlay_bgr = cv2.warpPerspective(
+                court_background,
+                M,
+                (fw, fh),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+            underlay_alpha_canvas = np.full((canvas_h, canvas_w), 255, dtype=np.uint8)
+            underlay_mask = cv2.warpPerspective(
+                underlay_alpha_canvas,
+                M,
+                (fw, fh),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0,
+            ).astype(np.float32) / 255.0
+        if clean_underlay_mask_mode == "logo":
+            underlay_mask = warped_mask.copy()
+            if clean_underlay_dilate_px > 0:
+                underlay_kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (2 * clean_underlay_dilate_px + 1, 2 * clean_underlay_dilate_px + 1),
+                )
+                underlay_mask = cv2.dilate(underlay_mask, underlay_kernel, iterations=1)
+        else:
+            underlay_mask = np.zeros((fh, fw), dtype=np.float32)
+            cv2.fillConvexPoly(underlay_mask, corners.astype(np.int32), 1.0)
+        if clean_underlay_feather_px > 0:
+            underlay_ksize = (
+                clean_underlay_feather_px
+                if clean_underlay_feather_px % 2 == 1
+                else clean_underlay_feather_px + 1
+            )
+            underlay_mask = cv2.GaussianBlur(underlay_mask, (underlay_ksize, underlay_ksize), 0)
+        underlay_mask = np.clip(underlay_mask, 0.0, 1.0) * clean_underlay_alpha
+        if occlusion_mask is not None:
+            occ = occlusion_mask.astype(np.float32)
+            if occ.max() > 1:
+                occ = occ / 255.0
+            underlay_mask = underlay_mask * (1.0 - np.clip(occ, 0.0, 1.0))
+        underlay_alpha_3ch = underlay_mask[:, :, np.newaxis]
+        frame[:] = (
+            frame.astype(np.float32) * (1.0 - underlay_alpha_3ch)
+            + underlay_bgr.astype(np.float32) * underlay_alpha_3ch
+        ).astype(np.uint8)
 
     # --- 2c. Alpha feather ---
     if alpha_feather_px > 0:

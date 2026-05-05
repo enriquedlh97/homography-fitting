@@ -569,6 +569,125 @@ def _apply_underfoot_text_decontamination(
     return output_frame
 
 
+def _apply_soft_player_band_text_cleanup(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Remove MELBOURNE residue in semi-transparent matte around feet.
+
+    Outside the opaque player core, MatAnyone softness mixes original court (with
+    white lettering) back into the composite. The strict underfoot mask often
+    misses dimmer survivors because it requires high correspondence to the original
+    text vector. Here we widen criteria only inside a configurable partial-alpha band.
+    """
+    if not bool(input_cfg.get("clean_video_soft_band_cleanup", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    focus_box = input_cfg.get("clean_video_soft_band_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_underfoot_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return frame_bgr
+
+    reference_width = float(input_cfg.get("clean_video_soft_band_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_soft_band_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    focus_dilate_px = int(input_cfg.get("clean_video_soft_band_dilate_px", 2))
+    if focus_dilate_px > 0 and np.any(focus_mask > 0):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    alpha_min_soft = float(input_cfg.get("clean_video_soft_band_alpha_min", 0.03))
+    alpha_max_soft = float(input_cfg.get("clean_video_soft_band_alpha_max", 0.94))
+    core_protect_alpha = float(input_cfg.get("clean_video_soft_band_core_protect_alpha", 0.92))
+
+    original_clean_delta = np.mean(
+        np.abs(original_frame_bgr.astype(np.int16) - clean_frame_bgr.astype(np.int16)),
+        axis=2,
+    )
+    original_vector = original_frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    composite_vector = frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    survival_numerator = np.sum(original_vector * composite_vector, axis=2)
+    survival_denominator = np.sum(original_vector * original_vector, axis=2) + 1e-6
+    survival = np.clip(survival_numerator / survival_denominator, 0.0, 1.0)
+
+    original_gray = cv2.cvtColor(original_frame_bgr, cv2.COLOR_BGR2GRAY)
+    gray_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+
+    relaxed_delta_threshold = float(input_cfg.get("clean_video_soft_band_delta_threshold", 14.0))
+    relaxed_survival_threshold = float(
+        input_cfg.get("clean_video_soft_band_survival_threshold", 0.32)
+    )
+    composite_bright_min = int(input_cfg.get("clean_video_soft_band_gray_min", 72))
+    original_bright_min = int(input_cfg.get("clean_video_soft_band_original_gray_min", 88))
+
+    person = person_mask_raw.astype(np.float32)
+    if person.max() > 1.0:
+        person = person / 255.0
+
+    soft_band = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (person > alpha_min_soft)
+        & (person < alpha_max_soft)
+        & (person < core_protect_alpha)
+    )
+
+    candidate_mask = (
+        soft_band
+        & (original_clean_delta >= relaxed_delta_threshold)
+        & (survival >= relaxed_survival_threshold)
+        & ((original_gray >= original_bright_min) | (gray_frame >= composite_bright_min))
+    )
+
+    close_px = int(input_cfg.get("clean_video_soft_band_close_px", 3))
+    if close_px > 0 and np.any(candidate_mask):
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_px * 2 + 1, close_px * 2 + 1),
+        )
+        candidate_uint8 = cv2.morphologyEx(
+            candidate_mask.astype(np.uint8) * 255,
+            cv2.MORPH_CLOSE,
+            close_kernel,
+        )
+        candidate_mask = candidate_uint8 > 0
+
+    if not np.any(candidate_mask):
+        return frame_bgr
+
+    replace_alpha = float(input_cfg.get("clean_video_soft_band_replace_alpha", 0.92))
+    replace_alpha = float(np.clip(replace_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[candidate_mask].astype(np.float32) * (1.0 - replace_alpha)
+        + clean_frame_bgr[candidate_mask].astype(np.float32) * replace_alpha
+    )
+    output_frame[candidate_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
 def _apply_shoe_edge_color_extension(
     *,
     frame_bgr: np.ndarray,
@@ -3254,6 +3373,14 @@ def run_pipeline_video_hybrid(
                     person_mask_raw=person_mask_raw,
                     input_cfg=input_cfg,
                 )
+                frame_bgr = _apply_soft_player_band_text_cleanup(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
                 frame_bgr = _apply_shoe_edge_color_extension(
                     frame_bgr=frame_bgr,
                     original_frame_bgr=original_frame_bgr,
@@ -3323,8 +3450,21 @@ def run_pipeline_video_hybrid(
                             quad_expand_px=int(court_overrides.get("quad_expand_px", 0)),
                             erase_only=bool(court_overrides.get("erase_only", _erase_only)),
                             clean_plate=_clean_plates.get(obj_id),
+                            clean_frame=_clean_frame_resized,
                             fill_canvas_background=bool(
                                 court_overrides.get("fill_canvas_background", True)
+                            ),
+                            clean_underlay_alpha=float(
+                                court_overrides.get("clean_underlay_alpha", 0.0)
+                            ),
+                            clean_underlay_feather_px=int(
+                                court_overrides.get("clean_underlay_feather_px", 3)
+                            ),
+                            clean_underlay_dilate_px=int(
+                                court_overrides.get("clean_underlay_dilate_px", 0)
+                            ),
+                            clean_underlay_mask_mode=str(
+                                court_overrides.get("clean_underlay_mask_mode", "quad")
                             ),
                             logo_blur_px=int(court_overrides.get("logo_blur_px", 0)),
                         )
