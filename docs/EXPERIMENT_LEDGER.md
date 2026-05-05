@@ -1494,4 +1494,29 @@ There is no setting of alpha that gives both *stable when static* and *responsiv
 
 **Best candidate stays P2-C010/A2** (`experiments/2026-05-05_16-28-51_hull_H200/`, tol=22 + median-H quad + vp=0.7). The "subtle late-frame motion" the user noticed cannot be caught by the current line-based estimator without introducing more wobble than it removes. Catching it cleanly requires a learned-keypoint detector.
 
+## P2-C012 — vp=0.5 + tolerance sweep (dispatched 2026-05-05 ~17:24 EDT)
+
+**Goal:** P2-C011 showed every alpha < 0.7 made things worse at tol=22. But that's because the noise floor at lower alpha is ~30-40 px, not 22. Maybe at vp=0.5 + a higher tolerance (above the noise floor), the gate fires only on real motion peaks while staying locked through noise. Test tols 25/30/40/50/99999 at vp=0.5.
+
+### P2-C012 results — 2026-05-05 17:43 EDT
+
+| Slot | vp | tol | locked | ramp | floor SSIM | floor pass | any_reg |
+|------|-----|-----|--------|------|-----------|-----------|---------|
+| A1   | 0.5 | 25  | 710/767 (93%)  | 57 (7%)  | 0.9451 | F | yes |
+| **A2** | 0.5 | 30 | 751/767 (98%) | **16 (2%)** | **0.9843** | **P** | yes (jitter only) |
+| A3   | 0.5 | 40  | 767/767 (100%) | 0 (0%)   | 0.9998 | P | no |
+| A4   | 0.5 | 50  | 767/767 (100%) | 0 (0%)   | 0.9998 | P | no |
+| A5   | 0.5 | 99999 | 767/767 (100%) | 0 (0%)   | 0.9998 | P | no |
+
+Run dirs: A1 `2026-05-05_17-38-01`, A2 `17-38-25`, A3 `17-38-05`, A4 `17-37-50`, A5 `17-37-36` (all `_hull_H200`).
+
+**P2-C012/A2 is the first variant where the gate fires AND floor passes** — `vp_smoothing_alpha=0.5`, `tolerance_px=30`, median-H court_quad. The gate ramps on 16 frames (2%) — those firings catch real motion peaks without dragging in noise. Floor SSIM 0.9843 (above 0.95 threshold), walkover_iou 0.9998 (nearly perfect). Only `floor_roi_jitter_ratio` regresses vs gold (soft warning, expected from any non-zero ramping).
+
+**Two best candidates side by side:**
+- **P2-C010/A2 (gate-dormant):** `2026-05-05_16-28-51_hull_H200`. `vp=0.7, tol=22`. 100% locked. SSIM 0.9998 vs gold. Pixel-equivalent to v68 — no risk, but no adaptability on this clip.
+- **P2-C012/A2 (gate-active):** `2026-05-05_17-38-25_hull_H200`. `vp=0.5, tol=30`. 98% locked, 2% ramp (16 frames). SSIM 0.9843. Jitter ratio regresses slightly. Catches motion peaks; on a moving-camera clip this is the candidate that would actually help.
+
+**Visual comparison recommended:** scrub the floor logo on both runs side-by-side, especially the late frames (~723-767 where user noticed subtle motion) — does P2-C012/A2 visibly track motion better than P2-C010/A2 there?
+
+
 
