@@ -1,0 +1,14 @@
+# Gold-reference table for `python -m banner_pipeline.eval --reference auto`.
+#
+# Each entry maps an input video basename (looked up via the frozen
+# config.yaml's input.video field) to the gold experiment directory used as
+# the comparison anchor for that clip.
+#
+# Add a new entry whenever a new tournament clip is certified by hand. The
+# gold's eval/quality_metrics.json becomes the baseline numbers all future
+# runs are checked against (5% slop, see src/banner_pipeline/eval/reference.py).
+#
+# Paths are repo-relative.
+
+melbourne-walking-over-logo.mov:
+  gold_dir: experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200

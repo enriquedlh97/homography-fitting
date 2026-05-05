@@ -1,4 +1,6 @@
-# Evaluation Protocol
+# Evaluation Protocol (SUPERSEDED)
+
+> **Note (2026-05-04):** This document is superseded by [`EVALUATION.md`](EVALUATION.md), which specifies the canonical multi-region evaluation framework. The legacy `scripts/quality_eval.py` invocation below still works but only covers the top banner ROI and is hardcoded to Melbourne pixel coordinates. New work should use `python -m banner_pipeline.eval`. This file is retained for historical context and the visual-QA checklist (now folded into the AI-review rubric in `EVALUATION.md`).
 
 Every experiment MUST be evaluated before presenting results or iterating.
 No exceptions. Run metrics + visual inspection on EVERY run.

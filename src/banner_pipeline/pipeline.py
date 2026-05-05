@@ -54,6 +54,59 @@ COMPOSITORS: dict[str, type[Compositor]] = {
 SUPPORTED_BANNER_SURFACE_TYPES = {"banner"}
 COURT_MARKING_SURFACE_TYPE = "court_marking"
 
+
+def _write_per_frame_state(
+    per_frame_state: dict[int, dict[int, dict[str, Any]]],
+    output_path: str,
+) -> None:
+    """Write per-frame, per-object placement state next to the composited video.
+
+    Consumed by the eval framework (banner_pipeline.eval) to compute geometric
+    stability metrics without re-detecting quads from the rendered video.
+    Schema: {"schema_version": 1, "num_frames": N,
+             "frames": {<frame_idx>: {<obj_id>: {"corners": [[x,y]*4], "fitted": bool}}}}.
+    """
+    if not per_frame_state:
+        return
+    import json
+    import os
+
+    outputs_dir = os.path.dirname(os.path.abspath(output_path))
+    if not outputs_dir:
+        return
+    os.makedirs(outputs_dir, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "num_frames": len(per_frame_state),
+        "frames": {
+            str(fid): {str(oid): info for oid, info in frame_info.items()}
+            for fid, frame_info in per_frame_state.items()
+        },
+    }
+    with open(os.path.join(outputs_dir, "per_frame_state.json"), "w") as f:
+        json.dump(payload, f, separators=(",", ":"))
+
+
+def _snapshot_corners(
+    corners_dict: dict[int, np.ndarray] | None,
+) -> dict[int, dict[str, Any]]:
+    """Convert a per-object corners dict into a JSON-serializable snapshot."""
+    if not corners_dict:
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for oid, c in corners_dict.items():
+        if c is None:
+            continue
+        arr = np.asarray(c)
+        if arr.shape != (4, 2):
+            continue
+        out[int(oid)] = {
+            "corners": arr.astype(float).tolist(),
+            "fitted": True,
+        }
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Factory functions
 # ---------------------------------------------------------------------------
@@ -2078,6 +2131,7 @@ def run_pipeline_video(
     # slightly-different SAM2 masks. Alpha=0.3 matches Raghav's CornerTracker.
     ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
     smoothed_corners: dict[int, np.ndarray] = {}
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
     valid_frame_counts, object_rejection_counts, object_rejection_reasons = _init_validity_metrics(
         prompts
     )
@@ -2146,6 +2200,10 @@ def run_pipeline_video(
                 else:
                     smoothed_corners[obj_id] = corners.copy()
 
+            snapshot = _snapshot_corners(corners_map)
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
+
             # Composite for this frame.
             if overlay is not None and compositor is not None and corners_map:
                 t_comp = time.perf_counter()
@@ -2188,6 +2246,8 @@ def run_pipeline_video(
     finally:
         video_writer.close()
         shutil.rmtree(frame_dir, ignore_errors=True)
+
+    _write_per_frame_state(per_frame_state, output_path)
 
     metrics["frames_with_valid_objects"] = frames_with_valid_objects
     metrics["frames_with_quads"] = frames_with_quads
@@ -2387,6 +2447,7 @@ def run_pipeline_video_tracking(
 
     composite_times: list[float] = []
     tracking_times: list[float] = []
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
 
     _perf.reset()
 
@@ -2409,6 +2470,10 @@ def run_pipeline_video_tracking(
                 gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
                 current_corners = tracker.update(gray)
             tracking_times.append(time.perf_counter() - t_track)
+
+            snapshot = _snapshot_corners(current_corners)
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
 
             # Composite.
             if overlay is not None and compositor is not None and current_corners:
@@ -2456,6 +2521,8 @@ def run_pipeline_video_tracking(
     finally:
         video_writer.close()
         shutil.rmtree(frame_dir, ignore_errors=True)
+
+    _write_per_frame_state(per_frame_state, output_path)
 
     metrics["write_video_s"] = round(write_video_s, 4)
     print(f"[tracking] Wrote {num_written} frames -> {output_path}")
@@ -2894,6 +2961,7 @@ def run_pipeline_video_hybrid(
     tracking_times: list[float] = []
     write_video_s = 0.0
     num_written = 0
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
 
     _perf.reset()
 
@@ -3396,6 +3464,10 @@ def run_pipeline_video_hybrid(
                     temporal_state=clean_video_temporal_state,
                 )
 
+            snapshot = _snapshot_corners(current_corners)
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
+
             # Composite: SAM mask for inpaint, tracked corners for logo warp.
             if overlay is not None and compositor is not None and current_corners:
                 t_comp = time.perf_counter()
@@ -3511,6 +3583,8 @@ def run_pipeline_video_hybrid(
         shutil.rmtree(frame_dir, ignore_errors=True)
         if _clean_video_cap is not None:
             _clean_video_cap.release()
+
+    _write_per_frame_state(per_frame_state, output_path)
 
     metrics["write_video_s"] = round(write_video_s, 4)
     if court_plane_projection_prompts:
