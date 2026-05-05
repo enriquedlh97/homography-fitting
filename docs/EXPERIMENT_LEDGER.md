@@ -1345,6 +1345,19 @@ The displacement distribution is very wide: even the *best 5%* of frames show �
 
 **Total Modal cycles this phase:** ~35 H200 GPU-runs across 9 logical cycles. ~6.5 hours wall time, well under the 18:30 deadline.
 
+## P2-C010 — tightest passing tolerance with median-H quad (dispatched 2026-05-05 ~16:15 EDT)
+
+**Goal:** P2-C009 showed tol=30 passes 100% on this clip with median-H calibrated court_quad. The empirical max displacement was 33.72 px, so tol=33 should also pass with very rare ramping. We want the **tightest** tolerance that still produces gold-equivalent floor on this clip — that's the production-ready setting for clips with the same camera class.
+
+| Slot | tol_px | Hypothesis (predicted from C009 disp distribution) |
+|------|--------|---------------------------------------------------|
+| A1   | 18     | ~9% ramp; floor ≈ 0.91 |
+| A2   | 22     | ~3% ramp; floor ≈ 0.97 |
+| A3   | 25     | ~1% ramp; floor ≈ 0.99 |
+| A4   | 33     | 0% ramp; floor 1.00 (matches max disp boundary) |
+| A5   | 99999  | sanity, 100% locked |
+
+
 ## P2-C009 — median-H court_quad recalibration (dispatched 2026-05-05 ~15:58 EDT)
 
 **Discovery:** Frame-to-frame Δ-displacement analysis on the C006/A1 estimator output revealed the noise is **biased, not jittery** — median |Δdisp| frame-to-frame is only 4 px while median absolute disp is 23 px. The line-based estimator is internally consistent in time; it's just *systematically offset* from the v68 truth.
