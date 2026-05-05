@@ -1,0 +1,17 @@
+{
+  "corner_max_jump_px": 0.0,
+  "corner_mean_jump_px": 0.0,
+  "corner_accel_p95_px": 0.0,
+  "quad_area_cv": 0.0,
+  "frames_used": 767,
+  "roi_jitter_composite_mean": 0.1855,
+  "roi_jitter_original_mean": 0.3769,
+  "roi_jitter_ratio": 0.4922,
+  "roi_delta_E_lab": 6.92,
+  "noise_variance_ratio": 29.3889,
+  "edge_sharpness_ratio": 0.0588,
+  "roi_temporal_ssim_mean": 0.997,
+  "roi_temporal_ssim_p5": 0.979,
+  "walkover_logo_visible_pct": 0.1787,
+  "walkover_occlusion_iou": 0.9998
+}

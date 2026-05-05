@@ -1,0 +1,15 @@
+{
+  "corner_max_jump_px": 0.0,
+  "corner_mean_jump_px": 0.0,
+  "corner_accel_p95_px": 0.0,
+  "quad_area_cv": 0.0,
+  "frames_used": 767,
+  "roi_jitter_composite_mean": 0.0243,
+  "roi_jitter_original_mean": 0.0641,
+  "roi_jitter_ratio": 0.3787,
+  "roi_delta_E_lab": 9.467,
+  "noise_variance_ratio": 0.8617,
+  "edge_sharpness_ratio": 0.2073,
+  "roi_temporal_ssim_mean": 1.0,
+  "roi_temporal_ssim_p5": 0.9999
+}
