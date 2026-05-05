@@ -268,6 +268,7 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
                 placement_quad=placement_quad,
                 compositor_params=compositor_params,
                 court_plane_placement=court_plane_placement,
+                asset=p.get("asset"),
             )
         )
     return out
@@ -289,6 +290,8 @@ def _prompt_to_config_entry(prompt: ObjectPrompt) -> dict[str, Any]:
         entry["compositor_params"] = dict(prompt.compositor_params)
     if prompt.court_plane_placement:
         entry["court_plane_placement"] = dict(prompt.court_plane_placement)
+    if prompt.asset:
+        entry["asset"] = prompt.asset
     return entry
 
 
@@ -2116,6 +2119,19 @@ def run_pipeline_video(
     if logo_path:
         overlay = _load_overlay(logo_path)
 
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = _load_overlay(_p.asset)
+                if _ovr is not None:
+                    per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
+
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
@@ -2227,7 +2243,7 @@ def run_pipeline_video(
                     frame_bgr = compositor.composite(
                         frame_bgr,
                         corners_map[obj_id],
-                        overlay,
+                        per_obj_overlay.get(obj_id, overlay),
                         mask=masks_2d.get(obj_id),
                         **extra_kw,
                     )
@@ -2438,6 +2454,20 @@ def run_pipeline_video_tracking(
         if overlay is None:
             raise RuntimeError(f"Could not read logo: {logo_path}")
 
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = cv2.imread(_p.asset, cv2.IMREAD_UNCHANGED)
+                if _ovr is None:
+                    raise RuntimeError(f"Could not read asset: {_p.asset}")
+                per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
+
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
@@ -2504,7 +2534,7 @@ def run_pipeline_video_tracking(
                     frame_bgr = compositor.composite(
                         frame_bgr,
                         current_corners[obj_id],
-                        overlay,
+                        per_obj_overlay.get(obj_id, overlay),
                         mask=frame_mask,
                         **extra_kw,
                     )
@@ -2935,6 +2965,19 @@ def run_pipeline_video_hybrid(
         overlay = _load_overlay(logo_path)
     elif _erase_only:
         overlay = np.zeros((1, 1, 4), dtype=np.uint8)  # dummy BGRA for erase-only
+
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = _load_overlay(_p.asset)
+                if _ovr is not None:
+                    per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
 
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     _surface_compositors: dict[str, Any] = {}  # per-surface instances
@@ -3500,7 +3543,7 @@ def run_pipeline_video_hybrid(
                         painted_court_composite(
                             frame_bgr,
                             current_corners[obj_id],
-                            overlay,
+                            per_obj_overlay.get(obj_id, overlay),
                             sam_mask=masks_2d.get(obj_id),
                             occlusion_mask=person_mask_raw,
                             alpha_scale=float(court_overrides.get("alpha_scale", 0.95)),
@@ -3564,7 +3607,7 @@ def run_pipeline_video_hybrid(
                     frame_bgr = comp.composite(
                         frame_bgr,
                         current_corners[obj_id],
-                        overlay,
+                        per_obj_overlay.get(obj_id, overlay),
                         mask=masks_2d.get(obj_id),
                         **extra_kw,
                     )

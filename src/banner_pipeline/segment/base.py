@@ -27,6 +27,7 @@ class ObjectPrompt:
     compositor_params: Optional dict of compositor kwargs merged for this object only
                     (after global and surface_overrides), e.g. ``inpaint_feather_px``.
     court_plane_placement: Optional court-space projection config for this object.
+    asset: Optional path to an overlay image to use for this object instead of the global input.logo.
     """
 
     obj_id: int
@@ -39,6 +40,7 @@ class ObjectPrompt:
     placement_quad: np.ndarray | None = None
     compositor_params: dict[str, Any] | None = None
     court_plane_placement: dict[str, Any] | None = None
+    asset: str | None = None
 
 
 class SegmentationModel(ABC):
