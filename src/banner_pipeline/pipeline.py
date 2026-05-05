@@ -198,6 +198,27 @@ def _project_court_plane_rectangle(
     return projected.astype(np.float32)
 
 
+def _project_court_plane_quad(
+    court_homography: np.ndarray,
+    court_quad: list[list[float]] | list[tuple[float, float]],
+) -> np.ndarray:
+    """Project a 4-point court-space quad into image coordinates.
+
+    Unlike `_project_court_plane_rectangle`, the quad is not constrained to be
+    axis-aligned in court coordinates. Use this when the originally-clicked
+    image-space `placement_quad` is a rectangle in IMAGE space (so it becomes
+    a trapezoid in court space due to foreshortening).
+    """
+    arr = np.asarray(court_quad, dtype=np.float64).reshape(-1, 2)
+    if arr.shape[0] != 4:
+        raise ValueError("court_plane_placement.court_quad must contain 4 (u, v) points.")
+    projected = cv2.perspectiveTransform(
+        arr.reshape(1, 4, 2).astype(np.float32),
+        court_homography.astype(np.float32),
+    ).reshape(-1, 2)
+    return projected.astype(np.float32)
+
+
 def _court_plane_placement_prompts(prompts: list[ObjectPrompt]) -> list[ObjectPrompt]:
     return [prompt for prompt in prompts if prompt.court_plane_placement]
 
@@ -3306,14 +3327,23 @@ def run_pipeline_video_hybrid(
                 for prompt in court_plane_projection_prompts:
                     placement_cfg = prompt.court_plane_placement or {}
                     court_rectangle = placement_cfg.get("court_rect")
-                    if court_rectangle is None:
-                        raise ValueError("court_plane_placement requires a court_rect value.")
+                    court_quad_cfg = placement_cfg.get("court_quad")
+                    if court_rectangle is None and court_quad_cfg is None:
+                        raise ValueError(
+                            "court_plane_placement requires a court_rect or court_quad value."
+                        )
                     projected_corners: np.ndarray | None = None
                     if homography_available:
-                        projected_corners = _project_court_plane_rectangle(
-                            court_plane_estimate.court_homography,
-                            court_rectangle,
-                        )
+                        if court_quad_cfg is not None:
+                            projected_corners = _project_court_plane_quad(
+                                court_plane_estimate.court_homography,
+                                court_quad_cfg,
+                            )
+                        else:
+                            projected_corners = _project_court_plane_rectangle(
+                                court_plane_estimate.court_homography,
+                                court_rectangle,
+                            )
                     target = str(placement_cfg.get("target", "corners"))
                     obj_id_int = int(prompt.obj_id)
 
