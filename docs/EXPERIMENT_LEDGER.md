@@ -1064,6 +1064,19 @@ All config-only; no code changes. Each agent creates `configs/experiments/eval_w
 
 Status: dispatched in background.
 
+### P2-C003 status — 2026-05-05 13:37 EDT (in flight; harness timeouts)
+
+All 7 dispatched agents timed out at the agent harness ~10.5-min boundary BEFORE Modal completed. Each returned a "Waiting for Modal run" / "output empty" message. No new experiment dirs in `experiments/2026-05-05_*_H200/` as of 13:37. All 7 config files exist (orphan but committed-ready).
+
+Diagnosis: Modal H200 cold-start + the dynamic-geometry pipeline (CourtGeometryEstimator on every frame) takes >11 min wall clock. Agent harness budget mismatch.
+
+**Recovery plan:** Modal jobs continue running on the platform after agents die; output dirs WILL eventually appear. Manager will:
+1. Wait for output dirs to materialize (check disk periodically).
+2. Once present, dispatch SHORT harvest agents (eval + commit only, no Modal — should fit comfortably under 11 min each).
+3. Continue the cycle from there.
+
+If outputs still don't appear after ~30 min, escalate: jobs may have failed on the platform.
+
 ---
 
 <!-- Subsequent Phase 2 cycles append below this line. -->
