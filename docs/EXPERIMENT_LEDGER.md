@@ -285,6 +285,58 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C005 results — 2026-05-04 22:46 EDT
+
+```
+=== CYCLE C005 SLOT A1 REPORT ===
+Task: AI rubric baseline on v68 gold
+anthropic install: OK (anthropic==0.98.1 installed via uv sync --extra ai)
+ANTHROPIC_API_KEY in env: no
+Run output: NOT ATTEMPTED — auth would fail immediately
+Per-region rubric scores: N/A
+Cost estimate: ~$0.00
+Recommendation: needs API key provisioning; defer AI-rubric path.
+Run dir: FAILED — no ANTHROPIC_API_KEY in environment
+=== END REPORT ===
+```
+Manager note: anthropic SDK now installed for future use. AI-rubric path unavailable for this autonomous run; pivot to in-agent vision-Claude as alternative qualitative signal.
+
+```
+=== CYCLE C005 SLOT A2 REPORT ===
+Hypothesis: mask_dilate_px 20->10 globally (compositor.params)
+Run dir: experiments/2026-05-04_22-43-42_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1786, delta=-0.06%
+back_roi_ssim_vs_reference_mean: 0.9981
+back_roi_temporal_ssim_mean: 0.9999
+floor_walkover_occlusion_iou: 0.9838
+Walkover window: 685:723
+Failed metrics: none
+Warnings fired: back/left/floor roi_delta_E_lab
+Cost: Modal-B200 ~11min
+Recommendation: continue — viable global tightening; flat visible_pct.
+=== END REPORT ===
+```
+Manager note: clean pass, no regression, but no movement on the target metric. Numerical saturation confirmed — every safe perturbation lands at "no-op pass." Need qualitative signal.
+
+### Strategic pivot — qualitative-via-subagent
+
+Numerical metrics (visible_pct, SSIM, jitter, occlusion_iou) are saturated for this clip-on-itself comparison. The signal we'd want is "does run X *look* better than the gold?" — exactly what AI rubric was for, but no API key. Pivot: dispatch a vision-capable sub-agent that reads the existing per-region PNG artifacts (via the Read tool's image support) and produces a qualitative ranking. The sub-agent IS a Claude with vision; this is rubric-without-API.
+
+This gives us a real "best candidate" signal across C001-C005 runs.
+
+---
+
+## C006 — 2026-05-04 22:46 EDT — visual comparator + one new axis
+Manager hypotheses:
+
+- **A1 — visual comparator agent (no Modal, no API).** Read the `eval/walkover/consecutive_frames.png` for each of: gold, C001/A1 (occ_dilate=0), C001/A3 (quad_expand=120), C002/A1 (asset patch global), C002/A2 (clean_underlay=0.3), C004/A1 (isolated patch), C005/A2 (mask_dilate=10). Same for `eval/floor_logo/consecutive_frames_mid.png`. Score each on the docs/EVALUATION.md rubric (1-5 per dimension), select the visually best run, report which dimensions move and which are flat.
+- **A2 — `logo_blur_px: 1` on court_floor** surface_overrides. New field (not present in v68; pipeline reads it via court_floor compositor). Simulates a slightly painted-on look that should NOT change visible_pct but might improve perceived realism. Safe perturbation; another data point for the visual comparator.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
