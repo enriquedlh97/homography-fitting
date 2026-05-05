@@ -337,6 +337,49 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C006 results — 2026-05-04 22:56 EDT
+
+```
+=== CYCLE C006 SLOT A1 REPORT (visual comparator) ===
+Per-run scores (painted_on / edge_seam / occlusion_realism / jitter_visible / total):
+  GOLD: 4/4/5/5 = 18/20
+  C001/A1 occ_dilate=0: 4/4/5/5 = 18/20 (indistinguishable from GOLD)
+  C001/A3 quad_expand=120: 4/4/5/5 = 18/20
+  C002/A1 asset_patch_global: 4/4/5/5 = 18/20
+  C002/A2 clean_underlay=0.3: 4/4/5/5 = 18/20
+  C004/A1 isolated_patch: 4/4/5/5 = 18/20
+  C005/A2 mask_dilate=10: 4/4/5/5 = 18/20 (slightly more conservative foot edge but within noise)
+Most-moved dimension: none meaningfully. realism.edge_seam shows only sub-pixel differences.
+Most-stuck dimension: temporal.jitter_visible (homography is static/clicked — every run locked identically).
+Recommendation: floor + walkover region is visually saturated for these knobs. Pivot axis to back_banners or left_logo, or sweep logo_blur_px specifically (the one knob that attacks painted_on, currently stuck at 4/5).
+```
+Manager note: KEY FINDING. Floor + walkover region is **visually saturated** across the entire knob set. v68 gold and 6 perturbations all score identically. Pivot needed to back_banners / left_logo regions where there may be more headroom.
+
+```
+=== CYCLE C006 SLOT A2 REPORT (logo_blur_px=1) ===
+Run dir: experiments/2026-05-04_22-54-03_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1785, delta=-0.11%
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_occlusion_iou: 0.9837
+floor_edge_sharpness_ratio: 0.0586 (proves logo_blur_px is being honored — edges softer than baseline)
+Cost: Modal-B200 ~5.7min
+Recommendation: clean candidate; try blur=2 if continuing; otherwise pivot.
+```
+Manager note: logo_blur_px field IS supported and honored. Numerical metrics flat (expected — blur doesn't move visible_pct or SSIM). Visual diff likely sub-pixel; the C007 comparator will check whether the blur produces any perceptible improvement. Treating as no-change candidate (no regression but no measurable improvement either).
+
+---
+
+## C007 — 2026-05-04 22:57 EDT — pivot to back/left regions
+Manager hypotheses:
+
+- **A1 — visual comparator on back_banners + left_logo** across 8 runs (gold + 6 prior + C006/A2 logo_blur=1). Read `<run>/eval/back_banners/consecutive_frames_mid.png` and `<run>/eval/left_logo/consecutive_frames_mid.png` per run. Score same 4-dim rubric. Goal: find a region where knob perturbations actually move visual quality — that's where C008+ will optimize.
+- **A2 — back-banner knob**: `compositor.params.alpha_feather_px` 1→3 in the v68 base config. New config `eval_walkover_c007_a2_alpha_feather_3.yaml`. Single-line change. Rationale: increases edge feather at the back-banner inpaint boundary; may reduce visible cutout if the comparator finds back-banner edges are the bottleneck.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
