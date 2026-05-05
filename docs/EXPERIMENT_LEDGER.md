@@ -138,6 +138,70 @@ Targeting: A1 — strictly increase `floor_walkover_logo_visible_pct`; A2 — pr
 
 Status: dispatched in background.
 
+### C002 results — 2026-05-04 22:14 EDT
+
+```
+=== CYCLE C002 SLOT A1 REPORT ===
+Hypothesis: floor logo asset redbull_white.png -> redbull_court_patch.png
+Asset routing: global (affects all objects) — ObjectPrompt has no asset field; only input.logo is used by compositor pipeline.
+Run dir: experiments/2026-05-04_22-06-09_hull_B200
+Exit code from eval: 3
+Pass: back=P left=P floor=P full=P
+Regression vs gold: yes (any_regression=true)
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1882, delta=+5.32%
+floor_walkover_occlusion_iou: 0.9261 (regression vs reference)
+back_roi_ssim_vs_reference_mean: 0.8214 (global asset change DOES affect back banners)
+Walkover window: 685:723
+Failed metrics: none (all per-region scorecards pass)
+Warnings fired: back/left/floor roi_delta_E_lab; vs_reference regressions on floor_roi_delta_E_lab, back_roi_delta_E_lab, floor_walkover_occlusion_iou
+Cost: Modal-B200 ~5.8min
+Recommendation: Pivot — patch asset improves floor visibility (+5.32%) but global swap regresses back-banner SSIM (0.82) and triggers any_regression. Need per-object asset support (code change) to isolate.
+=== END REPORT ===
+```
+Manager note: real signal but cross-region contamination. Not a candidate (any_regression=true). Confirms visible_pct IS asset-driven; bottleneck is pipeline not honoring per-object assets.
+
+```
+=== CYCLE C002 SLOT A2 REPORT ===
+Hypothesis: clean_underlay_alpha 0.0 -> 0.3 on court_floor
+Run dir: experiments/2026-05-04_22-11-23_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1784, delta=-0.17%
+floor_walkover_occlusion_iou: 0.9774
+floor_roi_delta_E_lab: 6.934
+Walkover window: 685:723
+Failed metrics: none
+Warnings fired: back/left/floor roi_delta_E_lab
+Cost: Modal-B200 ~11min
+Recommendation: continue same direction — visible_pct held but occlusion_iou (0.9774) below A1 baseline 0.984.
+=== END REPORT ===
+```
+Manager note: no-change for visible_pct; small occlusion_iou cost (0.984 → 0.977). Not a candidate.
+
+### C002 synthesis
+
+A1 confirmed visible_pct is asset-driven (+5.32% gain from a single asset swap). But the current pipeline routes ALL objects through `input.logo` (global). Per-object asset routing is needed to apply the patch asset to obj_3 alone without breaking back banners. Pivot to a CODE change.
+
+---
+
+## C003 — 2026-05-04 22:14 EDT — code change: per-object asset support
+Manager hypothesis: add a `asset: str | None` field to `ObjectPrompt` and have the three video pipeline paths honor it. Specifically: when `prompt.asset` is set, load that specific image as the overlay for that object's compositor calls instead of the global `overlay`. Backwards-compatible: empty / missing `asset:` falls back to the global behavior.
+
+- **A1 — code-change agent (single agent this cycle, no Modal run)**
+  - Changes:
+    - `src/banner_pipeline/segment/base.py`: add `asset: str | None = None` field to `ObjectPrompt` dataclass.
+    - `src/banner_pipeline/pipeline.py:_prompts_from_config`: parse `asset:` from each prompt entry.
+    - In each of the three `run_pipeline_video*` functions: where `overlay` is used in the per-frame compositor loop, prefer `_per_obj_overlay.get(obj_id, overlay)` where `_per_obj_overlay` is a dict pre-loaded from each prompt's `asset` field at function start.
+  - Verification (must all pass before commit):
+    1. `uv run pytest tests/ -x -q` — all existing tests pass.
+    2. Backwards-compat test: run eval framework on `experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/` (which has NO `asset:` fields anywhere) — eval should still pass all four scorecards. Code change must not affect runs with no per-object asset.
+  - Commit: `code: ObjectPrompt.asset for per-object overlay routing` + push.
+
+After C003 lands, C004 will re-test the floor asset swap in isolation: copy v68 base, add `asset: data/logos/redbull_court_patch.png` only to obj_3, expect visible_pct +5.3% with back banners unchanged.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
