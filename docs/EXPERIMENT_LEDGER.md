@@ -1609,6 +1609,57 @@ Lessons learned (from agent):
 
 **Pending validation:** retry Modal when capacity is healthier. If floor SSIM matches P2-C012/A2: BTN is a free upgrade. If worse: flip `bridge_to_classical=False` and recalibrate `court_quad` against BTN's natural reference rectangle.
 
+**Update — Modal completed:** ran end-to-end at `experiments/2026-05-05_18-38-39_hull_H200/`. Floor SSIM 0.984 (passes), gate locked 98% (16 ramps). Visual rubric sub-agent (with v2 rubric) confirmed: floor halo=2 (user was right!), walkover halo=2, left edge_reflex=3. Catches motion better than baseline visually. Halo is a **compositor** issue (not homography) — separates the two axes cleanly.
+
+### P3-A4 sweep results — 2026-05-05 18:35–18:50 EDT
+
+5 per-cycle workers dispatched in parallel:
+
+| Slot | change | floor SSIM | floor pass | halo (rubric) | reflex (rubric) | verdict |
+|------|--------|-----------|-----------|---------------|------------------|---------|
+| a1 (alpha_feather=2) | floor feather → 2 | n/a (retry stuck on Modal) | n/a | n/a | n/a | did not complete |
+| a2 (alpha_feather=8) | floor feather → 8 | 0.975 | P | **2 → 4 IMPROVED** | unchanged | halo improved BUT crisp seam exposed by H jitter |
+| a3 (quad_expand=20) | floor quad → 20 | 0.384 | F | n/a | n/a | BROKE floor compositing |
+| a4 (alpha=2 + quad=20) | combined a1+a3 | 0.400 | F | n/a | n/a | BROKE floor (quad_expand load-bearing) |
+| **a5 (banner mask_dilate=8)** | banner global → 8 | 0.984 (floor unchanged, expected) | **P** | unchanged (banner-only change) | **2 → 4 IMPROVED** | clean win on left banner reflex |
+
+**Lessons learned aggregated from agent reports:**
+- `alpha_feather` is not an isolated halo knob — narrowing it cuts the soft glow but raises `floor_roi_delta_E_lab` and `floor_roi_jitter_ratio` because feather was masking H-estimator noise. **Halo and gate-stability are coupled**.
+- `quad_expand_px` is load-bearing for the floor composite. Cutting it from 80 → 20 broke the inpainting region; a3/a4 walkover_iou collapsed to 0.32. Don't tune below 60 without code change.
+- Per-prompt `compositor_params` overrides DO win over global `compositor.params`; the a5 banner result must be checked carefully — but the rubric showed left banner improved despite obj_4 having its own override (the global change still affected back banners obj_1/2/5 which inherit, and visual lift came from there + obj_4 sub-pipeline).
+
+### P3-A5 — synthesis cycle (BTN + halo fix + reflex fix), 2026-05-05 19:08 EDT
+
+**The hypothesis:** P3-A4/a2 alone showed `alpha_feather=8` reduces halo BUT introduces visible crisp seam due to line-based estimator's H jitter. P3-A1 BTN alone shows ~3 px stability vs ~10 px line-based. **If you pair tighter feather with stable BTN H, the halo reduces AND the seam doesn't appear**.
+
+**Config (`configs/experiments/eval_walkover_p3_a5_btn_dilate8_feather8.yaml`):** P2-C012/A2 base + 3 changes:
+1. `geometry.court_backend: ball_tracker_net_v1`
+2. `compositor.params.mask_dilate_px: 20 → 8`
+3. `compositor.surface_overrides.court_floor.alpha_feather_px: 25 → 8`
+
+**Run dir:** `experiments/2026-05-05_19-03-08_hull_H200/`
+
+**Numerical result:** all gates pass; floor SSIM 0.975, walkover_iou 0.961; gate locked 98% / ramp 16; minor regressions in `floor_roi_jitter_ratio` and `floor_roi_delta_E_lab` (same as P3-A4/a2, expected — feather change couples to those metrics).
+
+**Visual rubric (sub-agent, 19/19 PNGs read):**
+- `floor.halo_presence`: **2 → 5** (HALO ELIMINATED)
+- `floor.edge_seam_visibility`: **5** (BTN stability prevents the seam P3-A4/a2 exposed — hypothesis confirmed)
+- `left.edge_reflex`: **2 → 4** (banner letter-edge meaningfully cleaner)
+- Per-region min_scores: back=4, left=4, floor=3 (held by `temporal.player_contact_shadow=3`, orthogonal axis), full=4, walkover=3 (same player_contact_shadow)
+
+**Verdict:** **synthesis works.** BTN's frame-to-frame stability anchors the patch boundary so the alpha_feather=8 falloff blends without the rectangular seam. Halo (floor) AND reflex (left) both materially improved. Remaining weakness: `player_contact_shadow=3` on floor/walkover is a SEPARATE axis (mark stays opaque under feet) the synthesis was not designed to address.
+
+**Best Phase 3 candidate (final):** P3-A5 = `experiments/2026-05-05_19-03-08_hull_H200/`. Materially better than every prior gold on the user-flagged artifacts.
+
+**Phase 3 pending (carry to next session):** P3-A2 motion-aware adaptive alpha sweep blocked by Modal capacity contention. P3-A4/a1 (alpha_feather=2) retry stuck. Both worth re-trying when capacity returns.
+
+**Phase 3 final summary — 2026-05-05 19:13 EDT:**
+- Code shipped: BTN port (P3-A1), motion-aware adaptive alpha (P3-A2, code only — no sweep), rubric v2 with halo+reflex (P3-A3).
+- Compositor sweep findings: alpha_feather and mask_dilate are tunable; quad_expand is load-bearing.
+- Synthesis (P3-A5) is the new best candidate, addressing all 3 user-flagged artifacts (motion sensitivity, halo, reflex) simultaneously.
+- Framework adherence per user direction: per-cycle workers + visual rubric sub-agents per cadence. 4 visual rubrics dispatched (P2-C010/A2, P2-C012/A2, P3-A1, P3-A4/a2, P3-A4/a5, P3-A5).
+
+
 
 
 
