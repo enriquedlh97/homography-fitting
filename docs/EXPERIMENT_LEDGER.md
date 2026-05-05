@@ -553,6 +553,112 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C010 results — 2026-05-04 23:52 EDT
+
+```
+=== CYCLE C010 SLOT A1 REPORT (comprehensive comparator) ===
+Per-run scores (back / floor_mid / walkover / OVERALL):
+  GOLD:    20 / 20 / 20 = 60/60
+  C001/A1: 20 / 20 / 20 = 60/60
+  C005/A2: 20 / 20 / 20 = 60/60
+  C006/A2: 20 / 20 / 20 = 60/60
+  C008/A1: 20 / 20 / 20 = 60/60
+  C009/A2: 14 / 20 / 20 = 54/60 (back banners horizontally shifted)
+C009/A2 verification: YES — padding=0.15 visibly shifts back banners (entire strip offset; partial logo at left edge). Real placement regression, not just metric artifact. Floor + walkover unchanged.
+Best run: GOLD (tied with C001/A1, C005/A2, C006/A2, C008/A1 at 60/60). None of the explored knobs improved on gold.
+Recommendation: Scrub experiments/2026-05-04_23-34-25_hull_B200/eval/back_banners/consecutive_frames_mid.png next to GOLD to see the padding regression at first glance.
+```
+Manager note: GOLD remains best. C009/A2 padding=0.15 confirmed visibly broken. Framework regression-detection needs fixing (didn't catch the SSIM=0.7173 drop).
+
+```
+=== CYCLE C010 SLOT A2 REPORT ===
+Hypothesis: fitter.type hull -> fronto_parallel
+Run dir: experiments/2026-05-04_23-49-40_fronto_parallel_B200
+Exit code: 0
+Pass: all P
+Regression vs gold: no
+back/left/floor _ssim_vs_ref_mean: 0.9983 / 0.9977 / 0.9995
+floor_walkover_logo_visible_pct: +0.06% (flat)
+Cost: Modal-B200 ~10.5min
+Recommendation: dead end — geometric_source reported `static_fallback`; all 3 fitters (hull/pca/fronto_parallel) produce identical output because the static-clicked path BYPASSES the runtime fitter. fitter.type is INERT for v68 base config.
+```
+Manager note: NEW ARCHITECTURAL FINDING — `fitter.type` is inert when `placement_quad` is set on prompts (the static-clicked path). This explains C001-C010 fitter-no-op behavior. Adding to draft findings.
+
+---
+
+## DRAFT FINDINGS — extended with C010 (as of 2026-05-04 23:52 EDT)
+
+### Updated central conclusion
+
+The v68 manually-clicked static-homography pipeline is at quality plateau on `data/melbourne-walking-over-logo.mov`. Across 10 cycles, **only one knob produced visible delta and it was a regression** (C009/A2 padding=0.15 shifted back banners). The remaining safe knobs are no-ops because the static-clicked path **structurally bypasses the runtime fitter** and the dynamic-geometry activation gate is **structurally broken in hybrid mode**.
+
+### What we measured systematically
+
+10 cycles, 11 Modal runs. All Modal runs committed with experiment dirs + per-region eval artifacts.
+
+| Cycle | Knob / change | Outcome |
+|---|---|---|
+| C001/A1 | occlusion_dilate_px 2→0 | no-change clean pass |
+| C001/A2 | alpha_feather_px 25→10 (court_floor) | no-change clean pass |
+| C001/A3 | quad_expand_px 80→120 | regression (occlusion_iou fails gate) |
+| C002/A1 | floor asset → court_patch (global) | regression (back/left visibly broken) |
+| C002/A2 | clean_underlay_alpha 0→0.3 | no-change clean pass |
+| C003 | code: ObjectPrompt.asset + 3 video paths | SUCCESS — backwards-compat verified |
+| C004/A1 | isolated obj_3 asset patch (uses C003 code) | no-change clean pass; isolation works |
+| C005/A1 | AI rubric on gold | failed — no ANTHROPIC_API_KEY |
+| C005/A2 | mask_dilate_px 20→10 (global) | no-change clean pass |
+| C006/A1 | visual comparator on floor+walkover, 7 runs | all 7 = 18/20 floor saturated |
+| C006/A2 | logo_blur_px=1 (court_floor) | no-change clean pass |
+| C007/A1 | visual comparator on back+left, 8 runs | all 7 valid = 20/20 saturated; C002/A1 = 10-12/20 |
+| C007/A2 | alpha_feather_px 1→3 (global) | soft regression (back delta_E warning) |
+| C008/A1 | fitter pca | no-change clean pass |
+| C008/A2 | dynamic_full config | regression — multiple gates fail; revealed dynamic-geom activation bug |
+| C009/A1 | code-reading: dynamic-geom diagnostic | bug found — medium-difficulty fix |
+| C009/A2 | padding 0.1→0.15 | **VISIBLE REGRESSION** (back banners shifted) — framework didn't flag it |
+| C010/A1 | comprehensive comparator, 6 runs × 3 strips | GOLD = 60/60; C009/A2 = 54/60; rest tied at 60/60 |
+| C010/A2 | fitter fronto_parallel | no-change clean pass; revealed fitter is inert under static-clicked path |
+
+### What worked (enables future work)
+
+- **Per-object asset routing** — `ObjectPrompt.asset` field added to dataclass; parser updated; all 3 video pipeline paths honor it; backwards-compat verified (97 tests pass; v68 gold unchanged). Commit `47b2665`. Unblocks experiments where individual objects can carry different assets.
+
+### What didn't move the needle
+
+- 10+ config-knob perturbations (occlusion_dilate, alpha_feather × 2, quad_expand, asset_patch_isolated, clean_underlay_alpha, mask_dilate, logo_blur, padding, fitter × 3) — all no-ops or regressions on this clip.
+- Dynamic-geometry config — the existing `eval_walkover_v68_clicked_homography_dynamic_full.yaml` is structurally inert in hybrid mode (see bugs below).
+- AI-rubric path — environment lacks `ANTHROPIC_API_KEY` (anthropic SDK installed but unused).
+
+### Three real bugs found, all deferred for human review
+
+1. **Dynamic-geometry activation gate** (medium fix). `run_pipeline_video_hybrid` never instantiates `GeometryFittingEngine`; `SUPPORTED_GEOMETRY_SURFACE_TYPES` excludes `court_floor` and `banner`. So `pipeline.geometry.enabled: true` is structurally inert in hybrid mode. Hybrid does run a parallel `CourtGeometryEstimator` for `court_plane_placement_*` metrics (line 2996), but that's separate from `geometry_runtime_enabled`. Detailed in C009/A1 above.
+
+2. **Eval framework regression-detection bug** (small fix). `src/banner_pipeline/eval/reference.py:detect_regressions` doesn't catch `roi_ssim_vs_reference_mean` regressions. C009/A2's 28% back-banner SSIM drop was not flagged. Likely the comparison code expects keys at top level in gold's payload but they're nested under `vs_reference`.
+
+3. **Fitter is inert under static-clicked path** (architectural — by-design but undocumented). When prompts carry `placement_quad`, the runtime fitter is bypassed. So changing `pipeline.fitter.type` has no effect on v68-style configs. This isn't a bug per se but means our benchmark space for fitters needs a config without static placement_quad.
+
+### Best candidate
+
+**GOLD remains the best run.** No experiment beat it numerically (saturated metrics) or visually (saturated rubric scores from sub-agent comparators).
+
+### Recommendations for the human
+
+1. **Provision `ANTHROPIC_API_KEY`** for future runs to enable AI rubric scoring on candidates beyond what we have today.
+2. **Fix the framework regression-detection bug** (#2 above) so future autonomous runs catch hidden regressions like C009/A2.
+3. **Decide whether to fix dynamic-geometry activation** (#1 above). It's a medium effort but could unlock a meaningfully different rendering style worth testing. Alternative: explicitly retire dynamic-geometry-in-hybrid as unsupported.
+4. **For genuine improvements**, consider these axes that this autonomous run could not exercise:
+   - Different occlusion masker (`matanyone` continuous-alpha; not tested due to ~25-min Modal job exceeding agent harness budget).
+   - Different clip generalization (`zoom-clip-melbourne.mov`, `tennis-clip.mp4`) — needs new prompt configs first.
+   - Pipeline running WITHOUT static `placement_quad` so the runtime fitter actually runs (lets us compare hull/pca/fronto_parallel meaningfully).
+
+---
+
+## C011 — 2026-05-04 23:52 EDT — final breadth: local_color_match
+Manager hypothesis: only one untouched compositor knob remains: `compositor.params.local_color_match: true → false`. Currently true. Single agent. Gather one more data point before winding down.
+
+- **A1 — `local_color_match: false`** in compositor.params. New config `eval_walkover_c011_a1_no_local_color_match.yaml`. Single-line config change.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
