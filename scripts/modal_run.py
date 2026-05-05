@@ -93,7 +93,7 @@ def _base_cuda_image() -> modal.Image:
 
 
 def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image:
-    return (
+    image = (
         image.run_commands(*extra_commands)
         .run_commands(
             "git clone https://github.com/facebookresearch/sam2.git /tmp/sam2",
@@ -121,6 +121,14 @@ def _install_sam_models(image: modal.Image, *extra_commands: str) -> modal.Image
         )
         .add_local_dir("src", remote_path="/root/src")
     )
+    # Optional: BallTrackerNet weights for the ball_tracker_net_v1
+    # geometry backend (P3-A1).  Only mounted when the local weights
+    # directory exists; configs that use the classical backend don't
+    # require it.
+    weights_dir = REPO_ROOT / "weights"
+    if weights_dir.is_dir() and any(weights_dir.iterdir()):
+        image = image.add_local_dir(str(weights_dir), remote_path="/root/weights")
+    return image
 
 
 def _build_t4_image() -> modal.Image:

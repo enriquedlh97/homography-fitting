@@ -642,6 +642,28 @@ class CourtGeometryEstimator:
         )
 
 
+def _build_court_estimator(config: GeometryConfig) -> Any:
+    """Build the court-geometry estimator selected by ``config.court_backend``.
+
+    Local import for ``ball_tracker_net_v1`` avoids the torch import cost
+    when the default ``classical_lines_v1`` backend is in use.
+    """
+    backend = (config.court_backend or "classical_lines_v1").strip().lower()
+    if backend == "classical_lines_v1":
+        return CourtGeometryEstimator(config)
+    if backend == "ball_tracker_net_v1":
+        # Local import: avoids torch + model load when the default backend
+        # is selected (every existing config).
+        from banner_pipeline.court_geometry_ball_tracker import (
+            BallTrackerNetCourtEstimator,
+        )
+        return BallTrackerNetCourtEstimator(config)
+    raise ValueError(
+        f"Unknown geometry.court_backend: {config.court_backend!r}. "
+        "Supported: 'classical_lines_v1', 'ball_tracker_net_v1'."
+    )
+
+
 def _blend_points(
     prev_point: np.ndarray | None,
     current_point: np.ndarray | None,
@@ -687,7 +709,7 @@ class GeometryFittingEngine:
         self.prompts = prompts
         self.fallback_fitter = fallback_fitter
         self.fitter_params = fitter_params or {}
-        self.estimator = CourtGeometryEstimator(self.config)
+        self.estimator = _build_court_estimator(self.config)
         self.fronto_fitter = FrontoParallelBannerFitter()
         self.vp_fitter = VPConstrainedBannerFitter()
         self.states = {int(prompt.obj_id): _ObjectState() for prompt in prompts}
