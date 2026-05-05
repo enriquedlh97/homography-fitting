@@ -1270,5 +1270,29 @@ Run dirs: A1 `2026-05-05_15-23-36`, A2 `15-23-43`, A3 `15-23-23`, A4 `15-23-06`,
 | A4   | 30     | Mostly locked, some ramp |
 | A5   | 99999  | 100% locked (sanity) |
 
+### P2-C008 results — 2026-05-05 15:55 EDT (definitive gate characterization)
+
+| Slot | tol_px | locked | ramp | estimate | floor SSIM | floor pass |
+|------|--------|--------|------|----------|-----------|-----------|
+| A1   | 4      | 27/767 (4%)   | 740/767 (96%) | 0/767 (0%) | 0.208 | F |
+| A2   | 8      | 70/767 (9%)   | 697/767 (91%) | 0/767 (0%) | 0.254 | F |
+| A3   | 15     | 205/767 (27%) | 562/767 (73%) | 0/767 (0%) | 0.437 | F |
+| A4   | 30     | 617/767 (80%) | 150/767 (20%) | 0/767 (0%) | 0.853 | F |
+| A5   | 99999  | 767/767 (100%) | 0/767 (0%)    | 0/767 (0%) | 1.000 | P |
+
+Run dirs: A1 `2026-05-05_15-45-51`, A2 `15-45-15`, A3 `15-44-43`, A4 `15-45-08`, A5 `15-44-53` (all `_hull_H200`).
+
+**Quantitative findings:**
+
+1. **`floor_SSIM_vs_gold = locked_fraction`** (within ~1%). The relationship is linear and nearly perfect — every frame the gate ramps away from seed costs SSIM proportionally. `estimate_frames` is always 0, meaning ramping never completes within the 767-frame clip; the gate just slowly drifts the corners toward estimates that are themselves wrong.
+2. **20% of frames have estimator-vs-seed displacement > 30 px.** That's much larger than any realistic camera motion would justify. The line-based `CourtGeometryEstimator` is producing genuinely bad H estimates on a fifth of frames.
+3. **96% of frames have displacement > 4 px** — even tiny tolerance gates fire on almost every frame. The estimator is too noisy at line-thickness scale (~3-5 px) to support a useful tight-tolerance hybrid.
+
+**Conclusion of the hybrid_lock-with-tolerance axis:**
+
+With the existing line-based estimator, no setting of `tolerance_px`, `vp_smoothing_alpha`, `ramp_min_frames`, `ramp_motion_px_per_frame`, or `court_quad` calibration produces a Pareto improvement over the always-locked baseline (= v68 gold). The hybrid_lock infrastructure (HybridLockState, gate decision, ramp state machine) is sound and well-instrumented — it just lacks an upstream estimator reliable enough to gate on. **GOLD remains v68 manually-clicked static-homography.**
+
+
+
 
 
