@@ -467,6 +467,92 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C009 results — 2026-05-04 23:36 EDT
+
+```
+=== CYCLE C009 SLOT A1 REPORT (diagnostic) ===
+Findings:
+1. _geometry_enabled at pipeline.py:200 reads YAML correctly (returns True for dynamic_full).
+2. geometry_runtime_enabled flips True only via GeometryFittingEngine.finalize_metrics() (court_geometry.py:797).
+3. run_pipeline_video_hybrid (line 2585) NEVER instantiates GeometryFittingEngine. Confirmed by grep over 2585-3650.
+4. SUPPORTED_GEOMETRY_SURFACE_TYPES = {back_wall_banner, side_wall_banner, court_marking}. v68 dynamic config uses surface_type: court_floor and banner — NEITHER in supported set. Even if engine ran, _geometry_active_object_ids returns [].
+5. Hybrid DOES run a parallel CourtGeometryEstimator at pipeline.py:2996 for court_plane_placement_* metrics — separate from geometry_runtime_enabled flag. So the C008/A2 degradation came from the court-plane projection itself failing/falling back, NOT from the geometry_runtime_enabled flag.
+Root cause: TWO-PART defect — (a) hybrid never builds GeometryFittingEngine, (b) supported surface types don't include court_floor/banner.
+Fix difficulty: medium.
+```
+Manager note: rich diagnostic. Real bug found in the dynamic-geometry path. Defer fix; document for human review.
+
+```
+=== CYCLE C009 SLOT A2 REPORT ===
+Hypothesis: padding 0.1->0.15 in compositor.params (global)
+Run dir: experiments/2026-05-04_23-34-25_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no  [BUT SEE MANAGER NOTE — framework bug]
+back_roi_ssim_vs_reference_mean: 0.7173  [** -28% vs gold's 1.0 self-comparison; this IS a regression **]
+left_roi_ssim_vs_reference_mean: 0.9977
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1788, delta=+0.06%
+Cost: Modal-B200 ~12.6min
+Recommendation: minor sweep candidate, unlikely breakthrough.
+```
+Manager note: **HIDDEN REGRESSION + FRAMEWORK BUG DISCOVERED**. Back-banner SSIM-vs-reference dropped from gold's 1.0 to 0.7173 — a 28% drop that should have flagged any_regression=true under the 5% slop rule. The eval framework's `detect_regressions` (`src/banner_pipeline/eval/reference.py`) is NOT detecting cross-region SSIM regressions properly. Likely cause: the reference key `back_roi_ssim_vs_reference_mean` only exists nested under `vs_reference` in gold's payload, but the comparison code expects it at top level. Worth flagging for the human's eval-framework cleanup queue.
+
+So: C009/A2 (padding=0.15) is actually a regression — back-banner appearance materially changed — but the framework hid it. Visual comparator next cycle will confirm.
+
+---
+
+## DRAFT FINDINGS — running summary as of 2026-05-04 23:38 EDT
+
+(Full Final Summary will be appended at deadline 10:00 EDT 2026-05-05.)
+
+**Central finding: the v68 manually-clicked static-homography pipeline is at a quality plateau on this clip.** Numerical metrics (visible_pct, SSIMs, jitter ratios, occlusion_iou) are saturated; visual rubric scores from sub-agent comparators are saturated (all knob-perturbation runs scoring 18/20 floor or 20/20 back/left, modulo the global asset swap which regresses).
+
+### Runs categorized
+
+**No-change clean passes (all gates green, no regression, no visible improvement):**
+- C001/A1 occlusion_dilate_px=0
+- C002/A2 clean_underlay_alpha=0.3
+- C004/A1 isolated obj_3 asset patch (uses new ObjectPrompt.asset code)
+- C005/A2 mask_dilate_px=10 (global)
+- C006/A2 logo_blur_px=1 on court_floor
+- C008/A1 fitter.type=pca
+
+**Hard regressions (failed gates or visible degradation):**
+- C001/A3 quad_expand_px=120 — floor_walkover_occlusion_iou 0.44 (FAIL gate)
+- C002/A1 asset_patch_global — back_ssim_vs_ref 0.82 + visible patch outline on back/left banners (visual comparator)
+- C008/A2 dynamic_full config — left_ssim 0.378, floor_ssim 0.222 (multiple gate fails); also revealed dynamic-geometry activation bug
+
+**Soft regressions (gates pass, vs-reference SSIM drops, framework didn't flag):**
+- C007/A2 alpha_feather_px=3 (back delta_E warning + back ssim_vs_ref 0.98)
+- C009/A2 padding=0.15 (back ssim_vs_ref 0.7173 — significant; framework `detect_regressions` missed this)
+
+### Code change landed (47b2665)
+
+`ObjectPrompt.asset` field + per-object overlay routing in all 3 video pipeline paths. Backwards-compatible (97 tests pass; v68 gold runs unchanged). Unblocks future per-object asset experiments.
+
+### Real bugs discovered (both deferred for human review)
+
+1. **Dynamic-geometry activation gate (medium fix)** — `run_pipeline_video_hybrid` never instantiates `GeometryFittingEngine`; SUPPORTED_GEOMETRY_SURFACE_TYPES excludes `court_floor` and `banner`. So config flag `pipeline.geometry.enabled: true` is structurally inert in hybrid mode. Documented in C009/A1 finding above with file:line references.
+2. **Eval framework regression-detection bug (small fix)** — `src/banner_pipeline/eval/reference.py:detect_regressions` does not catch back/left/floor `roi_ssim_vs_reference_mean` regressions. C009/A2's 28% drop on back was not flagged. Likely the comparison expects keys at top-level in gold's payload but they're nested under `vs_reference`.
+
+### Open recommendations for human
+
+- **Best candidate vs gold:** none yet. The gold itself remains the visually best run.
+- **AI rubric path is unavailable** in autonomous environment — no `ANTHROPIC_API_KEY`. Anthropic SDK is installed (commit `eval framework` series). Provisioning a key and running `--with-ai-review` on the gold + a few candidates would establish realism baseline scores beyond the saturated numerical metrics.
+- **Code-level fixes** (per above bugs) will likely matter more than further config-knob iteration.
+- **Generalization to a different clip** (`zoom-clip-melbourne.mov`, `tennis-clip.mp4`) requires new prompt configs (manual click points). Worth doing once before any production claim.
+
+---
+
+## C010 — 2026-05-04 23:38 EDT — comprehensive visual comparator + last fitter
+Manager hypotheses:
+
+- **A1 — comprehensive visual comparator.** Across 6 runs (GOLD, C001/A1 occ_dilate=0, C005/A2 mask_dilate=10, C006/A2 logo_blur=1, C008/A1 fitter=pca, C009/A2 padding=0.15). Read 3 frames per run — sample at frames 50 (mid-clip pre-walkover), 400 (mid-clip), 700 (mid-walkover). Score the holistic 4-dim rubric. Goal: identify the visually-best run AND verify whether C009/A2's padding=0.15 (which has 28% SSIM drop) is visibly broken in back banners.
+- **A2 — `pipeline.fitter.type: fronto_parallel`** (third fitter option). Single Modal run; gather one more architectural data point.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
