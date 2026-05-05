@@ -238,6 +238,53 @@ Manager hypothesis: now that obj_3 can carry its own `asset:` field, swap ONLY o
 
 Status: dispatched in background.
 
+### C004 results — 2026-05-04 22:32 EDT
+
+```
+=== CYCLE C004 SLOT A1 REPORT ===
+Hypothesis: ISOLATED floor asset swap obj_3 only to redbull_court_patch.png (uses new ObjectPrompt.asset code from 47b2665).
+Run dir: experiments/2026-05-04_22-26-31_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1786, delta=-0.01%
+floor_walkover_occlusion_iou: 0.9838
+back_roi_ssim_vs_reference_mean: 0.9983 — ISOLATION CONFIRMED (vs 0.82 in C002/A1 global)
+left_roi_ssim_vs_reference_mean: 0.9976
+Walkover window: 685:723
+Failed metrics: none
+vs_reference any_regression: false
+Cost: Modal-B200 ~5.7min
+Recommendation: pivot — visible_pct didn't move; gain in C002/A1 was cross-region artifact.
+=== END REPORT ===
+```
+Manager note: SUCCESS for code (per-object asset routing works), DEAD-END for hypothesis (visible_pct insensitive to obj_3 asset).
+
+### C001-C004 axis exhaustion — pivot rationale
+
+After 4 cycles + ~7 floor-targeted runs, `floor_walkover_logo_visible_pct` is essentially fixed at 0.178 ± 0.01 across very different perturbations (occlusion_dilate, alpha_feather, quad_expand, clean_underlay, asset content). The earlier +5.32% spike (C002/A1) was a CROSS-REGION measurement artifact, not a real signal. **Conclusion: visible_pct is not a useful optimization target for this clip with this placement_quad.** The metric is dominated by the placement_quad geometry and the eval's delta-threshold heuristic, both of which are essentially fixed.
+
+Pivot strategy:
+- Establish a NEW signal: **AI rubric scores on the gold**. Until we have that, we can't tell whether incremental config changes are improving or degrading visual quality.
+- Broaden axes beyond floor-only: test global `mask_dilate_px` (affects back banners + left + floor inpaint).
+- Move toward generalization tests: same config on different clip basenames (later cycles).
+
+The framework's existing gates (corner_max_jump, jitter_ratio, SSIM, etc.) all remain green for the gold. Future winners need to either (a) hold all those gates while AI-rubric scores improve, or (b) materially improve a still-passing metric without regression.
+
+---
+
+## C005 — 2026-05-04 22:32 EDT — pivot to AI rubric baseline + broader knob
+Manager hypotheses:
+
+- **A1 — AI rubric on the gold** (no Modal). Establish per-region baseline scores (`realism.painted_on_vs_pasted_on`, `geometry.perspective_plausibility`, `temporal.occlusion_realism`, etc.). One-time cost ~$0.20-0.30. Output lands in `experiments/.../eval/ai_review/*.json`. Gives us a meaningful target for future cycles.
+  - Agent task: `uv sync --extra ai` if needed; then `uv run python -m banner_pipeline.eval --experiment experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/ --reference auto --with-ai-review`. Read the produced ai_review/*.json files. Report rubric scores per region. Commit the new ai_review/ artifacts.
+
+- **A2 — `mask_dilate_px` 20 → 10 globally** (config-only Modal run). Affects how much the inpaint compositor dilates SAM masks before painting. Lower value = tighter logo edges everywhere. Watch for back-banner regressions (this is a global knob).
+  - New config: `eval_walkover_c005_a2_mask_dilate_10.yaml` (single field change in `pipeline.compositor.params`).
+  - Target: `floor_walkover_logo_visible_pct` ≥ gold AND `back_roi_ssim_vs_reference_mean > 0.99` AND `any_regression: false`.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
