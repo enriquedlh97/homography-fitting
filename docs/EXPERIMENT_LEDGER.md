@@ -659,6 +659,33 @@ Manager hypothesis: only one untouched compositor knob remains: `compositor.para
 
 Status: dispatched in background.
 
+### C011 results — 2026-05-05 00:02 EDT
+
+```
+=== CYCLE C011 SLOT A1 REPORT ===
+Hypothesis: local_color_match true -> false in compositor.params (global)
+Run dir: experiments/2026-05-04_23-59-53_hull_B200/
+Exit code: 3 (regression vs reference)
+Pass: back=P left=P floor=P full=P
+Regression vs gold: yes (back_roi_delta_E_lab)
+back_roi_ssim_vs_reference_mean: 0.9718 (vs gold's 1.0; below typical 0.998 — soft regression)
+left_roi_ssim_vs_reference_mean: 0.9976
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1787 (flat)
+Cost: Modal-B200 ~5.7min
+Recommendation: dead end — disabling local_color_match shifts back-banner colors detectably without compensating gain.
+```
+Manager note: dead-end. Confirms local_color_match=true is what keeps back-banner color fidelity aligned with gold; disabling produces a measurable color regression. Note: framework DID flag regression here (back_roi_delta_E_lab key works) — so the bug from C009/A2 was specifically in the SSIM cross-region keys, not delta_E. Useful for the framework bug-fix queue.
+
+---
+
+## C012 — 2026-05-05 00:02 EDT — final-final breadth: lum_strength
+Manager hypothesis: only one untested compositor knob remains worth a single Modal run: `compositor.params.lum_strength: 0.0 → 0.3`. Currently at 0.0. May add subtle shading to placed logos. After this, the agent loop has covered all reasonable safe knob perturbations of the v68 base config; remaining cycles will be visual/sanity checks on the saturated state.
+
+- **A1 — `lum_strength 0.0 → 0.3`** in compositor.params. New config `eval_walkover_c012_a1_lum_strength_03.yaml`.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
