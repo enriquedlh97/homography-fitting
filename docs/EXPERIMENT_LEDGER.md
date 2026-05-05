@@ -1375,6 +1375,21 @@ The empirical estimator-vs-seed max displacement is bounded between 18 and 22 px
 
 **Best candidate (revised):** P2-C010/A2 — `experiments/2026-05-05_16-28-51_hull_H200/`. Tighter and more discriminating than P2-C009/A4, with the same gold-equivalent quality on Melbourne walkover.
 
+### P2-C010/A2 visual rubric — 2026-05-05 16:38 EDT
+
+Sub-agent visual rubric review (Read-tool vision, no SDK; 19/19 PNGs read; CHECKLIST verified):
+
+| Region | min_score | Notes |
+|--------|-----------|-------|
+| back   | 5/5 | Indistinguishable from baked-in originals (Kia, etc.) |
+| left   | 5/5 | Same |
+| floor  | 5/5 | Rock-stable in court space; no jitter/breathing/edge crawl |
+| full   | 5/5 | Full-frame strip indistinguishable from gold modulo brand swap |
+| walkover | 5/5 | Player shoe/leg occlusion correct on floor mark; alpha respects silhouette through entry/pre_contact/contact/post_contact/exit |
+
+**Verdict: visually pixel-equivalent to v68 gold across all 5 regions and all rubric dimensions.** No sub-5 scores anywhere. The hybrid_lock infrastructure, with `tolerance_px=22.0` + median-H-calibrated court_quad, is operating cleanly with the gate dormant on this static clip — exactly the desired production behavior.
+
+
 ## P2-C009 — median-H court_quad recalibration (dispatched 2026-05-05 ~15:58 EDT)
 
 **Discovery:** Frame-to-frame Δ-displacement analysis on the C006/A1 estimator output revealed the noise is **biased, not jittery** — median |Δdisp| frame-to-frame is only 4 px while median absolute disp is 23 px. The line-based estimator is internally consistent in time; it's just *systematically offset* from the v68 truth.
