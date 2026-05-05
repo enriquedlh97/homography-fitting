@@ -1452,9 +1452,23 @@ Compared to P2-C008 (frame-0 court_quad):
 
 **Best candidate (revised):** P2-C009/A4. `experiments/2026-05-05_16-09-48_hull_H200/`. Gold-equivalent on Melbourne walkover, with hybrid_lock instrumented and active. On a moving-camera clip this candidate would dynamically engage the gate; v68 gold cannot.
 
+## P2-C011 — vp_smoothing_alpha sweep at production tol=22 (dispatched 2026-05-05 ~16:42 EDT)
 
+**User-driven hypothesis:** The user noticed there IS subtle camera motion in the late frames (~723-767) of the Melbourne walkover clip. P2-C010/A2 (production candidate) reported 100% locked, meaning the gate never fired. Re-measurement with the actual JPEG-extracted frames the pipeline uses showed max mean displacement = 18.38 px across the clip — never crosses tol=22, so the gate stays dormant. **But that means the floor logo stays frame-0-frozen during the late motion, drifting on screen.** That's the failure mode hybrid_lock was supposed to fix.
 
+**Why isn't the gate firing?** The line-based estimator runs an EMA blend with `vp_smoothing_alpha=0.7` (0.7 weight on the new estimate, 0.3 on the smoothed history). At that smoothing level the estimator's H follows the camera motion — but so smoothly that the projected_corners through court_quad track the camera too, and never disagree with seed by >22 px. The estimator absorbs the motion before the gate can see it.
 
+**Variants (all H200, parallel, main-thread dispatch):**
+
+| Slot | vp_smoothing_alpha | Hypothesis |
+|------|--------------------|------------|
+| A1   | 0.2                | Heavy history; estimator very smooth, gate definitely never fires |
+| A2   | 0.3                | More responsive; may catch motion peaks |
+| A3   | 0.4                | More responsive still |
+| A4   | 0.5                | Equal new/history; should respond to per-frame deviations |
+| A5   | 0.7                | Default (control = P2-C010/A2 reproducer) |
+
+(Note: P2-C007 found that *lower* vp_alpha didn't help with frame-0 court_quad — but that was because frame-0 calibration had a 25 px built-in offset that swamped any motion signal. With median quad calibrated to within ~7 px median, an unsmoothed estimator's responsiveness to motion may now matter.)
 
 
 
