@@ -380,6 +380,47 @@ Manager hypotheses:
 
 Status: dispatched in background.
 
+### C007 results — 2026-05-04 23:09 EDT
+
+```
+=== CYCLE C007 SLOT A1 REPORT (back/left visual comparator) ===
+BACK_BANNERS scores: GOLD/C001/A1/C001/A3/C002/A2/C004/A1/C005/A2/C006/A2 all 20/20; C002/A1 = 10/20 (global asset swap visibly destroys back banners)
+LEFT_LOGO scores: same 7-way 20/20 tie; C002/A1 = 12/20 (visible rectangular patch outline around each Red Bull logo)
+Most-moved dimension: only C002/A1 produces visible delta in back/left; all other 7 runs are pixel-equivalent
+Most-stuck dimension: temporal.jitter_visible (perfect lock everywhere)
+Recommendation: back/left also visually saturated. Knob set has zero leverage on these regions modulo the global-asset regression. Pivot beyond config knobs.
+```
+Manager note: BIG FINDING. Pipeline output is VISUALLY SATURATED across all three regions for our knob axis. Only knob with visible leverage is asset-swap-global, and it's a regression.
+
+```
+=== CYCLE C007 SLOT A2 REPORT (alpha_feather_px 1->3 global) ===
+Run dir: experiments/2026-05-04_23-07-41_hull_B200
+Exit code: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: yes (back_roi_delta_E_lab only)
+back_roi_ssim_vs_reference_mean: 0.9814 (drop from typical 0.998)
+back_roi_temporal_ssim_mean: 0.9999
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1786 (-0.01%)
+Cost: Modal-B200 ~9min
+Recommendation: dead end — softer back-banner edges hurt color fidelity, no compensating gain.
+```
+Manager note: dead-end. Soft regression confirms the v68 default was already tuned for this metric.
+
+### Plateau declaration
+
+After C001-C007 (~9 Modal runs covering occlusion_dilate, alpha_feather_floor, quad_expand, asset_swap_global, asset_swap_isolated, clean_underlay_alpha, mask_dilate_global, logo_blur, alpha_feather_global), and 2 visual-comparator passes (floor+walkover, back+left): **the v68 manually-clicked static-homography pipeline is at a quality plateau on this clip for the simple-knob optimization axis**. All regions are visually saturated; numerical metrics are saturated; the only knob with leverage is global asset swap which regresses cross-region. To break out we need architectural changes.
+
+---
+
+## C008 — 2026-05-04 23:09 EDT — architectural pivot
+Manager hypotheses:
+
+- **A1 — `pipeline.fitter.type: pca`** (vs current `hull`). Single-line config change. Tests whether a different quad-fitting algorithm produces visibly different placement geometry. Available fitters in registry: `pca`, `lp`, `hull`, `fronto_parallel`, `vp_constrained`. New config: `eval_walkover_c008_a1_fitter_pca.yaml`.
+- **A2 — run the existing `eval_walkover_v68_clicked_homography_dynamic_full.yaml`** through Modal. This config already has `pipeline.geometry.enabled: true` and `court_plane_placement` on obj_3 + obj_4. Tests dynamic-line-detected court geometry vs the static clicked corners. Significant departure from gold; expect SSIM-vs-ref drop because placements move per-frame; the question is whether they look BETTER (the Holy Grail of "court geometry tracks real court motion").
+  - Existing experiment outputs at `experiments/2026-05-01_09-04-27_hull_B200/` and `experiments/2026-05-01_09-13-02_hull_H200/` were produced before the eval framework existed. We need a fresh run to get all the eval artifacts. Use the existing yaml as-is.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
