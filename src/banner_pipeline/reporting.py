@@ -44,6 +44,9 @@ _PASSTHROUGH_KEYS = [
     "requested_config_path",
     "frozen_config_path",
     "frozen_config_sha256",
+    "court_plane_placement_enabled",
+    "court_plane_placement_objects",
+    "hybrid_lock_enabled",
 ]
 
 _NUMERIC_KEYS = [
@@ -80,6 +83,11 @@ _NUMERIC_KEYS = [
     "stabilization_frames_held",
     "stabilization_frames_blended",
     "stabilization_frames_raw_accepted",
+    "court_plane_placement_projected_frames",
+    "court_plane_placement_fallback_frames",
+    "hybrid_lock_locked_frames",
+    "hybrid_lock_ramp_frames",
+    "hybrid_lock_estimate_frames",
 ]
 
 
