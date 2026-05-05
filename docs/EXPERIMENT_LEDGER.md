@@ -1341,6 +1341,40 @@ The displacement distribution is very wide: even the *best 5%* of frames show �
 
 **Total Modal cycles this phase:** ~30 H200 GPU-runs across 8 logical cycles. ~6 hours wall time, well under the 18:30 deadline.
 
+## P2-C009 — median-H court_quad recalibration (dispatched 2026-05-05 ~15:58 EDT)
+
+**Discovery:** Frame-to-frame Δ-displacement analysis on the C006/A1 estimator output revealed the noise is **biased, not jittery** — median |Δdisp| frame-to-frame is only 4 px while median absolute disp is 23 px. The line-based estimator is internally consistent in time; it's just *systematically offset* from the v68 truth.
+
+**Hypothesis:** the offset is calibration error, not estimator error. Frame-0/warmup-8 court_quad calibration locks in whatever bias frame 0 has. If we instead derive court_quad from the **median** per-frame "ideal" court_quad across all 767 frames, the median displacement should drop dramatically because we're targeting the steady-state H, not frame 0.
+
+**Prediction (from `scripts/calibrate_court_rect_median.py`, run locally):**
+
+```
+With MEDIAN-calibrated court_quad:
+  max_disp_px: mean=8.00 median=6.94 p95=17.77 max=33.72
+  frames with max_disp > 4 px:  563/767 (73%)
+  frames with max_disp > 8 px:  338/767 (44%)
+  frames with max_disp > 15 px: 83/767 (11%)
+  frames with max_disp > 30 px: 2/767 (0%)
+```
+
+vs frame-0 court_quad which had median 23 px, 99% > 4 px, 28% > 30 px.
+
+**Variants (all H200 parallel, dispatch from main thread):**
+
+| Slot | tol_px | predicted locked% | predicted floor_SSIM* |
+|------|--------|-------------------|-----------------------|
+| A1   | 4      | 27%               | 0.27 |
+| A2   | 8      | 56%               | 0.56 |
+| A3   | 15     | 89%               | 0.89 |
+| A4   | 30     | 100%              | 1.00 |
+| A5   | 99999  | 100% (sanity)     | 1.00 |
+
+(*Predictions assume the linear `floor_SSIM ≈ locked_fraction` from P2-C008.*)
+
+If A3/A4 land near predictions, the median-H calibration is the right fix and tol=15-30 with this calibration becomes a real candidate to beat sanity-locked on a moving-camera clip.
+
+
 
 
 
