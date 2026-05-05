@@ -1242,4 +1242,33 @@ If smoothing the estimator brings the per-frame projected_corners closer to a st
 | A4   | 0.7      | 30     | 30       | 0.3         | Default smoothing, very slow ramp only |
 | A5   | 0.7      | 99999  | 3        | 2.0         | Sanity (control = always-locked) |
 
+### P2-C007 results — 2026-05-05 15:24 EDT
+
+| Slot | vp_alpha | tol | ramp | floor SSIM vs gold | walkover_iou |
+|------|----------|-----|------|--------------------|--------------|
+| A1   | 0.2      | 8       | 3/2.0    | 0.267              | 0.224 |
+| A2   | 0.2      | 30      | 20/0.5   | 0.305              | 0.350 |
+| A3   | 0.4      | 30      | 20/0.5   | 0.394              | 0.683 |
+| A4   | 0.7      | 30      | 30/0.3   | 0.595              | 0.214 |
+| A5   | 0.7      | 99999   | 3/2.0    | 0.9999             | 0.9998 |
+
+Run dirs: A1 `2026-05-05_15-23-36`, A2 `15-23-43`, A3 `15-23-23`, A4 `15-23-06`, A5 `15-23-26` (all `_hull_H200`).
+
+**Diagnostic:** Heavy EMA smoothing (`vp_alpha=0.2`) does NOT rescue tight tolerances. Slow-ramp (30 frames at 0.3px/frame) is *worse* than fast-ramp at the same tolerance (P2-C006/A4 = 0.85, P2-C007/A4 = 0.59) because once the gate fires it spends more frames drifting toward the wrong estimate. **Per-frame estimator noise is the binding constraint.** No tolerance/smoothing/ramp combination salvages floor; only sanity-locked passes.
+
+**Reporting bug found mid-cycle:** P2-C005, P2-C006, P2-C007 all showed `hybrid_lock_*` counters as None. Root cause: `src/banner_pipeline/reporting.py` filters pipeline metrics through `_PASSTHROUGH_KEYS` and `_NUMERIC_KEYS` allow-lists; new keys (`hybrid_lock_locked_frames`, `_ramp_frames`, `_estimate_frames`, `court_plane_placement_*`) weren't in either list, so they were stripped before serialization. Fixed in commit `94a0383`.
+
+## P2-C008 — re-run with counter visibility (dispatched 2026-05-05 ~15:30 EDT)
+
+**Goal:** Re-dispatch P2-C006's 5 configs (court_quad calibrated, tol sweep 4/8/15/30/99999) with the reporting fix in place. Goal is to surface definitive counter values per tolerance — i.e. quantify what fraction of frames the gate keeps locked vs ramps vs estimates. The previous cycles inferred gate behavior from final SSIM only; this gives direct ground truth.
+
+| Slot | tol_px | What we expect to see |
+|------|--------|----------------------|
+| A1   | 4      | Mostly estimate_frames (gate fires often) |
+| A2   | 8      | Mostly estimate_frames |
+| A3   | 15     | Mix of locked + ramp |
+| A4   | 30     | Mostly locked, some ramp |
+| A5   | 99999  | 100% locked (sanity) |
+
+
 
