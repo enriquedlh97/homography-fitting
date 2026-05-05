@@ -835,6 +835,42 @@ Manager hypothesis: dispatch a vision-capable sub-agent to produce a definitive 
 
 Status: dispatched in background.
 
+### C016 results — 2026-05-05 01:03 EDT
+
+```
+=== CYCLE C016 SLOT A1 REPORT (definitive visual ranking) ===
+Per-run scores (back_total / walkover_total / OVERALL_SUM):
+  GOLD: 20/20 = 40/40
+  C001/A1 occ_dilate=0: 40/40
+  C001/A2 alpha_feather=10: 40/40
+  C002/A2 clean_underlay=0.3: 40/40
+  C004/A1 isolated_patch: 40/40
+  C005/A2 mask_dilate=10: 40/40
+  C006/A2 logo_blur=1: 40/40
+  C008/A1 fitter=pca: 40/40
+  C010/A2 fronto_parallel: 40/40
+  C013/A1 combined_safe: 40/40
+  C014/A1 shade_blend=true: 40/40
+  C012/A1 lum_strength=0.3: 39/40 — back banner reads slightly darker/less integrated luminance
+
+Differentiating dimensions: only realism.texture_match nudges on C012/A1; everything else flat across the entire clean-pass set.
+
+Pixel-equivalent set (10 of 11 perturbations + GOLD): C001/A1, C001/A2, C002/A2, C004/A1, C005/A2, C006/A2, C008/A1, C010/A2, C013/A1, C014/A1.
+
+Subtle real differences (visible only if scrubbing carefully): C012/A1 lum_strength=0.3 reads a touch flatter/darker on the painted patch.
+
+Promotion recommendation: keep GOLD. No candidate offers visible improvement. If a tie-breaker is forced: C013/A1 combined_safe bundles multiple known-clean knobs and stayed pixel-equivalent — the safest "alternative gold" but no upside.
+```
+Manager note: **DEFINITIVE — saturation confirmed at the visual level**. 11 of 12 runs are pixel-equivalent; the one outlier is fractionally worse. The v68 manually-clicked static-homography baseline is at quality plateau on this clip. No candidate justifies promotion.
+
+---
+
+## Cycles closed — 2026-05-05 01:03 EDT
+
+The agent loop has covered the safe-knob space. Further config-knob iteration is not expected to produce visible deltas. Loop is now in **summary-prep mode** — wakeup ticks will continue to fire at the throttled cadence but will dispatch no new agents. The Final Summary block will be appended at the deadline tick (2026-05-05 10:00 EDT).
+
+If a meaningful new signal arises (none expected), the loop can re-engage; otherwise the human's review at the deadline is what matters.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
