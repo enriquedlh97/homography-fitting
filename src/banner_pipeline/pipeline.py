@@ -89,8 +89,14 @@ def _write_per_frame_state(
 
 def _snapshot_corners(
     corners_dict: dict[int, np.ndarray] | None,
+    hybrid_lock_extras: dict[int, dict[str, Any]] | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """Convert a per-object corners dict into a JSON-serializable snapshot."""
+    """Convert a per-object corners dict into a JSON-serializable snapshot.
+
+    When ``hybrid_lock_extras`` is provided, each object's snapshot is
+    extended with ``seed_corners``, ``estimated_corners``, ``decision`` and
+    ``displacement_px`` fields (only for objects with hybrid_lock state).
+    """
     if not corners_dict:
         return {}
     out: dict[int, dict[str, Any]] = {}
@@ -100,10 +106,13 @@ def _snapshot_corners(
         arr = np.asarray(c)
         if arr.shape != (4, 2):
             continue
-        out[int(oid)] = {
+        entry: dict[str, Any] = {
             "corners": arr.astype(float).tolist(),
             "fitted": True,
         }
+        if hybrid_lock_extras and int(oid) in hybrid_lock_extras:
+            entry.update(hybrid_lock_extras[int(oid)])
+        out[int(oid)] = entry
     return out
 
 
@@ -3000,6 +3009,41 @@ def run_pipeline_video_hybrid(
             int(prompt.obj_id) for prompt in court_plane_projection_prompts
         ]
 
+    # --- Hybrid lock-with-tolerance (Phase 2 axis, additive, flag-gated) ---
+    # When pipeline.geometry.hybrid_lock.enabled is true AND we have court-plane
+    # placement prompts, build a per-object HybridLockState seeded with frame-0
+    # placement_quad clicks. State is stepped per frame inside the projection
+    # loop below. When the flag is false (default), this dict stays empty and
+    # no new code path runs (preserves v68 backward-compat).
+    hybrid_lock_cfg = (pipeline_cfg.get("geometry") or {}).get("hybrid_lock") or {}
+    hybrid_lock_enabled = bool(hybrid_lock_cfg.get("enabled", False))
+    hybrid_lock_states: dict[int, court_geometry_mod.HybridLockState] = {}
+    hybrid_lock_active = False
+    if hybrid_lock_enabled and court_plane_projection_prompts:
+        tolerance_px = float(hybrid_lock_cfg.get("tolerance_px", 6.0))
+        ramp_min_frames = int(hybrid_lock_cfg.get("ramp_min_frames", 3))
+        ramp_motion_px = float(hybrid_lock_cfg.get("ramp_motion_px_per_frame", 2.0))
+        for prompt in court_plane_projection_prompts:
+            seed = prompt.placement_quad
+            if seed is None:
+                # No clicked seed for this prompt → first per-frame estimate
+                # will seed lazily (handled in the per-frame loop).
+                continue
+            seed_arr = np.asarray(seed, dtype=np.float32)
+            if seed_arr.shape != (4, 2):
+                continue
+            hybrid_lock_states[int(prompt.obj_id)] = court_geometry_mod.HybridLockState(
+                seed_corners=seed_arr,
+                tolerance_px=tolerance_px,
+                ramp_min_frames=ramp_min_frames,
+                ramp_motion_px_per_frame=ramp_motion_px,
+            )
+        hybrid_lock_active = bool(hybrid_lock_states)
+    metrics["hybrid_lock_enabled"] = bool(hybrid_lock_active)
+    hybrid_lock_locked_frames = 0
+    hybrid_lock_ramp_frames = 0
+    hybrid_lock_estimate_frames = 0
+
     composite_times: list[float] = []
     tracking_times: list[float] = []
     write_video_s = 0.0
@@ -3252,38 +3296,86 @@ def run_pipeline_video_hybrid(
                     current_corners = {oid: c.copy() for oid, c in smoothed_corners.items()}
 
             per_frame_compositor_overrides: dict[int, dict[str, Any]] = {}
+            hybrid_lock_extras: dict[int, dict[str, Any]] = {}
             if court_plane_projection_estimator is not None:
                 court_plane_estimate = court_plane_projection_estimator.estimate(original_frame_bgr)
-                if court_plane_estimate.court_homography is None:
+                homography_available = court_plane_estimate.court_homography is not None
+                if not homography_available:
                     court_plane_projection_fallback_frames += 1
-                else:
-                    projected_this_frame = False
-                    for prompt in court_plane_projection_prompts:
-                        placement_cfg = prompt.court_plane_placement or {}
-                        court_rectangle = placement_cfg.get("court_rect")
-                        if court_rectangle is None:
-                            raise ValueError("court_plane_placement requires a court_rect value.")
+                projected_this_frame = False
+                for prompt in court_plane_projection_prompts:
+                    placement_cfg = prompt.court_plane_placement or {}
+                    court_rectangle = placement_cfg.get("court_rect")
+                    if court_rectangle is None:
+                        raise ValueError("court_plane_placement requires a court_rect value.")
+                    projected_corners: np.ndarray | None = None
+                    if homography_available:
                         projected_corners = _project_court_plane_rectangle(
                             court_plane_estimate.court_homography,
                             court_rectangle,
                         )
-                        target = str(placement_cfg.get("target", "corners"))
+                    target = str(placement_cfg.get("target", "corners"))
+                    obj_id_int = int(prompt.obj_id)
+
+                    # --- Hybrid lock-with-tolerance path (additive) ---
+                    if hybrid_lock_active and obj_id_int in hybrid_lock_states:
+                        state = hybrid_lock_states[obj_id_int]
+                        seed_arr = state.seed_corners
+                        committed_corners, decision, displacement = state.step(
+                            projected_corners
+                        )
+                        if decision == "locked":
+                            hybrid_lock_locked_frames += 1
+                        elif decision == "ramp":
+                            hybrid_lock_ramp_frames += 1
+                        else:
+                            hybrid_lock_estimate_frames += 1
+                        hybrid_lock_extras[obj_id_int] = {
+                            "seed_corners": seed_arr.astype(float).tolist(),
+                            "estimated_corners": (
+                                projected_corners.astype(float).tolist()
+                                if projected_corners is not None
+                                else None
+                            ),
+                            "decision": decision,
+                            "displacement_px": float(displacement),
+                        }
                         if target == "corners":
                             if current_corners is None:
                                 current_corners = {}
-                            current_corners[int(prompt.obj_id)] = projected_corners
+                            current_corners[obj_id_int] = committed_corners
                         elif target == "logo_placement_quad":
                             per_frame_compositor_overrides.setdefault(
-                                int(prompt.obj_id),
+                                obj_id_int,
                                 {},
-                            )["logo_placement_quad"] = projected_corners.tolist()
+                            )["logo_placement_quad"] = committed_corners.tolist()
                         else:
                             raise ValueError(
                                 f"Unsupported court_plane_placement target: {target!r}"
                             )
-                        projected_this_frame = True
-                    if projected_this_frame:
-                        court_plane_projection_projected_frames += 1
+                        if projected_corners is not None:
+                            projected_this_frame = True
+                        continue
+
+                    # --- Existing (unchanged) path: skip when no estimate ---
+                    if projected_corners is None:
+                        continue
+                    if target == "corners":
+                        if current_corners is None:
+                            current_corners = {}
+                        current_corners[obj_id_int] = projected_corners
+                    elif target == "logo_placement_quad":
+                        per_frame_compositor_overrides.setdefault(
+                            obj_id_int,
+                            {},
+                        )["logo_placement_quad"] = projected_corners.tolist()
+                    else:
+                        raise ValueError(
+                            f"Unsupported court_plane_placement target: {target!r}"
+                        )
+                    projected_this_frame = True
+                if projected_this_frame:
+                    court_plane_projection_projected_frames += 1
             tracking_times.append(time.perf_counter() - t_track)
 
             # Detect person occlusion mask (once per frame).
@@ -3507,7 +3599,10 @@ def run_pipeline_video_hybrid(
                     temporal_state=clean_video_temporal_state,
                 )
 
-            snapshot = _snapshot_corners(current_corners)
+            snapshot = _snapshot_corners(
+                current_corners,
+                hybrid_lock_extras=hybrid_lock_extras if hybrid_lock_active else None,
+            )
             if snapshot:
                 per_frame_state[frame_idx] = snapshot
 
@@ -3633,6 +3728,10 @@ def run_pipeline_video_hybrid(
     if court_plane_projection_prompts:
         metrics["court_plane_placement_projected_frames"] = court_plane_projection_projected_frames
         metrics["court_plane_placement_fallback_frames"] = court_plane_projection_fallback_frames
+    if hybrid_lock_active:
+        metrics["hybrid_lock_locked_frames"] = hybrid_lock_locked_frames
+        metrics["hybrid_lock_ramp_frames"] = hybrid_lock_ramp_frames
+        metrics["hybrid_lock_estimate_frames"] = hybrid_lock_estimate_frames
     print(f"[hybrid] Wrote {num_written} frames -> {output_path}")
 
     if tracking_times:

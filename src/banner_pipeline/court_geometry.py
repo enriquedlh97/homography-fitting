@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import cv2
@@ -1185,3 +1185,126 @@ def fit_video_segments_with_geometry(
     metrics["geometry_total_s"] = round(time.perf_counter() - t0, 4)
     metrics["geometry_rejections_by_frame"] = rejections_by_frame
     return corners_by_frame, metrics
+
+
+# ---------------------------------------------------------------------------
+# Hybrid lock-with-tolerance helpers (Phase 2 axis — additive, flag-gated)
+# ---------------------------------------------------------------------------
+
+
+def corner_displacement_px(a: np.ndarray | None, b: np.ndarray | None) -> float:
+    """Mean L2 distance between two (4, 2) quads. Returns 0 if either is None."""
+    if a is None or b is None:
+        return 0.0
+    a_arr = np.asarray(a, dtype=np.float32)
+    b_arr = np.asarray(b, dtype=np.float32)
+    if a_arr.shape != (4, 2) or b_arr.shape != (4, 2):
+        return 0.0
+    return float(np.linalg.norm(a_arr - b_arr, axis=1).mean())
+
+
+def hybrid_lock_decide(
+    estimated_corners: np.ndarray | None,
+    seed_corners: np.ndarray,
+    last_committed: np.ndarray,
+    *,
+    tolerance_px: float,
+    ramp_frames_remaining: int,
+    ramp_target: np.ndarray | None,
+) -> tuple[np.ndarray, str, int, np.ndarray | None]:
+    """Decide what corners to use this frame.
+
+    Returns ``(corners, decision, ramp_frames_remaining, ramp_target)`` where
+    ``decision`` is one of ``"locked" | "ramp" | "estimate" | "no_estimate"``.
+
+    Logic:
+      - If ``ramp_frames_remaining > 0`` and ``ramp_target`` is set: continue
+        the ramp (linearly interpolate one step from ``last_committed`` toward
+        ``ramp_target``) and decrement the remaining-frame counter.
+      - If ``estimated_corners`` is None: stay locked at ``seed_corners``.
+      - If ``displacement(estimated, seed) < tolerance_px``: lock at seed.
+      - Otherwise commit the estimate (caller manages ramp setup).
+
+    The :class:`HybridLockState` class is the recommended high-level wrapper;
+    this function is the underlying single-step primitive.
+    """
+    # Continue an active ramp.
+    if ramp_frames_remaining > 0 and ramp_target is not None:
+        steps_left = max(ramp_frames_remaining, 1)
+        new_corners = last_committed + (ramp_target - last_committed) / steps_left
+        return new_corners.astype(np.float32), "ramp", ramp_frames_remaining - 1, ramp_target
+
+    # No estimate this frame.
+    if estimated_corners is None:
+        return seed_corners.copy(), "locked", 0, None
+
+    # Decide based on displacement.
+    disp = corner_displacement_px(estimated_corners, seed_corners)
+    if disp < tolerance_px:
+        return seed_corners.copy(), "locked", 0, None
+    # Beyond tolerance — caller decides ramp duration; here we just commit.
+    return estimated_corners.astype(np.float32), "estimate", 0, None
+
+
+@dataclass
+class HybridLockState:
+    """Per-object state machine for hybrid lock-with-tolerance.
+
+    ``step()`` is called once per frame with the latest ``estimated_corners``.
+    Returns ``(corners_to_use, decision, displacement_px)``. Manages its own
+    ramp state.
+    """
+
+    seed_corners: np.ndarray  # frozen at construction (frame 0 / config)
+    tolerance_px: float = 6.0
+    ramp_min_frames: int = 3
+    ramp_motion_px_per_frame: float = 2.0
+    last_committed: np.ndarray = field(init=False)
+    ramp_frames_remaining: int = field(init=False, default=0)
+    ramp_target: np.ndarray | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        seed = np.asarray(self.seed_corners, dtype=np.float32)
+        if seed.shape != (4, 2):
+            raise ValueError(
+                f"HybridLockState seed_corners must be (4, 2); got shape {seed.shape}."
+            )
+        self.seed_corners = seed.copy()
+        self.last_committed = seed.copy()
+
+    def step(
+        self, estimated_corners: np.ndarray | None
+    ) -> tuple[np.ndarray, str, float]:
+        # Active ramp: continue one step toward target.
+        if self.ramp_frames_remaining > 0 and self.ramp_target is not None:
+            steps_left = max(self.ramp_frames_remaining, 1)
+            self.last_committed = (
+                self.last_committed
+                + (self.ramp_target - self.last_committed) / steps_left
+            ).astype(np.float32)
+            self.ramp_frames_remaining -= 1
+            disp = corner_displacement_px(self.last_committed, self.seed_corners)
+            return self.last_committed.copy(), "ramp", disp
+
+        if estimated_corners is None:
+            return self.seed_corners.copy(), "locked", 0.0
+
+        disp = corner_displacement_px(estimated_corners, self.seed_corners)
+        if disp < self.tolerance_px:
+            self.last_committed = self.seed_corners.astype(np.float32).copy()
+            return self.seed_corners.copy(), "locked", disp
+
+        # Out of tolerance: kick off a ramp toward the new estimate.
+        self.ramp_target = np.asarray(estimated_corners, dtype=np.float32).copy()
+        self.ramp_frames_remaining = max(
+            self.ramp_min_frames,
+            int(round(disp / max(self.ramp_motion_px_per_frame, 1e-3))),
+        )
+        # Take the FIRST step of the ramp this same frame.
+        steps_left = self.ramp_frames_remaining
+        self.last_committed = (
+            self.last_committed
+            + (self.ramp_target - self.last_committed) / steps_left
+        ).astype(np.float32)
+        self.ramp_frames_remaining -= 1
+        return self.last_committed.copy(), "ramp", disp
