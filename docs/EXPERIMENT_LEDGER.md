@@ -1132,4 +1132,38 @@ Status: jobs running.
 
 ---
 
+### P2-C005 results — 2026-05-05 14:32 EDT
+
+All 5 main-thread Modal jobs completed successfully (main-thread bg dispatch survived; agents-in-loop did NOT survive earlier).
+
+| Slot | tol | ramp | back | left | floor | full | any_regression | floor_walkover_logo_visible_pct |
+|---|---|---|---|---|---|---|---|---|
+| A1 | 99999 | 2.0 | P | P | P | P | **no** | (gold-equivalent — wiring works) |
+| A2 | 2 | 2.0 | P | P | F | P | yes | regression |
+| A3 | 6 | 2.0 | P | P | F | P | yes | regression |
+| A4 | 12 | 2.0 | P | P | F | P | yes | 0.1477 (gold 0.1787, -17.4%) |
+| A5 | 6 | 4.0 | P | P | F | P | yes | regression |
+
+Floor failures: `floor_roi_jitter_ratio`, `floor_walkover_occlusion_iou`.
+
+**Diagnostic interpretation:**
+
+- **A1 (tol=99999, always-locked) PASSES ALL 4 SCORECARDS** → hybrid_lock wiring is correct. Code from P2-C002 is sound. With infinite tolerance, the gate always says "stay locked" → output ≈ v68 gold.
+- **A2–A5 (real tolerances) ALL FAIL floor** → when the gate fires (estimate-vs-seed displacement > tolerance), it ramps toward the projected court-plane corners. Those corners are computed from `CourtGeometryEstimator`'s line-detected homography projected through the configured `court_rect`. They are **systematically wrong** for this clip on the floor region — ramping toward them regresses floor. (Back banners are fine because they don't have court_plane_placement.)
+- The hybrid_lock CONCEPT works (the gate, the ramp). The PROBLEM is the underlying estimator: line-based homography on this clip + the chosen `court_rect` produce floor corners that don't match the v68 clicks.
+
+**`hybrid_lock_*` counters and `outputs/per_frame_state.json` are NOT being written** to disk despite the P2-C002 code change. Either Modal's image build didn't include the latest commits OR the metrics-write path doesn't fire when run on Modal. Worth investigating — but for now the four scorecard outcomes are the diagnostic signal.
+
+**Best candidate so far:** P2-C005/A1 (tol=99999, always-locked, v68-static base) — gold-equivalent + all gates pass + the hybrid_lock infrastructure is wired in (so future estimator improvements can flip the tolerance to a useful value without code change). Run dir: `experiments/2026-05-05_14-29-35_hull_H200/`.
+
+**Path forward for the hybrid axis (recommendations for the human + remaining cycles tonight):**
+
+1. The line-based estimator (`CourtGeometryEstimator`) is too unreliable on this clip to power a hybrid-with-tolerance gate that actually improves on v68. Two paths to fix:
+   - **Calibrate `court_rect` more carefully.** The [0.421, 1.002, 0.559, 1.015] value carried from `dynamic_full` may simply be wrong for the floor region — we'd need a fitting pass on the v68 manual clicks to derive a `court_rect` that minimizes seed-vs-projected distance on frame 0. Sibling A1 recon noted the sibling repo uses `court_reference.py` with hand-coded keypoints; that file has the canonical mapping.
+   - **Port BallTrackerNet from `tennis-virtual-ads`** for better keypoints. Then the homography estimate is from a learned 14-keypoint detector, far more reliable than the line-based path. Significant effort (model weights, tests, inference plumbing).
+
+2. **Tonight's limit:** with the line-based estimator, the only safe hybrid_lock setting is `tol=99999` (always-locked) which is just v68 with extra inert plumbing. Real tolerances regress.
+
+---
+
 <!-- Subsequent Phase 2 cycles append below this line. -->
