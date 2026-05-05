@@ -59,6 +59,85 @@ Targeting: `floor_walkover_logo_visible_pct` strictly > 0.18 with `any_regressio
 
 Status: dispatched in background.
 
+### C001 results — 2026-05-04 21:57 EDT
+
+```
+=== CYCLE C001 SLOT A1 REPORT (rerun) ===
+Hypothesis: occlusion_dilate_px 2->0 on court_floor; expected to keep more logo visible around player feet.
+Run dir: experiments/2026-05-04_21-55-06_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1786, delta=-0.06%
+floor_walkover_occlusion_iou: 0.9838
+Walkover window: 685:723
+Failed metrics: none (warnings: back/left/floor roi_delta_E_lab)
+Cost: Modal-B200 ~9min
+Recommendation: dead end on this axis — dropping dilate from 2 to 0 produced essentially identical visibility (-0.06%, within noise).
+=== END REPORT ===
+```
+Manager note: dead-end. visible_pct insensitive (-0.06%); no regression but no movement.
+
+```
+=== CYCLE C001 SLOT A2 REPORT (rerun) ===
+Hypothesis: alpha_feather_px 25->10 on court_floor; sharper edges expected to raise visible_pct.
+Run dir: experiments/2026-05-04_21-52-36_hull_B200
+Exit code from eval: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: yes
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1785, delta=-0.11%
+floor_edge_sharpness_ratio: 0.0465 (no warning, well below 1.8)
+Walkover window: 685:723
+Failed metrics: none failed; warnings: back/left/floor roi_delta_E_lab; regression flagged on floor_roi_delta_E_lab (7.672 vs gold)
+Cost: Modal-B200 ~5.6min
+Recommendation: dead end — feathering reduction from 25 to 10 produced essentially no change.
+=== END REPORT ===
+```
+Manager note: dead-end. visible_pct unchanged (-0.11%); minor delta_E warning regression but warnings don't gate.
+
+```
+=== CYCLE C001 SLOT A3 REPORT ===
+Hypothesis: quad_expand_px 80->120 on court_floor; wider quad expected to put more logo signal in eval measurement zone.
+Run dir: experiments/2026-05-04_21-40-02_hull_B200
+Exit code from eval: 2
+Pass: back=P left=P floor=F full=P
+Regression vs gold: yes
+floor_walkover_logo_visible_pct: gold=0.1787, current=0.1735, delta=-2.91%
+floor_walkover_occlusion_iou: 0.4415 (FAIL gate; -55.85% vs gold)
+floor_roi_ssim_vs_reference_mean: 0.5418 (large drop; quad geometry shifted)
+Walkover window: 685:723
+Failed metrics: floor_walkover_occlusion_iou
+Cost: Modal-B200 ~14min
+Recommendation: dead end. Wider quad regressed everything.
+=== END REPORT ===
+```
+Manager note: dead-end with hard regression (floor_walkover_occlusion_iou 0.44 fails gate).
+
+### C001 synthesis
+
+All three C001 perturbations failed to move `floor_walkover_logo_visible_pct` materially (variance ≤0.5% across very different knob settings). Strongly suggests the metric is **asset-driven**, not tunable via floor-compositor params: the `redbull_white.png` logo asset only covers ~18% of the placement_quad with strong-signal pixels by design (it's mostly transparent except for the wordmark + bull). To move this metric, we need to perturb the asset or the underlying blend strategy, not edge/feather/erosion.
+
+Best run from C001 by holistic criteria (no regression, all scorecards pass, occlusion_iou ~1.0): **A1 (occlusion_dilate=0)** — but it's not strictly better than the gold. The gold remains the best.
+
+---
+
+## C002 — 2026-05-04 22:00 EDT — pivot to asset + blend axes
+Manager hypothesis: visible_pct is plateau'd against compositor edge knobs because it's asset-driven. Pivot to two changes that should genuinely move the rendered floor logo:
+
+- **A1 — swap floor logo asset from `redbull_white.png` to `redbull_court_patch.png`**
+  - Rationale: `redbull_court_patch.png` is a more-filled design (vs the wordmark-only `redbull_white.png`), so it should cover more of the placement_quad with strong signal, materially raising visible_pct. Direct test of the asset-driven hypothesis.
+  - Risk: looks artificial / over-painted on the court. Watch occlusion_iou and edge_sharpness.
+  - Implementation: change the `input.logo` field at the top of the YAML... BUT note: `input.logo` is a global asset; if changed, it affects ALL objects, not just floor. Workaround: many configs in this repo use `input.logo` as the global asset. To affect only obj_3 (court_floor), the agent must verify whether per-object asset overrides are supported in the config schema. If not, this hypothesis must be skipped or executed differently.
+  - **Agent: first verify whether per-object logo override exists. If not, switch to: keep `redbull_white.png` global, but explicitly add `asset:` field on obj_3 prompt to point at `redbull_court_patch.png`. If neither works, skip the run and report the constraint.**
+
+- **A2 — `clean_underlay_alpha` 0.0 → 0.3 on court_floor surface_overrides**
+  - Rationale: the v68 config bakes the logo directly on top of the court text. Letting some clean plate (text-erased background) show through behind the logo could make it look more "painted on" the underlying clean court (vs floating on the original text). Should NOT change visible_pct meaningfully (since clean plate isn't logo signal) but might improve walkover_occlusion_iou and the AI rubric realism dimension.
+  - Risk: too much clean underlay = ghost double-image of the court text. Watch occlusion_iou.
+
+Targeting: A1 — strictly increase `floor_walkover_logo_visible_pct`; A2 — preserve visible_pct AND improve `floor_walkover_occlusion_iou` over A1's 0.984.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
