@@ -1095,4 +1095,41 @@ Same 7 variants (sanity, tol=2/4/6/10/15, plus tol=6+ramp_motion=4). H200. POLL 
 
 Status: dispatching in background now.
 
+### P2-C004 partial — 2026-05-05 14:18 EDT
+
+Of 7 dispatched, only A3 (tol=4) actually polled correctly and harvested. Other 6 misused Monitor tool, ended turns, their bg modal clients died → Modal apps stopped before completion.
+
+```
+=== P2-C004/A3 REPORT (tol=4) ===
+Run: experiments/2026-05-05_14-11-17_hull_H200/
+Pass: back=P left=F floor=F full=P
+ssim_vs_ref back/left/floor: 0.9985/0.379/0.2389
+floor_walkover_logo_visible_pct: 0.1473 (gold 0.1787, -17.6%)
+Verdict: regression vs gold (left/floor broken)
+```
+
+**Manager note:** A3 is REGRESSION but the failure mode (left ssim 0.38, floor ssim 0.24) matches Phase 1 C008/A2 exactly — `dynamic_full` base config is structurally broken on left+floor regions, hybrid_lock cannot save it. Hybrid_lock code is fine; problem is the base. Pivot.
+
+---
+
+## P2-C005 — 2026-05-05 14:18 EDT — pivot to v68-STATIC + minimal hybrid_lock additions
+
+**Strategy change:** dispatch from MAIN THREAD (not agents) so the local modal client processes survive — agent-side bg bash processes were dying when agents ended turns. My own bg bash processes survive my own polling.
+
+5 configs based on `eval_walkover_v68_clicked_homography_static_full.yaml` (the proven gold base) with minimal additions: `pipeline.geometry.enabled: true`, `pipeline.geometry.court_backend: classical_lines_v1`, `pipeline.geometry.hybrid_lock` block, and `court_plane_placement` on obj_3 (court_rect from prior dynamic config).
+
+| Slot | tolerance_px | ramp_motion_px_per_frame | Purpose |
+|---|---|---|---|
+| A1 | 99999 | 2.0 | sanity — always-locked; should match v68 gold exactly |
+| A2 | 2 | 2.0 | very tight; ramps on smallest motion |
+| A3 | 6 | 2.0 | default |
+| A4 | 12 | 2.0 | looser |
+| A5 | 6 | 4.0 | default + faster ramp |
+
+5 H200 Modal jobs dispatched in main-thread background. Bash IDs: bv30r5c2f, bewhr1m4q, bddc08vt8, bb79tq6gm, b316ec9t3. Logs in /tmp/modal_p2c005_a*.log.
+
+Status: jobs running.
+
+---
+
 <!-- Subsequent Phase 2 cycles append below this line. -->
