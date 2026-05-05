@@ -71,33 +71,40 @@ experiments/<run>/
     report.md                             # human rollup with embedded image paths
     back_banners/
       metrics.json
-      crops_strip.png                     # 6 evenly-spaced full frames, 3× upscaled
-      consecutive_frames_early.png        # 8 consecutive frames at 15% of clip
-      consecutive_frames_mid.png          # 8 frames at 50%
-      consecutive_frames_late.png         # 8 frames at 85%
+      crops_strip.png                     # 6 evenly-spaced frames; TOP=original / BOTTOM=composite paired
+      motion_strip_early.png              # 8 frames spanning ~0.5s at 15% of clip; paired
+      motion_strip_mid.png                # ~0.5s at 50%; paired
+      motion_strip_late.png               # ~0.5s at 85%; paired
       vs_reference.png                    # only with --reference
     left_logo/                            # same shape, obj_id 4
     floor_logo/                           # same shape, obj_id 3
     full/
       metrics.json
-      crops_strip.png
+      crops_strip.png                     # 6 full frames paired
       vs_reference.png
     walkover/
       window.json                         # {"start": 690, "end": 745, "method": "..."}
-      consecutive_frames.png              # every frame in window
-      forensic_sheet_f<N>.png             # 6-column sheet (orig | clean | composite | deltas | leak overlay)
-      occlusion_diagnostic.csv            # per-frame leak_ratio, logo_visible_pct, occlusion_iou
+      consecutive_frames.png              # ~16 sampled frames across window; TOP=original / BOTTOM=composite paired
+      forensic_sheet_entry_f<N>.png       # 6-col forensic sheet at walkover window start
+      forensic_sheet_pre_contact_f<N>.png # 25% across window
+      forensic_sheet_contact_f<N>.png     # mid window (player ON the logo)
+      forensic_sheet_post_contact_f<N>.png # 75% across window
+      forensic_sheet_exit_f<N>.png        # window end
+      # 6 columns each: orig | clean | composite | original-clean delta | survival | leak overlay
+      occlusion_diagnostic.csv            # (when produced) per-frame leak_ratio, logo_visible_pct, occlusion_iou
     ai_review/
-      MANIFEST.md                         # ALWAYS written: agent prompt + PNG paths + rubric schema
+      MANIFEST.md                         # ALWAYS written: agent prompt + PNG paths + rubric schema + checklist
       rubric_version.json                 # ALWAYS written: schema version metadata
-      back_banners.{json,md}              # written by sub-agent after dispatch (vision via Read)
-      left_logo.{json,md}
-      floor_logo.{json,md}
-      walkover.{json,md}
+      back.{json,md}                      # written by sub-agent after dispatch (vision via Read)
+      left.{json,md}
+      floor.{json,md}                     # includes temporal.* (occlusion_realism, jitter_visible, player_contact_shadow)
+      walkover.{json,md}                  # same temporal.* fields; the hardest/most-important region
       full.{json,md}
-      rubric_version.json
+      CHECKLIST.md                        # written by sub-agent: every PNG marked [x] read or [ ] skipped + reason
     vs_reference_side_by_side.mp4         # only with --reference
 ```
+
+**All per-region strips are paired** (top row = unmodified original broadcast, bottom row = our composite). The original IS the ground-truth quality bar — the real Kia/Melbourne/etc. ads that were in the broadcast. If our virtual ad reads as natural as the original did, we've succeeded. Without the pairing, agents have no anchor for the rubric and scores collapse to "everything looks fine."
 
 ## Quantitative metrics
 

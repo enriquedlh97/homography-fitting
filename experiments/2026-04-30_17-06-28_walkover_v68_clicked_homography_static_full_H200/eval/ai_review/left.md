@@ -1,0 +1,3 @@
+# left — viewer notes
+
+This is the strongest region of the run. A viewer scrubbing the left-side panel would see a Red Bull wordmark sitting on the same blue diagonal-striped panel that originally carried YoPRO, and they would have no reason to suspect a substitution. The diagonal seam where two blue panels meet is preserved underneath the new logo, which sells the "painted on" effect convincingly — the logo is on the panel, not above it. Color, brightness and saturation match the original almost exactly. The wordmark holds steady across early/mid/late frames with no visible jitter, no edge seam, no halo. Comparing original-vs-composite directly, the Red Bull mark looks every bit as native to the broadcast as YoPRO did. This region passes broadcast quality cleanly.

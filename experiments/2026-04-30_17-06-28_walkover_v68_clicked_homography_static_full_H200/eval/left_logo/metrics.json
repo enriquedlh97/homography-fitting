@@ -11,5 +11,6 @@
   "noise_variance_ratio": 0.8633,
   "edge_sharpness_ratio": 0.2079,
   "roi_temporal_ssim_mean": 0.9999,
-  "roi_temporal_ssim_p5": 0.9999
+  "roi_temporal_ssim_p5": 0.9999,
+  "ai_review_min_score": 5
 }

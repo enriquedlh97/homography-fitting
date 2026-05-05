@@ -79,7 +79,21 @@ Some cycles will be **review-only** (no Modal, no eval, no commits). The manager
 1. Manager passes you the path to `<run>/eval/ai_review/MANIFEST.md` (auto-written by the eval framework).
 2. Read the manifest. It lists per-region crop PNGs and the rubric schema.
 3. For each region: Read each listed PNG via the **Read tool** — this returns the image content for you to see (you are a vision-capable Claude). Score the rubric from your own visual judgment. Do **not** call any external API or SDK.
-4. Write `<run>/eval/ai_review/<region>.json` (strict JSON matching the schema, with `min_score` injected) and `<run>/eval/ai_review/<region>.md` (under 150 words of prose: "what would a viewer notice if they scrubbed this region?").
-5. No commits, no Modal, no pipeline runs. Just file writes + a short report back to the manager listing per-region min_scores.
+4. Write `<run>/eval/ai_review/<region>.json` (strict JSON matching the schema, with `min_score` injected) and `<run>/eval/ai_review/<region>.md` (under 150 words of prose: "what would a viewer notice scrubbing this region, and how close is it to the original?").
+5. Write `<run>/eval/ai_review/CHECKLIST.md` — paste the `[VISUAL EVAL CHECKLIST]` block from the manifest verbatim, mark `[x] read` for each PNG you actually Read, `[ ]` only with a one-line reason on the same line if you skipped one. **The manager will grep for unchecked `[ ]` entries.**
+6. No commits, no Modal, no pipeline runs. Just file writes + a short report back to the manager listing per-region min_scores.
+
+**Use the pairing.** Per-region strips are top=original / bottom=composite. The originals are real baked-in ads (Kia, YoPRO, Melbourne wordmark, etc.) — they ARE the quality bar. Score `realism.painted_on_vs_pasted_on` by direct comparison: "does our composite read as natural as the original?" Without that anchor your scores collapse to "looks fine."
+
+**Self-check before submitting.** Verify your final report's `Total PNGs read: <N>` matches the manifest's listed count exactly. If they differ, recount — count first, write number after.
 
 You have **complete creativity** in your prose — describe what you actually see. Surface anything surprising. The numbers are integer 1–5 per dimension; the prose is where the value is.
+
+## When the manager dispatches a rubric review (cadence)
+
+The manager does NOT dispatch a rubric review for every Modal cycle. Costs (sub-agent overhead, ~2-3 min per review) compound fast. Default cadence:
+
+- **Always:** when a run **passes all numerical gates AND `any_regression: false` vs gold** — i.e., a candidate that might be promotion-worthy. The rubric is the qualitative arbiter.
+- **Always:** at the end of an axis (e.g., after several cycles converge), to score the best-performing run.
+- **Sometimes:** when a run produces a surprising metric movement (numerical signal that the change actually did something) — the rubric lets us judge whether the movement is improvement or regression.
+- **Never:** when a run fails a gate. The numerical signal is enough; visual review on a failed run is wasted overhead.

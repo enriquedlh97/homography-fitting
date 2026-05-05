@@ -13,5 +13,7 @@
   "roi_temporal_ssim_mean": 0.997,
   "roi_temporal_ssim_p5": 0.9794,
   "walkover_logo_visible_pct": 0.1787,
-  "walkover_occlusion_iou": 1.0
+  "walkover_occlusion_iou": 1.0,
+  "ai_review_min_score": 3,
+  "ai_review_min_score_walkover": 2
 }

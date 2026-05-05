@@ -41,8 +41,14 @@ def crops_strip(
     roi: tuple[int, int, int, int] | None,
     n_frames: int = 6,
     upscale: int = 1,
+    original_path: str | Path | None = None,
 ) -> None:
     """Save a horizontal strip of `n_frames` evenly-spaced frames.
+
+    When `original_path` is provided, render TWO rows: top = original (unmodified
+    broadcast — the ground-truth quality bar), bottom = composite. Same crop, same
+    frames. Without a reference the agent cannot judge "how close to real" we are;
+    pairing makes the comparison direct.
 
     If `roi` is None, full frames are used (used for the `full/` region).
     """
@@ -54,30 +60,167 @@ def crops_strip(
         cap.release()
         return
     indices = np.linspace(0, n - 1, n_frames, dtype=int)
-    panels: list[np.ndarray] = []
+
+    cap_orig = (
+        cv2.VideoCapture(str(original_path)) if original_path and Path(original_path).is_file() else None
+    )
+    if cap_orig is not None and not cap_orig.isOpened():
+        cap_orig.release()
+        cap_orig = None
+
+    composite_panels: list[np.ndarray] = []
+    original_panels: list[np.ndarray] = []
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
         if not ok:
             continue
-        img = frame if roi is None else frame[roi[1]:roi[3], roi[0]:roi[2]]
-        if upscale > 1:
-            img = cv2.resize(
-                img,
-                (img.shape[1] * upscale, img.shape[0] * upscale),
-                interpolation=cv2.INTER_LANCZOS4,
-            )
-        panels.append(_label(img, f"f{int(idx):04d}"))
+        comp_img = _crop_and_upscale(frame, roi, upscale)
+        composite_panels.append(_label(comp_img, f"composite f{int(idx):04d}"))
+
+        if cap_orig is not None:
+            cap_orig.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+            ok_o, frame_o = cap_orig.read()
+            if ok_o:
+                if frame_o.shape[:2] != frame.shape[:2]:
+                    frame_o = cv2.resize(frame_o, (frame.shape[1], frame.shape[0]))
+                orig_img = _crop_and_upscale(frame_o, roi, upscale)
+                original_panels.append(_label(orig_img, f"original f{int(idx):04d}"))
+
     cap.release()
-    if not panels:
+    if cap_orig is not None:
+        cap_orig.release()
+    if not composite_panels:
         return
-    h = max(p.shape[0] for p in panels)
-    panels = [_pad_to(p, h) for p in panels]
-    sheet = np.hstack(panels)
+
+    sheet = _stack_paired_strip(original_panels, composite_panels)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), sheet)
 
 
+def motion_strip(
+    composite_path: str | Path,
+    output_path: str | Path,
+    roi: tuple[int, int, int, int] | None,
+    start_frame: int,
+    fps: float,
+    span_seconds: float = 0.5,
+    n_frames: int = 8,
+    upscale: int = 1,
+    original_path: str | Path | None = None,
+) -> None:
+    """Save a strip showing camera motion across `span_seconds` of clip time.
+
+    Rather than truly back-to-back frames (which look identical at 60fps), sample
+    `n_frames` evenly spaced over a time window of `span_seconds`. At 60fps and
+    span=0.5s, that's ~7-frame intervals — enough that camera motion is visible
+    panel-to-panel.
+
+    When `original_path` is provided, render top=original / bottom=composite for
+    direct comparison against the ground-truth broadcast.
+    """
+    cap = cv2.VideoCapture(str(composite_path))
+    if not cap.isOpened():
+        return
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        cap.release()
+        return
+    span_frames = max(int(round(span_seconds * fps)), n_frames)
+    end_frame = min(total - 1, start_frame + span_frames)
+    indices = np.linspace(start_frame, end_frame, n_frames, dtype=int)
+
+    cap_orig = (
+        cv2.VideoCapture(str(original_path)) if original_path and Path(original_path).is_file() else None
+    )
+    if cap_orig is not None and not cap_orig.isOpened():
+        cap_orig.release()
+        cap_orig = None
+
+    composite_panels: list[np.ndarray] = []
+    original_panels: list[np.ndarray] = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        comp_img = _crop_and_upscale(frame, roi, upscale)
+        composite_panels.append(_label(comp_img, f"composite f{int(idx):04d}"))
+
+        if cap_orig is not None:
+            cap_orig.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+            ok_o, frame_o = cap_orig.read()
+            if ok_o:
+                if frame_o.shape[:2] != frame.shape[:2]:
+                    frame_o = cv2.resize(frame_o, (frame.shape[1], frame.shape[0]))
+                orig_img = _crop_and_upscale(frame_o, roi, upscale)
+                original_panels.append(_label(orig_img, f"original f{int(idx):04d}"))
+
+    cap.release()
+    if cap_orig is not None:
+        cap_orig.release()
+    if not composite_panels:
+        return
+
+    sheet = _stack_paired_strip(original_panels, composite_panels)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output_path), sheet)
+
+
+def _crop_and_upscale(
+    frame: np.ndarray, roi: tuple[int, int, int, int] | None, upscale: int
+) -> np.ndarray:
+    img = frame if roi is None else frame[roi[1]:roi[3], roi[0]:roi[2]]
+    if upscale > 1:
+        img = cv2.resize(
+            img,
+            (img.shape[1] * upscale, img.shape[0] * upscale),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
+    return img
+
+
+def _stack_paired_strip(
+    original_panels: list[np.ndarray], composite_panels: list[np.ndarray]
+) -> np.ndarray:
+    """Top = originals, bottom = composites. If no originals, just the composite row."""
+    h = max(p.shape[0] for p in composite_panels)
+    composite_panels = [_pad_to(p, h) for p in composite_panels]
+    composite_row = np.hstack(composite_panels)
+
+    if not original_panels:
+        return composite_row
+
+    # Make rows the same width by padding the shorter row of panels.
+    if len(original_panels) < len(composite_panels):
+        # Should be rare; only happens if original frame reads failed.
+        blank = np.zeros_like(composite_panels[0])
+        original_panels = original_panels + [blank] * (len(composite_panels) - len(original_panels))
+    elif len(original_panels) > len(composite_panels):
+        original_panels = original_panels[: len(composite_panels)]
+
+    h_orig = max(p.shape[0] for p in original_panels)
+    original_panels = [_pad_to(p, h_orig) for p in original_panels]
+    original_row = np.hstack(original_panels)
+    if original_row.shape[1] != composite_row.shape[1]:
+        # Width mismatch — pad shorter row.
+        max_w = max(original_row.shape[1], composite_row.shape[1])
+        original_row = _pad_width(original_row, max_w)
+        composite_row = _pad_width(composite_row, max_w)
+    # Row separator (3px white).
+    sep = np.full((3, composite_row.shape[1], 3), 255, dtype=np.uint8)
+    return np.vstack([original_row, sep, composite_row])
+
+
+def _pad_width(image: np.ndarray, target_w: int) -> np.ndarray:
+    h, w = image.shape[:2]
+    if w == target_w:
+        return image
+    pad = np.zeros((h, target_w - w, 3), dtype=image.dtype)
+    return np.hstack([image, pad])
+
+
+# Backwards-compat alias — old callers may still use this name.
 def consecutive_frames_strip(
     composite_path: str | Path,
     output_path: str | Path,
@@ -86,32 +229,17 @@ def consecutive_frames_strip(
     n_frames: int = 8,
     upscale: int = 1,
 ) -> None:
-    """Save a horizontal strip of `n_frames` consecutive frames starting at `start_frame`."""
-    cap = cv2.VideoCapture(str(composite_path))
-    if not cap.isOpened():
-        return
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_frame))
-    panels: list[np.ndarray] = []
-    for offset in range(n_frames):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        img = frame if roi is None else frame[roi[1]:roi[3], roi[0]:roi[2]]
-        if upscale > 1:
-            img = cv2.resize(
-                img,
-                (img.shape[1] * upscale, img.shape[0] * upscale),
-                interpolation=cv2.INTER_LANCZOS4,
-            )
-        panels.append(_label(img, f"f{start_frame + offset:04d}"))
-    cap.release()
-    if not panels:
-        return
-    h = max(p.shape[0] for p in panels)
-    panels = [_pad_to(p, h) for p in panels]
-    sheet = np.hstack(panels)
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output_path), sheet)
+    """Deprecated. Kept for back-compat — delegates to motion_strip with fps=60, span=n_frames/60s."""
+    motion_strip(
+        composite_path=composite_path,
+        output_path=output_path,
+        roi=roi,
+        start_frame=start_frame,
+        fps=60.0,
+        span_seconds=max(n_frames - 1, 1) / 60.0,
+        n_frames=n_frames,
+        upscale=upscale,
+    )
 
 
 def build_forensic_sheet(

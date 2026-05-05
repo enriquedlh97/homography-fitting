@@ -165,35 +165,52 @@ def run_eval(
                     indent=2,
                 )
             )
-            # Consecutive-frames strip for the window.
+            # Walkover motion strip — original on top, composite on bottom, sampled
+            # to fit the window length. Lets the agent see the actual frames where
+            # the player walks ON the logo, paired against the unmodified broadcast.
             roi = regions_mod.quad_to_roi(
                 floor_quad, frame_w, frame_h, padding_x=30, padding_y=60
             )
-            contact_sheets.consecutive_frames_strip(
+            window_len = walkover_window.end - walkover_window.start + 1
+            n_walk_panels = min(16, max(window_len, 4))
+            cap_probe = cv2.VideoCapture(str(composite_path))
+            walk_fps = cap_probe.get(cv2.CAP_PROP_FPS) or 60.0
+            cap_probe.release()
+            contact_sheets.motion_strip(
                 composite_path=composite_path,
                 output_path=walkover_dir / "consecutive_frames.png",
                 roi=roi,
                 start_frame=walkover_window.start,
-                n_frames=min(16, walkover_window.end - walkover_window.start + 1),
+                fps=walk_fps,
+                span_seconds=window_len / walk_fps,
+                n_frames=n_walk_panels,
                 upscale=1,
+                original_path=original_video,
             )
             artifacts["walkover_consecutive_frames"] = str(
                 walkover_dir / "consecutive_frames.png"
             )
-            # Forensic sheet at the middle frame of the window.
-            mid = (walkover_window.start + walkover_window.end) // 2
-            if clean_video is not None:
-                contact_sheets.build_forensic_sheet(
-                    original_path=original_video,
-                    clean_path=clean_video,
-                    composite_path=composite_path,
-                    output_path=walkover_dir / f"forensic_sheet_f{mid:04d}.png",
-                    frame_index=mid,
-                    roi=roi,
-                )
-                artifacts["walkover_forensic_sheet"] = str(
-                    walkover_dir / f"forensic_sheet_f{mid:04d}.png"
-                )
+            # Five forensic sheets across the walkover window (entry / pre-contact /
+            # contact / post-contact / exit) — not just the middle frame. The
+            # forensic sheet is already a 6-column original | clean | composite |
+            # delta | survival | leak overlay so each sheet pairs original vs
+            # composite at that exact frame.
+            if clean_video is not None and window_len >= 2:
+                key_frames = np.linspace(
+                    walkover_window.start, walkover_window.end, 5, dtype=int
+                ).tolist()
+                key_labels = ["entry", "pre_contact", "contact", "post_contact", "exit"]
+                for label, frame_index in zip(key_labels, key_frames, strict=False):
+                    sheet_path = walkover_dir / f"forensic_sheet_{label}_f{int(frame_index):04d}.png"
+                    contact_sheets.build_forensic_sheet(
+                        original_path=original_video,
+                        clean_path=clean_video,
+                        composite_path=composite_path,
+                        output_path=sheet_path,
+                        frame_index=int(frame_index),
+                        roi=roi,
+                    )
+                    artifacts[f"walkover_forensic_sheet_{label}"] = str(sheet_path)
             # Occlusion metrics in window.
             walkover_metrics = walkover_mod.occlusion_metrics_in_window(
                 composite_path=composite_path,
@@ -410,28 +427,44 @@ def _evaluate_region(
 
     region_dir = eval_dir / _region_dirname(region_kind)
     region_dir.mkdir(parents=True, exist_ok=True)
+    upscale = 2 if region_kind != "floor" else 1
+    # Static-realism strip: 6 frames evenly across the clip; paired against the
+    # original (top row) so the agent has a ground-truth quality bar.
     contact_sheets.crops_strip(
         composite_path=composite_path,
         output_path=region_dir / "crops_strip.png",
         roi=roi,
         n_frames=6,
-        upscale=2 if region_kind != "floor" else 1,
+        upscale=upscale,
+        original_path=original_video,
     )
-    # Three consecutive-frame strips at 15%/50%/85% of the clip.
+    # Probe FPS once for motion strips.
+    cap_probe = cv2.VideoCapture(str(composite_path))
+    fps = cap_probe.get(cv2.CAP_PROP_FPS) or 60.0
+    cap_probe.release()
+    # Three motion strips at 15%/50%/85% of the clip, each spanning ~0.5s of
+    # clip time (so we actually see camera motion rather than 8 near-identical
+    # back-to-back frames).
     for label, anchor in (("early", 0.15), ("mid", 0.50), ("late", 0.85)):
-        start = int(anchor * max(n_frames - 8, 0))
-        contact_sheets.consecutive_frames_strip(
+        span_frames = int(round(0.5 * fps))
+        start = max(0, min(int(anchor * (n_frames - span_frames)), max(n_frames - span_frames, 0)))
+        contact_sheets.motion_strip(
             composite_path=composite_path,
-            output_path=region_dir / f"consecutive_frames_{label}.png",
+            output_path=region_dir / f"motion_strip_{label}.png",
             roi=roi,
             start_frame=start,
+            fps=fps,
+            span_seconds=0.5,
             n_frames=8,
-            upscale=2 if region_kind != "floor" else 1,
+            upscale=upscale,
+            original_path=original_video,
         )
 
     artifacts = {
         f"{region_kind}_strip": str(region_dir / "crops_strip.png"),
-        f"{region_kind}_consecutive_mid": str(region_dir / "consecutive_frames_mid.png"),
+        f"{region_kind}_motion_early": str(region_dir / "motion_strip_early.png"),
+        f"{region_kind}_motion_mid": str(region_dir / "motion_strip_mid.png"),
+        f"{region_kind}_motion_late": str(region_dir / "motion_strip_late.png"),
     }
 
     metrics = {**geom, **color, **temporal}
@@ -461,6 +494,7 @@ def _evaluate_full(
         roi=None,
         n_frames=6,
         upscale=1,
+        original_path=original_video,
     )
     return metrics, {"full_strip": str(full_dir / "crops_strip.png")}
 
