@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "Walkover frames 685-723 are the strictest test of the synthesis. The forensic sheets (entry/pre-contact/contact/post-contact/exit) all show the composite Red Bull patch sitting cleanly under the player's feet — no rectangular seam pops at any timestamp, including the high-stress exit f0723 where the original M-E-L-B-O-U-R-N-E baseline is recovering visibility. The original-survival panel shows residual MELBOURNE letters bleeding through, but the suspected-leak-overlay panel shows a clean Red Bull mark. No jitter, no halo, no edge reflex. Player contact shadow is unchanged from prior runs (the mark stays opaque under feet); that is the only deduction.",
+  "min_score": 3
+}
