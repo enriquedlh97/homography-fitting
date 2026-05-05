@@ -948,6 +948,74 @@ Both agents are read-only; output a structured design report. Manager will synth
 
 Status: dispatched in background.
 
+### P2-C001 results — 2026-05-05 13:25 EDT
+
+```
+=== P2-C001/A1 SIBLING RECON REPORT (summary) ===
+Tennis-virtual-ads has BallTrackerNet (14 keypoints, heatmap detection) + RANSAC homography
+with best-of-12 fallback (RANSAC when ≥5 keypoints; brute-force config-search otherwise).
+Already implements 3-stage temporal smoothing:
+  - KeypointSmoother (EMA, α≈0.7, spike-reset on reprojection error)
+  - HomographyStabilizer (EMA OR Kalman on H matrix; pinhole decomposition)
+  - HomographyLocker (hysteresis-based locking — displacement < threshold for N frames → lock; >unlock → unlock)
+Court reference is fixed image-plane (1665×3496 px); 14 hand-coded keypoints; 12 hand-coded
+4-point configurations.
+Portability: HIGH (Python+OpenCV+NumPy, lazy-imports BallTrackerNet via importlib).
+Recommendation: take ideas + reimplement core logic. Port court_reference.py + homography.py
+modules; port KeypointSmoother + HomographyStabilizer; SKIP BallTrackerNet for now (use
+this repo's existing line-based detection in court_geometry.py).
+=== END A1 ===
+```
+
+```
+=== P2-C001/A2 OWN-PATH RECON REPORT (summary) ===
+CourtGeometryEstimator (court_geometry.py:530-642) is standalone-usable: per-frame estimate()
+returns CourtGeometryEstimate with court_homography (3x3) and confidence. Has internal EMA
+smoothing via vp_smoothing_alpha (default 0.7). Already instantiated in hybrid path at
+pipeline.py:2996 for court_plane_placement_* metrics.
+
+GeometryFittingEngine is overkill — multi-object orchestrator for banner-fitting; hybrid
+correctly skips it.
+
+Hook point for tolerance gate: between pipeline.py:3256 (after estimate() call) and 3266
+(before _project_court_plane_rectangle routes corners).
+
+Existing smoothing: vp_smoothing_alpha (0.7), line_smoothing_alpha (0.65), CornerTracker
+EMA (0.3, but hybrid static-corners path doesn't use it). NO motion-rate-matched smoothing
+today; alpha is fixed.
+
+Smallest viable hybrid implementation:
+  - Estimation source: standalone CourtGeometryEstimator (already there).
+  - Seed: frame-0 corners (from clicked placement_quad or first estimate).
+  - Tolerance gate: between lines 3256-3266; compare estimated corners to seed; if
+    displacement < tolerance (default 5-10 px, motivated by white-line thickness),
+    stay locked; else ramp toward estimate over N frames where N = displacement /
+    motion_speed_px_per_frame.
+  - Per-frame state: extend schema to record seed_corners, estimated_corners, decision,
+    displacement_px.
+  - Code touch: ~145 lines additive across court_geometry.py + pipeline.py. NO refactor
+    of GeometryFittingEngine, CornerTracker, or the static path.
+Risk level: LOW. Static frames stay locked → no regression vs v68 numerically.
+=== END A2 ===
+```
+
+**Manager synthesis:** A2's inline path is the right starting point — minimal diff, self-contained, reuses already-instantiated CourtGeometryEstimator. A1's sibling-port (HomographyLocker, etc.) is a defensible fallback if the inline approach doesn't yield enough quality, but it's bigger surface area and we don't need it yet. Implementing inline.
+
+---
+
+## P2-C002 — 2026-05-05 13:26 EDT — code: hybrid lock-with-tolerance (additive, flag-gated)
+
+Manager hypothesis: implement the inline hybrid per A2's plan. Single code-change agent. Behavior:
+- New config flag `pipeline.geometry.hybrid_lock.enabled: false` (default — preserves v68 backward-compat).
+- When flag is on: per-frame, after `CourtGeometryEstimator.estimate()` runs, compare projected corners against the seed corners (frame-0 estimate or the static placement_quad).
+- If displacement < `tolerance_px` (default 6 px, configurable): stay locked at seed.
+- If displacement ≥ tolerance: ramp toward estimate over `ramp_frames` (default computed as `max(3, displacement / motion_px_per_frame)`).
+- Persist `seed_corners`, `estimated_corners`, `decision` ("locked"|"ramp"|"estimate"), `displacement_px` per frame in `outputs/per_frame_state.json`.
+- Existing 12 unit tests must still pass.
+- Eval on the existing v68 gold dir must still pass all 4 scorecards (backward-compat with flag off).
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent Phase 2 cycles append below this line. -->
