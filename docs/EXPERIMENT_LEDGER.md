@@ -1567,6 +1567,49 @@ User extended deadline to give Phase 3 a full overnight run. ~14 hours wall cloc
 
 Manager dispatches all in parallel and harvests as reports come in.
 
+### P3-A3 results — 2026-05-05 18:21 EDT (rubric calibration: shipped)
+
+Cherry-picked from `worktree-agent-a16cc4a0f3a7197df` (commit `3785a3f`) into `feat/quality-fixes-next`. RUBRIC_VERSION bumped 1→2.
+
+Added to surface-bearing regions (back, left, floor, walkover) — NOT applied to `full` (would double-count):
+- `realism.halo_presence` (1–5): bright glow/luminance halo at logo perimeter that does not match matte court paint or banner fabric. Canonical 1–2 case: Red Bull floor logo on Melbourne walkover.
+- `realism.edge_reflex` (1–5): subtle ghost/drift/ringing at letter or icon edges (NOT a mirror reflection); rings around bulls smear or letters show reflex top/bottom. Canonical 1–2: Red Bull side banner.
+
+`MANIFEST.md` generator now surfaces both new dimensions explicitly with anti-collapse callouts using the user's exact phrasing ("halo around the logo", "reflex/smearing at letter edges"). Smoke-tested on user reference images: floor halo image scores `halo_presence=2`, left reflex image scores `edge_reflex=2` — the rubric now catches what v1 collapsed.
+
+Lessons learned (from agent):
+- Existing rubric was strictly additive-friendly; new dims didn't break legacy consumers, but bumped RUBRIC_VERSION as discipline.
+- Halo and reflex are distinguishable artifact families: halo = LUMINANCE phenomenon at perimeter (radial glow); reflex = GEOMETRIC phenomenon at letter strokes (faint duplicate). Naming with user's exact words in the prompt is what stops collapsing to 5.
+
+### P3-A1 results — 2026-05-05 18:25 EDT (BallTrackerNet port: shipped, Modal preempted)
+
+Cherry-picked from `worktree-agent-a253fa8445cc8fe99` (commit `7b8f076`) into `feat/quality-fixes-next`.
+
+**Files added/modified (1149 lines):**
+- `src/banner_pipeline/court_geometry_ball_tracker.py` (NEW): vendored CourtReference, RANSAC homography solver, inlined BallTrackerNet architecture, `BallTrackerNetCourtEstimator` class with first-frame bridge to classical reference.
+- `src/banner_pipeline/court_geometry.py`: `_build_court_estimator()` factory; engine dispatches on `geometry.court_backend`.
+- `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`: P2-C012/A2 base, only `court_backend: ball_tracker_net_v1` swapped in.
+- `scripts/modal_run.py`: optional `add_local_dir("weights")` mount (no-op when empty).
+- `weights/README.md`: weights download + auto-discovery.
+
+**Local verification (verified across frames 0/100/300/500/740 of Melbourne walkover):**
+- 14/14 keypoints detected on frame 0.
+- RANSAC homography returned valid 3×3 with 10/14 inliers.
+- Bridge calibration aligns BTN court_quad projection to within ~20 px of classical's frame-0 placement.
+- **Frame-by-frame stability: BTN BL stays at (849.7→853.0, 943.9→944.5) across frames 0–740. Classical drifts (849.7→840.2, 943.9→971.8) over same span. Δ ~3 px BTN vs ~10 px classical — exactly the noise reduction Phase 2 needed.**
+
+**Modal status:** in-flight at `ap-Fsqsdtf0ABGPb31JxcaIlO`; H200 worker preempted at frame 400/767 due to capacity contention (Phase 3 had 8 parallel agents competing for slots). No `experiments/<dir>/` written yet. Code unchanged from this attempt — re-run when capacity is healthier.
+
+**Bridge mechanism (key implementation detail):** classical's `court_homography` unit-square is calibrated against a frame-dependent rectangle (line detector's outer width/depth lines), not a fixed court landmark. YAML `court_quad` fractional values (e.g., 0.3833, 0.9923) are tuned to that. The bridge `bridge = H_classical(0) @ H_btn(0)^-1` lets BTN return `bridge @ H_btn(t)` per frame — drop-in replacement for existing configs while picking up BTN's per-frame stability.
+
+Lessons learned (from agent):
+- Sibling repo only vendors the homography solver; BallTrackerNet model itself imported via importlib from a separate TennisCourtDetector repo. To make the port self-contained, the model architecture (~80 lines) must be inlined alongside CourtReference + RANSAC.
+- H200 capacity is intermittent during peak hours; preemption at frame 400/767 mid-pipeline. Detached jobs survive preemption but throughput is throttled when many parallel agents contend.
+- Factory pattern keeps the torch import for BTN fully lazy — configs using `classical_lines_v1` pay zero import or load cost.
+
+**Pending validation:** retry Modal when capacity is healthier. If floor SSIM matches P2-C012/A2: BTN is a free upgrade. If worse: flip `bridge_to_classical=False` and recalibrate `court_quad` against BTN's natural reference rectangle.
+
+
 
 
 
