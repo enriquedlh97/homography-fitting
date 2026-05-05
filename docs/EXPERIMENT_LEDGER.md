@@ -686,6 +686,33 @@ Manager hypothesis: only one untested compositor knob remains worth a single Mod
 
 Status: dispatched in background.
 
+### C012 results — 2026-05-05 00:11 EDT
+
+```
+=== CYCLE C012 SLOT A1 REPORT ===
+Hypothesis: lum_strength 0.0 -> 0.3 in compositor.params (global)
+Run dir: experiments/2026-05-05_00-09-02_hull_B200/
+Exit code: 0
+Pass: back=P left=P floor=P full=P
+Regression vs gold: no
+back_roi_ssim_vs_reference_mean: 0.9951
+left_roi_ssim_vs_reference_mean: 0.985 (slightly below typical 0.998)
+floor_roi_ssim_vs_reference_mean: 0.9995
+floor_walkover_logo_visible_pct: +0.06% flat
+Cost: Modal-B200 ~5.6min
+Recommendation: low-risk knob to keep on; pursue larger values to see if shading meaningfully improves perceptual realism.
+```
+Manager note: clean candidate, no regression. left_ssim=0.985 is the smallest hint of a movement — lum_strength is doing something to the left logo region but stays in-bounds. Same saturation pattern. Mark as no-change clean pass.
+
+---
+
+## C013 — 2026-05-05 00:12 EDT — combined-safe experiment
+Manager hypothesis: combine two independent knobs that pass clean alone (mask_dilate_px=10 from C005/A2 AND logo_blur_px=1 on court_floor from C006/A2). Tests whether benign knobs compound to anything visibly different. Single Modal run.
+
+- **A1 — combined mask_dilate=10 + logo_blur=1.** New config `eval_walkover_c013_a1_combined_safe.yaml`. Two-line config change vs v68 base.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
