@@ -39,7 +39,10 @@ def main() -> int:
     parser.add_argument(
         "--with-ai-review",
         action="store_true",
-        help="Run the Anthropic-API-based vision rubric (requires anthropic package)",
+        help=(
+            "Deprecated; the visual rubric MANIFEST.md is now always emitted. "
+            "Sub-agent vision is the only review path (no SDK)."
+        ),
     )
     parser.add_argument("--original", default=None, help="Override the original video path")
     parser.add_argument("--clean", default=None, help="Override the clean-plate video path")
@@ -69,6 +72,11 @@ def main() -> int:
                 print(f"  [{region:5s}] {status}")
         if payload.get("any_regression"):
             print("  REGRESSION vs reference detected.")
+        # Manifest is always emitted; surface it.
+        print(
+            f"  Visual rubric manifest: {payload['experiment_dir']}/eval/ai_review/MANIFEST.md "
+            "(dispatch a sub-agent with this manifest to score the rubric)."
+        )
     return exit_code
 
 

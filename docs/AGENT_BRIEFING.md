@@ -54,7 +54,7 @@ Recommendation for next cycle: <continue same direction with tighter step / pivo
 
 - **Never modify code** unless the manager explicitly authorizes a code change for this cycle. Config-only changes by default.
 - **Never modify** `configs/eval/reference.yaml` — only the manager promotes a new gold.
-- **Never run** `--with-ai-review` unless the manager explicitly enables it.
+- **Never call the Anthropic SDK** for visual review. The visual rubric is scored by sub-agents reading PNGs via the Read tool — that's it. The eval framework auto-emits `eval/ai_review/MANIFEST.md` on every run; the manager dispatches a sub-agent against it as a separate task when a rubric score is wanted.
 - **Always commit** the new config + experiment dir before exiting your turn. Use `git add <new_config> && git add experiments/<your_run> && git commit --no-verify --no-gpg-sign -m "C<id>/<slot>: <hypothesis>"`. Push to the current branch.
 - **If `any_regression == true`** for the metric you were targeting: still commit (we keep the dead-end on record) but flag clearly in your report.
 - **If Modal fails** or pipeline crashes: report `Run dir: FAILED` plus the first 5 lines of the error. Do not retry — let the manager re-dispatch.
@@ -69,3 +69,17 @@ Recommendation for next cycle: <continue same direction with tighter step / pivo
 - Ledger: `docs/EXPERIMENT_LEDGER.md`
 - Gold (Melbourne walkover): `experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/`
 - Eval CLI: `python -m banner_pipeline.eval --experiment <dir> --reference auto`
+
+---
+
+## Visual rubric review (separate sub-agent task)
+
+Some cycles will be **review-only** (no Modal, no eval, no commits). The manager dispatches a sub-agent to score the visual rubric on a run that already exists. Pattern:
+
+1. Manager passes you the path to `<run>/eval/ai_review/MANIFEST.md` (auto-written by the eval framework).
+2. Read the manifest. It lists per-region crop PNGs and the rubric schema.
+3. For each region: Read each listed PNG via the **Read tool** — this returns the image content for you to see (you are a vision-capable Claude). Score the rubric from your own visual judgment. Do **not** call any external API or SDK.
+4. Write `<run>/eval/ai_review/<region>.json` (strict JSON matching the schema, with `min_score` injected) and `<run>/eval/ai_review/<region>.md` (under 150 words of prose: "what would a viewer notice if they scrubbed this region?").
+5. No commits, no Modal, no pipeline runs. Just file writes + a short report back to the manager listing per-region min_scores.
+
+You have **complete creativity** in your prose — describe what you actually see. Surface anything surprising. The numbers are integer 1–5 per dimension; the prose is where the value is.

@@ -22,10 +22,6 @@ dependencies = [
     "huggingface-hub>=1.11.0",
 ]
 
-[project.optional-dependencies]
-# Vision-LLM evaluation rubric (--with-ai-review). Install with: uv sync --extra ai
-ai = ["anthropic>=0.40"]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

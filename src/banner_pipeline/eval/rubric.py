@@ -1,8 +1,10 @@
-"""AI visual-inspection rubric definition + lightweight schema validation.
+"""Visual-inspection rubric definition + lightweight schema validation.
 
-The rubric is identical for the manual (conversation-Claude) and automated
-(Anthropic API) paths, so scores are comparable. Documented in
-`docs/EVALUATION.md` under the "AI visual inspection" section.
+Used by both the eval framework (to format the MANIFEST.md a sub-agent reads)
+and any code that needs to validate sub-agent-written rubric JSONs.
+
+The rubric review path uses **sub-agent vision via the Read tool** — never an
+SDK call. See `docs/EVALUATION.md` "Visual rubric review" section.
 """
 
 from __future__ import annotations
@@ -82,36 +84,7 @@ def _dotget(payload: dict, path: str):
     return cur
 
 
-# Prompt body for the automated (Anthropic API) path. The system prompt is
-# intentionally static so that prompt-cache hits across calls.
-SYSTEM_PROMPT = """You are a visual quality reviewer for virtual ad insertions on tennis broadcast footage.
-
-You will receive a set of cropped images from one placement region of one experiment run.
-Your job is to fill out a strict rubric (scores 1-5, integer; 1 = obviously broken, 5 = indistinguishable from a real painted-on ad).
-
-Output ONLY valid JSON matching the schema you are given. Do not include prose outside the JSON.
-"""
-
-
-def prompt_for_region(region_kind: str) -> str:
-    """The user-message prompt body. Region-aware so walkover-only fields are surfaced."""
-    schema = schema_for(region_kind)
-    fields = "\n".join(
-        f'  - "{path}" : {"int 1-5" if kind == "score" else "string"}'
-        for path, (kind, _) in schema.items()
-    )
-    return f"""Region kind: {region_kind}
-
-Rate the following dimensions (return JSON):
-
-{fields}
-
-Return JSON shaped like:
-{{
-  "realism": {{"painted_on_vs_pasted_on": <1-5>, ...}},
-  "color":   {{"hue_match": <1-5>, ...}},
-  "geometry":{{"perspective_plausibility": <1-5>, ...}},
-  {('"temporal":{"occlusion_realism": <1-5>, ...},' if region_kind in {"floor", "walkover"} else "")}
-  "notes": "<free text caveats>"
-}}
-"""
+# Note: the SDK-based prompts that previously lived here have been removed.
+# The visual rubric is now driven by `ai_review.write_manifest`, which emits a
+# Markdown manifest a sub-agent (vision-capable Claude) reads directly via the
+# Read tool. See `src/banner_pipeline/eval/ai_review.py`.
