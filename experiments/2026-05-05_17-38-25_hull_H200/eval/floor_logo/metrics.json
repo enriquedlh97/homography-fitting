@@ -5,13 +5,13 @@
   "quad_area_cv": 0.0,
   "frames_used": 767,
   "roi_jitter_composite_mean": 0.3033,
-  "roi_jitter_original_mean": 0.3769,
-  "roi_jitter_ratio": 0.8049,
+  "roi_jitter_original_mean": 0.0,
+  "roi_jitter_ratio": 0.0,
   "roi_delta_E_lab": 6.929,
   "noise_variance_ratio": 29.4126,
   "edge_sharpness_ratio": 0.0588,
   "roi_temporal_ssim_mean": 0.9927,
   "roi_temporal_ssim_p5": 0.9642,
-  "walkover_logo_visible_pct": 0.1787,
-  "walkover_occlusion_iou": 0.9998
+  "ai_review_min_score": 5,
+  "ai_review_min_score_walkover": 4
 }

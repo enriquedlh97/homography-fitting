@@ -27,19 +27,18 @@
 ### Region: `full`
 - `experiments/2026-05-05_17-38-25_hull_H200/eval/full/crops_strip.png`
 
-### Region: `walkover`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/consecutive_frames.png`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_entry_f0685.png`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_exit_f0723.png`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_post_contact_f0713.png`
-- `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_pre_contact_f0694.png`
-
-**Walkover window:** frames `685`–`723` (inclusive). Pay extra attention to the walkover region — that's where the player walks across the court-floor logo.
-
 ## Rubric (per region)
 
 Score each dimension as an **integer 1–5** (1 = clearly broken / pasted-on; 5 = indistinguishable from a real painted-on ad). All `notes` fields are free-form prose, ≤150 words per region.
+
+### Calibration callouts (rubric v2 — DO NOT collapse these to 5)
+
+Two artifact families were under-scored by rubric v1 and are now explicit dimensions on every surface-bearing region (`back`, `left`, `floor`, `walkover`). Score these honestly — a v1 reviewer rated a run 5/5/5/5/5 on a clip the user immediately flagged for both:
+
+- **`realism.halo_presence`** — is there a **halo around the logo**? Bright glow / luminance halo at the logo perimeter that does NOT match the matte court paint or banner fabric. The user-flagged canonical case is the Red Bull *floor* logo on Melbourne with a visible halo around the wordmark and bulls. **A halo wider than ~1-2 px on the matte court is a 2 (visible glow), not a 5.**
+- **`realism.edge_reflex`** — is there a **reflex / smearing at letter edges**? A subtle ghost / drift / ringing along letter and icon edges (NOT a mirror reflection — the artifact is more like a faint duplicate or smeared echo). The user-flagged canonical case is the Red Bull *left side banner* where the rings around the bulls show paint drift and the letters show a reflex at top and bottom edges. **Visible smearing or letter-edge ghost on side banners is a 1-2, not a 5.**
+
+Read the original (top row) carefully: it is the baked-in advertiser ad and the quality bar. If you can spot the halo or reflex on the bottom row but the top row is clean, score the dimension 1-2.
 
 ### `back`
 - `realism.painted_on_vs_pasted_on` — integer 1–5
@@ -51,6 +50,8 @@ Score each dimension as an **integer 1–5** (1 = clearly broken / pasted-on; 5 
 - `geometry.perspective_plausibility` — integer 1–5
 - `geometry.size_plausibility` — integer 1–5
 - `notes` — free-form text
+- `realism.halo_presence` — integer 1–5
+- `realism.edge_reflex` — integer 1–5
 
 ### `left`
 - `realism.painted_on_vs_pasted_on` — integer 1–5
@@ -62,6 +63,8 @@ Score each dimension as an **integer 1–5** (1 = clearly broken / pasted-on; 5 
 - `geometry.perspective_plausibility` — integer 1–5
 - `geometry.size_plausibility` — integer 1–5
 - `notes` — free-form text
+- `realism.halo_presence` — integer 1–5
+- `realism.edge_reflex` — integer 1–5
 
 ### `floor`
 - `realism.painted_on_vs_pasted_on` — integer 1–5
@@ -73,6 +76,8 @@ Score each dimension as an **integer 1–5** (1 = clearly broken / pasted-on; 5 
 - `geometry.perspective_plausibility` — integer 1–5
 - `geometry.size_plausibility` — integer 1–5
 - `notes` — free-form text
+- `realism.halo_presence` — integer 1–5
+- `realism.edge_reflex` — integer 1–5
 - `temporal.occlusion_realism` — integer 1–5
 - `temporal.jitter_visible` — integer 1–5
 - `temporal.player_contact_shadow` — integer 1–5
@@ -87,20 +92,6 @@ Score each dimension as an **integer 1–5** (1 = clearly broken / pasted-on; 5 
 - `geometry.perspective_plausibility` — integer 1–5
 - `geometry.size_plausibility` — integer 1–5
 - `notes` — free-form text
-
-### `walkover`
-- `realism.painted_on_vs_pasted_on` — integer 1–5
-- `realism.edge_seam_visibility` — integer 1–5
-- `realism.texture_match` — integer 1–5
-- `color.hue_match` — integer 1–5
-- `color.brightness_match` — integer 1–5
-- `color.saturation_match` — integer 1–5
-- `geometry.perspective_plausibility` — integer 1–5
-- `geometry.size_plausibility` — integer 1–5
-- `notes` — free-form text
-- `temporal.occlusion_realism` — integer 1–5
-- `temporal.jitter_visible` — integer 1–5
-- `temporal.player_contact_shadow` — integer 1–5
 
 ## Output the agent must write
 
@@ -142,15 +133,6 @@ Plus one report-level file:
 - [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/full/crops_strip.png`
 - [ ] wrote `eval/ai_review/full.json`
 - [ ] wrote `eval/ai_review/full.md`
-## walkover
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/consecutive_frames.png`
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png`
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_entry_f0685.png`
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_exit_f0723.png`
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_post_contact_f0713.png`
-- [ ] read `experiments/2026-05-05_17-38-25_hull_H200/eval/walkover/forensic_sheet_pre_contact_f0694.png`
-- [ ] wrote `eval/ai_review/walkover.json`
-- [ ] wrote `eval/ai_review/walkover.md`
 [/VISUAL EVAL CHECKLIST]
 ```
 
@@ -160,16 +142,17 @@ Example JSON shape:
 
 ```json
 {
-  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 4, "texture_match": 5},
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 4, "texture_match": 5,
+              "halo_presence": 2, "edge_reflex": 3},
   "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
   "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
   "temporal":{"occlusion_realism": 4, "jitter_visible": 5, "player_contact_shadow": 3},
-  "notes": "Logo reads slightly darker in the underfoot frames; otherwise clean.",
-  "min_score": 3
+  "notes": "Visible bright halo around the logo on the matte court paint; rings around the bulls show subtle smearing.",
+  "min_score": 2
 }
 ```
 
-(`temporal.*` only applies to `floor` / `walkover` regions.)
+(`temporal.*` only applies to `floor` / `walkover` regions. `realism.halo_presence` and `realism.edge_reflex` apply to `back`, `left`, `floor`, `walkover` — every region that paints a logo onto a real-world surface. They do NOT apply to `full`.)
 
 ## Suggested sub-agent prompt template
 
@@ -197,4 +180,16 @@ BEFORE submitting your final report:
      baked-in ads (Kia, YoPRO, Melbourne wordmark, etc.). Score `realism.painted_on_
      vs_pasted_on` by asking: 'does our composite read as natural as the original ad
      does?' Without that comparison the rubric collapses to 'looks fine to me'.
+  3. EXPLICITLY check for the two rubric-v2 calibration artifacts on every
+     surface-bearing region (back, left, floor, walkover):
+       - `realism.halo_presence`: is there a halo around the logo? A bright glow at
+         the logo perimeter that does not match the matte court paint or banner
+         fabric. The Red Bull floor logo on Melbourne is the canonical halo case.
+       - `realism.edge_reflex`: is there a reflex / smearing at letter edges? A
+         subtle ghost or ringing along letter and icon edges (NOT a mirror
+         reflection). The Red Bull left-banner letters and bull rings are the
+         canonical reflex / smearing case.
+     Both were under-scored to 5 by the v1 rubric on runs the user immediately
+     flagged. If you can spot them on the bottom row but the top-row baked-in ad is
+     clean, that is a 1-2, not a 5. Do NOT round up.
 ```

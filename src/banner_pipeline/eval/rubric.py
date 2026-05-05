@@ -9,7 +9,7 @@ SDK call. See `docs/EVALUATION.md` "Visual rubric review" section.
 
 from __future__ import annotations
 
-RUBRIC_VERSION = 1
+RUBRIC_VERSION = 2
 
 # Schema definition: {region_kind -> {field_path: (kind, range)}}
 #   kind: "score" -> int 1..5; "text" -> free-form string
@@ -25,16 +25,40 @@ COMMON_FIELDS = {
     "notes": ("text", None),
 }
 
+# Surface-bearing-region extras (added v2): catch logo halo + edge reflex
+# artifacts the v1 rubric collapsed to "looks fine." Apply to back, left,
+# floor, walkover (any region whose composite paints a logo onto a surface).
+SURFACE_LOGO_EXTRA = {
+    # 1 = strong glow / halo around logo edges (does NOT match matte court
+    # paint or banner fabric); 5 = no halo, logo reads painted-on. The
+    # user-flagged floor case (Red Bull glow on the court paint) is the
+    # canonical 1-2.
+    "realism.halo_presence": ("score", (1, 5)),
+    # 1 = visible reflex / smearing / drift at letter or icon edges (e.g.
+    # a faint ghost above and below letters that is NOT a mirror reflection,
+    # or rings around the bulls that smear); 5 = clean edges, indistinguishable
+    # from a real baked-in ad. The user-flagged left-banner Red Bull case is
+    # the canonical 1-2.
+    "realism.edge_reflex": ("score", (1, 5)),
+}
+
 WALKOVER_EXTRA = {
     "temporal.occlusion_realism": ("score", (1, 5)),
     "temporal.jitter_visible": ("score", (1, 5)),
     "temporal.player_contact_shadow": ("score", (1, 5)),
 }
 
+# Region kinds that paint a logo onto a real-world surface. These get the
+# halo / edge_reflex dimensions on top of the common fields. `full` is the
+# global rollup and does NOT get the surface dims (it would double-count).
+SURFACE_BEARING_REGIONS = {"back", "left", "floor", "walkover"}
+
 
 def schema_for(region_kind: str) -> dict[str, tuple[str, tuple[int, int] | None]]:
     """Return the rubric schema for a region kind."""
     fields = dict(COMMON_FIELDS)
+    if region_kind in SURFACE_BEARING_REGIONS:
+        fields.update(SURFACE_LOGO_EXTRA)
     if region_kind in {"floor", "walkover"}:
         fields.update(WALKOVER_EXTRA)
     return fields

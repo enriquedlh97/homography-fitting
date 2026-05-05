@@ -5,11 +5,12 @@
   "quad_area_cv": 0.0,
   "frames_used": 767,
   "roi_jitter_composite_mean": 0.0525,
-  "roi_jitter_original_mean": 0.1798,
-  "roi_jitter_ratio": 0.2922,
+  "roi_jitter_original_mean": 0.0,
+  "roi_jitter_ratio": 0.0,
   "roi_delta_E_lab": 10.905,
   "noise_variance_ratio": 0.5095,
   "edge_sharpness_ratio": 1.5606,
   "roi_temporal_ssim_mean": 0.9999,
-  "roi_temporal_ssim_p5": 0.9998
+  "roi_temporal_ssim_p5": 0.9998,
+  "ai_review_min_score": 5
 }
