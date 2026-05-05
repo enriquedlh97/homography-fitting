@@ -745,6 +745,31 @@ Manager hypothesis: `compositor.params.shade_blend: false → true` (currently f
 
 Status: dispatched in background.
 
+### C014 results — 2026-05-05 00:35 EDT
+
+```
+=== CYCLE C014 SLOT A1 REPORT ===
+Hypothesis: shade_blend false -> true in compositor.params
+Run dir: experiments/2026-05-05_00-31-46_hull_B200
+Exit code: 0
+Pass: all P
+Regression vs gold: no
+back/left/floor _ssim_vs_ref: 0.9983 / 0.9976 / 0.9995
+floor_walkover_logo_visible_pct: -0.06% flat
+Cost: Modal-B200 ~10.5min
+Recommendation: candidate; effectively neutral in this scene.
+```
+Manager note: same saturation. No-change clean pass. Add to pixel-equivalent candidate set.
+
+---
+
+## C015 — 2026-05-05 00:35 EDT — blend_mode toggle (final breadth)
+Manager hypothesis: `compositor.params.blend_mode: led → screen` (currently `led`). One last untouched compositor toggle. Single agent. After this, the agent loop has effectively exhausted v68's safe-knob space and remaining cycles will be sanity passes only.
+
+- **A1 — `blend_mode: screen`** in compositor.params. New config `eval_walkover_c015_a1_blend_mode_screen.yaml`.
+
+Status: dispatched in background.
+
 ---
 
 <!-- Subsequent cycles append below this line. -->
