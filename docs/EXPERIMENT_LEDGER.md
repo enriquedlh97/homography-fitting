@@ -1306,6 +1306,42 @@ max_disp_px: mean=23.77  median=23.12  p5=8.85  p25=16.68  p75=30.99  p95=39.96 
 
 The displacement distribution is very wide: even the *best 5%* of frames show ≥9 px error — already larger than line-thickness (~3-5 px), so a tight gate has no quiet floor to ride on. Median is 23 px, far above any meaningful tolerance for floor-logo placement. p95 ≈ 40 px, max ≈ 58 px. **The line-based estimator is intrinsically too noisy to power a hybrid-with-tolerance gate, regardless of court_rect/court_quad calibration or downstream smoothing.** Same conclusion as the gate-counter table, now from direct measurement.
 
+## Final summary — Phase 2, 2026-05-05 (provisional, written 15:55 EDT before 18:30 deadline)
+
+**Best candidate / current gold:** unchanged. `experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/` (v68 manually-clicked, static homography). All Phase 2 sanity-locked variants reproduce this run pixel-equivalently when the gate stays 100% locked.
+
+**Axis explored (Phase 2 hypothesis):** "lock-with-tolerance + smooth-on-deviation" homography — re-estimate H per frame, stay locked when within tolerance of v68 clicked seed, ramp toward estimate when deviation exceeds tolerance. Goal: keep v68's static crispness while gaining adaptability to camera motion.
+
+**What worked:**
+- HybridLockState dataclass + per-frame gate decision + ramp state machine (`src/banner_pipeline/court_geometry.py`). Sound, well-tested (5 unit tests pass), additive, flag-gated, and pixel-equivalent to gold when always-locked. Now also instrumented: `hybrid_lock_locked_frames`, `_ramp_frames`, `_estimate_frames` ride through to `metrics.json`.
+- `court_quad` calibration (commit `23bc837`) — extending `court_plane_placement` to accept a 4-point court-plane quad eliminated the 25-px frame-0 round-trip error introduced by axis-aligned-rect approximation. Frame-0 round-trip now sub-pixel.
+- Reporting filter fix (commit `94a0383`) — `build_metrics_report`'s allow-list now passes through hybrid_lock and court_plane keys.
+- Direct estimator-noise measurement (commit `d1cae7a`) — `scripts/dump_estimator_displacement.py` makes the noise floor tangible and reproducible without Modal.
+
+**What didn't work:**
+- Any non-trivial tolerance: at tol=4 only 4% of frames stay locked, at tol=15 only 27%, at tol=30 only 80%. Each frame the gate ramps, the floor logo drifts away from v68. `floor_SSIM_vs_gold ≈ locked_fraction` to within 1%.
+- Smoothing the estimator (`vp_smoothing_alpha = 0.2 / 0.4`) does not narrow the noise distribution enough to rescue tight tolerances.
+- Slow ramping (`ramp_min_frames = 20-30`, `ramp_motion_px_per_frame = 0.3-0.5`) is *worse* than fast ramping at the same tolerance — once the gate fires, more frames are spent drifting toward the wrong estimate.
+- Calibrating `court_rect` more carefully → reduces frame-0 error but doesn't help on later frames because the estimator's per-frame noise is the binding constraint, not initial alignment.
+
+**Architectural finding (the load-bearing conclusion):** `CourtGeometryEstimator` (line-based vanishing-point + four-line corner solve) produces H estimates with median 23 px max-corner displacement vs the v68 manually-clicked truth, p95 ≈ 40 px, max ≈ 58 px. Even the cleanest 5% of frames show ≥9 px deviation — already larger than tennis-court white-line thickness. **The hybrid-with-tolerance idea is correct in principle but cannot be made to work as long as the upstream estimator has this much noise.** No tuning of the gate, ramp, smoothing, or calibration overcomes that.
+
+**Recommended next axes (not started this phase):**
+1. **Port `tennis-virtual-ads`'s BallTrackerNet (14-keypoint detector) + RANSAC homography fit** (sibling repo `~/repositories/.../tennis-virtual-ads/` — see auto-memory `architecture.md`). Learned-keypoint H should be substantially less noisy frame-to-frame than the line-based path, and would unlock the existing hybrid_lock gate logic without code change — just swap the estimator. This is the biggest-leverage next step.
+2. **A different axis entirely:** improve the `CornerTracker` optical-flow path (the one v68 gold actually uses). Today it carries clicked corners forward via Lucas-Kanade; the failure mode of the v68 baseline is camera-motion drift. Could be attacked by adding a periodic "snap back to estimate" when sufficient confidence accumulates — orthogonal to the hybrid_lock work.
+3. **Test the hybrid_lock infrastructure on a moving-camera clip** where v68 actually *is* suboptimal. The Melbourne walkover has near-static framing, so always-locked = the right answer; we don't know whether the gate would ever fire usefully on a camera-moving clip even with a good estimator. Get that clip + ground truth before spending more time on the axis.
+
+**Infra/process findings worth carrying forward:**
+- **Bash tool's 10-minute hard cap** is real and was the cause of P2-C003 (synchronous Modal calls die when local CLI timeouts). The detached + poll pattern is necessary; documented in `feedback_modal_poll_pattern.md`.
+- **Sub-agent background processes do not reliably survive turn-end** (P2-C004 ate 7 agents this way). When dispatching Modal cycles, the manager must dispatch from MAIN THREAD with `Bash(run_in_background=True)`, then poll/Monitor — not delegate to sub-agents. Sub-agents are fine for visual rubric review (no long-running bg processes there) but not for kicking off Modal cycles.
+- **Reporting allow-list silently drops new metrics** — any new metric key added to the pipeline metrics dict must also be added to `_PASSTHROUGH_KEYS` or `_NUMERIC_KEYS` in `src/banner_pipeline/reporting.py`. Caused P2-C005 / P2-C006 / P2-C007 to lose hybrid_lock counter visibility for three full cycles.
+- **Visual rubric review via sub-agent vision (no SDK)** worked well in P2-C005's manual review. Sub-agents read PNGs through the Read tool and write `eval/ai_review/<region>.{json,md}` + a CHECKLIST that the manager greps for unread artifacts. Pattern is captured in `docs/AGENT_BRIEFING.md`. Don't regress to Anthropic-API SDK calls.
+
+**Phase-2 cycles run (chronological):** C001 recon → C002 code (hybrid_lock implementation) → C003 lost (Modal cancelled by Bash 10-min cap) → C004 partial (only A3 returned; sub-agent bg processes died at turn-end) → C005 5-variant tolerance sweep on v68-static base + visual rubric (A1 sanity = gold, A3/A4 7/12 floor) → C006 5-variant court_quad + tol sweep (calibration fixed frame-0 alignment but per-frame noise dominates) → C007 5-variant smoothing + slow-ramp combos (heavier EMA / slower ramp do not rescue tight tolerances; slow ramp is worse) → C008 5-variant re-run with reporting fix (definitive gate-counter characterization: `floor_SSIM = locked_fraction`).
+
+**Total Modal cycles this phase:** ~30 H200 GPU-runs across 8 logical cycles. ~6 hours wall time, well under the 18:30 deadline.
+
+
 
 
 
