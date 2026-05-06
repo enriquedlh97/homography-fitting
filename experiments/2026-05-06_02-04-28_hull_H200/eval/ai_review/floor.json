@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Floor-level Red Bull on the blue floor band: color/hue/sat match the floor stripe perfectly. The MELBOURNE wordmark is fully covered with no leak in the early/mid/late motion strips. A faint halo and faint edge reflex remain detectable around the bull silhouettes vs the very crisp baked-in MELBOURNE letterforms — both soft, neither dramatic. Geometry stable across the strip with no jitter. obj_4 feather change does not target this object so floor is essentially unchanged from baseline.",
+  "min_score": 4
+}
