@@ -1663,7 +1663,15 @@ Lessons learned (from agent):
 
 User extended deadline to give Phase 3 a full overnight push. ~14 hours wall clock. Dispatched 12 successive waves of cycles (P3-A6 through P3-A32), iterating on all dimensions of the rubric. Key findings:
 
-### Best Phase 3 candidate: P3-A29/a3
+### Best Phase 3 candidate (FINAL UPDATE): P3-A33/a2
+
+**Run dir:** `experiments/2026-05-06_02-04-28_hull_H200/`
+
+**Why this is the final best:** P3-A33/a2 = P3-A29/a3 + `obj_4 inpaint_feather_px: 14 → 8`. This single change lifted `left.edge_reflex` from 3 → 4 (the prior P3-A29/a3 ceiling). Run-wide visual rubric: **back=5, full=5, left=4, floor=4, walkover=4** — first Phase 3 variant where ALL regions reach min_score ≥4 (no sub-4 region remaining).
+
+Wave-14 attempts to push left.edge_reflex 4→5 via further feather tightening (=4) or alternative inpaint method (NS) failed: feather=4 introduced a floor seam regression; NS was visually a no-op. The agent's verdict: "the bottleneck is downstream of obj_4 inpaint feather/method — likely composite anti-aliasing or blend math."
+
+### Best Phase 3 candidate (PRIOR): P3-A29/a3
 
 **Run dir:** `experiments/2026-05-05_22-46-27_hull_H200/`
 
