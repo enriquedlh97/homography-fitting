@@ -1737,9 +1737,38 @@ Wave-14 attempts to push left.edge_reflex 4→5 via further feather tightening (
 - `floor.texture_match=4`: smoothed inpaint micro-grain visible vs gritty real court paint. Would require actual texture transfer (noise injection, GAN-based inpaint, etc.) — beyond config sweep.
 - `back.painted_on_vs_pasted_on=4`: subtle artifact on darker mid/late frames. Could explore back-region-specific inpaint params.
 
-### Total Phase 3 cycles run
+### Last cycle before deadline: P3-A40 (rejected)
 
-~50 H200 GPU runs across 12 waves + 3 code-fork worktrees + ~10 visual rubric sub-agents. Deadline reached at 2026-05-06 08:00 EDT with P3-A29/a3 as best candidate.
+**P3-A40/a1** (`shadow_strength: 0.6 → 0.8`, run dir `experiments/2026-05-06_06-58-55_hull_H200/`):
+Final exploration to push floor `min_score 4 → 5`. **Rejected** — `floor_walkover_occlusion_iou` collapsed to **0.6014** (gate threshold > 0.80). Heavier shadow darkened occluded floor-logo pixels enough that the bake-delta no longer matched the gold's logo presence inside the player mask. Per AGENT_BRIEFING cadence ("Never on failed gates"), no rubric dispatched. P3-A38/e2 stands as FINAL FINAL.
+
+**Lesson:** shadow_strength has a tight sweet spot at 0.6 where contact-realism reads convincingly *and* the occlusion_iou gate is preserved. Cranking it past 0.6 makes the floor-iou gate brittle without a corresponding rubric improvement (the visible-logo pixels go below the bake-delta floor before any rubric dimension lifts).
+
+### Phase 3 final state — 2026-05-06 08:00 EDT deadline
+
+**FINAL FINAL candidate: P3-A38/e2** (`experiments/2026-05-06_05-33-48_hull_H200/`)
+**Config:** `configs/experiments/eval_walkover_p3_a38_e2_obj4_padding_0.yaml`
+**Branch:** `feat/quality-fixes-next` (latest commit on push to remote)
+**Rubric:** back=5, full=5, **left=4** (texture_match=4 + size_plausibility=4; v2 dims edge_reflex=5 + halo_presence=5), floor=4, walkover=4
+
+**Both v2 user-flagged artifacts addressed:**
+- ✅ Floor halo (`obj_3`): `realism.halo_presence` = 5 on back (carry-over) + floor at 4 (vs original artifact). Shadow synthesis at strength 0.6 anchors the logo to the floor.
+- ✅ Left banner edge reflex (`obj_4`): `realism.edge_reflex` = 5 on left. Achieved via `obj_4 mask_dilate_px=4 + inpaint_feather_px=8 + padding=0.0`.
+
+**Total Phase 3 cycles:** ~55 H200 GPU runs across 14 waves (P3-A1 through P3-A40) + 3 code-fork worktrees + ~12 visual rubric sub-agents.
+
+**Code changes shipped to `feat/quality-fixes-next`:**
+1. `src/banner_pipeline/court_geometry_ball_tracker.py` — BallTrackerNet learned-keypoint estimator (P3-A1).
+2. `src/banner_pipeline/court_geometry.py` — motion-aware adaptive vp_smoothing_alpha (P3-A2; sweep incomplete).
+3. `src/banner_pipeline/eval/rubric.py` + `eval/ai_review.py` — Rubric v2 with halo_presence + edge_reflex dimensions (P3-A3).
+4. `src/banner_pipeline/composite/painted.py` + `pipeline.py` — shadow synthesis on court_floor (P3-A28).
+
+**Remaining ceiling (out of scope for config sweep):**
+- `floor.texture_match=4`: smoothed inpaint micro-grain vs gritty real court paint — needs texture transfer.
+- `left.texture_match=4` and `left.size_plausibility=4`: residual size/material mismatch on left banner.
+- `back.painted_on_vs_pasted_on=4` (in late-frame mid-range scenes).
+
+These would require either GAN-based inpaint, perceptual loss training, or rebuilt logo assets — all beyond Phase 3's config-sweep + targeted-code-change scope.
 
 
 
