@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Composite Red Bull replaces baked-in Kia on the back banner strip. Geometry and size are plausible — the wordmark sits on the banner band correctly across crops_strip and all motion strips. Color/brightness are close to a real banner but the white wordmark reads slightly softer than the original Kia logo, suggesting mild blur from warp interpolation. No bright luminance halo around the perimeter; the band itself is dark navy so any glow would be obvious and I don't see one. The bull icon's rings and letter edges show a faint softness/ringing — not a clear ghost, but enough to dock edge_reflex to 3. Overall this region reads as a plausibly painted-on banner; it is the cleanest of the surface-bearing regions in this run.",
+  "min_score": 3
+}

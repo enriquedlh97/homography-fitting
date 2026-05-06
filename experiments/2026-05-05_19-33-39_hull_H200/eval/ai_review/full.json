@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 3,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 4,
+    "size_plausibility": 4
+  },
+  "notes": "At full-frame scale the composite reads as natural — the broadcast wide shot doesn't expose the brightness step on the back row or the size mismatch on the floor logo. Banner positions track the camera well across the strip. Composite frames are very slightly dimmer overall than originals but the difference would only register on side-by-side comparison.",
+  "min_score": 3
+}

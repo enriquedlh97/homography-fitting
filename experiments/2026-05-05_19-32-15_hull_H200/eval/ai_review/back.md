@@ -1,0 +1,3 @@
+# back banner review
+
+A scrubbing viewer would notice that the Red Bull wordmark on the rear banner sits geometrically correctly on the banner plane — perspective, size, and stability across the whole sequence are convincing. The give-away is brightness: the Kia original burns brighter white on the dark fabric, while the Red Bull composite reads slightly dimmer and less crisp. There is mild luminance softness at the perimeter (a faint glow rather than a hard halo) and a low-grade reflex along letter edges. Nothing screams "pasted on," but a side-by-side reveals the composite as slightly veiled relative to the original. No jitter, no walkover interaction at this surface.

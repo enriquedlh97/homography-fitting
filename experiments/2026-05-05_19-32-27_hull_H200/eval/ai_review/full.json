@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full-frame thumbnails across the clip. At full-frame scale the composite reads as a coherent broadcast: court geometry, banner placements, side panels and back banners all sit in plausible perspective. Color balance of the swapped marks matches the rest of the broadcast palette (blue side panels, dim back-banner band). No region jumps out as obviously inserted at thumbnail scale, which is the meaningful test for full-frame realism. Temporal stability looks good across the strip — no flickering or scale changes between sampled frames.",
+  "min_score": 4
+}

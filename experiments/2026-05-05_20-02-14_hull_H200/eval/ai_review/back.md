@@ -1,0 +1,3 @@
+# back — sub-agent prose
+
+A scrubbing viewer would not flag the back-wall Red Bull. The dim navy back panel hosts the new wordmark with the same low-key tone as the original Kia bake. Letterforms are crisp, bull silhouettes are well-defined, and there is no luminance halo — the dark background gives no surface for one to form. No visible letter-edge ringing or ghost relative to the Kia baseline. No rectangular boundary seam at any of the early/mid/late timestamps. Hue, brightness and saturation are consistent across the strip. The substitution is the strongest of the surface-bearing regions on this run.

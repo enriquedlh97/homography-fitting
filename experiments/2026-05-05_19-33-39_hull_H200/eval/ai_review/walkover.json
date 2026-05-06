@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 2,
+    "edge_seam_visibility": 3,
+    "texture_match": 3,
+    "halo_presence": 3,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 3,
+    "saturation_match": 3
+  },
+  "geometry": {
+    "perspective_plausibility": 3,
+    "size_plausibility": 2
+  },
+  "temporal": {
+    "occlusion_realism": 3,
+    "jitter_visible": 4,
+    "player_contact_shadow": 2
+  },
+  "notes": "Walkover masking is mostly working — the player's lower legs and feet are correctly cutting through the Red Bull composite across f0685–f0723 in the consecutive-frames strip, with no obvious stamping over the body. The matanyone aggressive masking objective looks achieved at the body silhouette level. However the suspected-leak-overlay panels still show meaningful red/warm regions through the logo at contact (f0704) and post-contact (f0713), indicating some residual leak where the player's foot/sock should have suppressed the logo but didn't. No contact shadow under the foot grounds the player on the logo. Composite logo is also visibly under-scaled vs the original Melbourne wordmark, same as the floor region. Jitter is well-controlled.",
+  "min_score": 2
+}
