@@ -3707,6 +3707,15 @@ def run_pipeline_video_hybrid(
                                 court_overrides.get("clean_underlay_mask_mode", "quad")
                             ),
                             logo_blur_px=int(court_overrides.get("logo_blur_px", 0)),
+                            shadow_strength=float(
+                                court_overrides.get("shadow_strength", 0.0)
+                            ),
+                            shadow_radius_px=int(
+                                court_overrides.get("shadow_radius_px", 15)
+                            ),
+                            shadow_blur_px=float(
+                                court_overrides.get("shadow_blur_px", 10.0)
+                            ),
                         )
                         continue
 

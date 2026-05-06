@@ -55,6 +55,14 @@ def painted_court_composite(
     clean_underlay_mask_mode: str = "quad",
     # --- Logo motion blur (production trick) ---
     logo_blur_px: int = 0,
+    # --- Player contact shadow synthesis (soft halo around player feet) ---
+    # When > 0, multiply the inserted logo pixels by a shadow factor in a
+    # feathered region beyond the player occlusion mask. This makes the
+    # logo look like the player is casting a soft shadow on the floor,
+    # rather than the floor being uniformly bright under their feet.
+    shadow_strength: float = 0.0,
+    shadow_radius_px: int = 15,
+    shadow_blur_px: float = 10.0,
 ) -> np.ndarray:
     """Composite a logo onto the court surface with painted-on look.
 
@@ -363,6 +371,34 @@ def painted_court_composite(
     shaded_bgr = warped_bgr.astype(np.float32) / 255.0
     shaded_bgr = shaded_bgr * shade_map[:, :, np.newaxis]
     shaded_bgr = np.clip(shaded_bgr * 255.0, 0, 255)
+
+    # --- 2g.shadow: Player contact shadow synthesis ---
+    # Multiply the logo pixels by a soft shadow factor in a feathered
+    # region around (but outside of) the player occlusion mask. The
+    # shadow factor approaches 1.0 (no darkening) far from the player
+    # and 1.0 - shadow_strength near the player edge — making the
+    # Red Bull mark read as if the player's feet are casting a soft
+    # shadow onto the floor surface.
+    if shadow_strength > 0.0 and occlusion_mask is not None:
+        occ_for_shadow = occlusion_mask.astype(np.float32)
+        if occ_for_shadow.max() > 1:
+            occ_for_shadow = occ_for_shadow / 255.0
+        if np.any(occ_for_shadow > 0.01):
+            radius = max(1, int(shadow_radius_px))
+            kern = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1)
+            )
+            # Dilate to get the halo region (extends outward from feet).
+            dilated = cv2.dilate(
+                (occ_for_shadow > 0.5).astype(np.uint8), kern, iterations=1
+            ).astype(np.float32)
+            # Soft Gaussian falloff so the shadow fades naturally.
+            blur_px = float(max(1.0, shadow_blur_px))
+            shadow_blur = cv2.GaussianBlur(dilated, (0, 0), blur_px)
+            shadow_blur = np.clip(shadow_blur, 0.0, 1.0)
+            shadow_factor = 1.0 - float(shadow_strength) * shadow_blur
+            shaded_bgr = shaded_bgr * shadow_factor[:, :, np.newaxis]
+            shaded_bgr = np.clip(shaded_bgr, 0, 255)
 
     # --- 2h. Composite ---
     alpha_3ch = effective_alpha[:, :, np.newaxis]
