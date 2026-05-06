@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Left side-banner YoPRO → Red Bull on the bright blue boundary panel. With alpha_feather=4 the letter perimeter is sharp without overshoot; with mask_dilate=4 the patch is trimmed snug. No bright luminance halo at the wordmark perimeter; no rectangular boundary seam — the patch edge disappears against the uniform blue panel across all motion strips. A mild softness still lingers at the upper edges of the wordmark and around the bulls' wing-tips: the original YoPRO bake is slightly crisper, so edge_reflex stays at 4 (matching P3-A5 baseline; the tighter dilate did NOT visibly improve this dimension because the residual softness is in the patch interior, not the perimeter). Hue match to the painted advertiser ad is excellent.",
+  "min_score": 4
+}

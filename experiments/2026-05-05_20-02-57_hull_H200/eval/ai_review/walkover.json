@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 3,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Walkover frames 685-723 (player walks across the floor logo). Direct comparison to P3-A5 baseline forensic sheets: the MELBOURNE-bleed-through under the player feet that was the headline P3-A8 finding is REDUCED but not eliminated. The composite panel of contact f0704, pre-contact f0694 and entry f0685 all show the Red Bull mark cleanly under and around the legs with no rectangular seam, no halo, no edge reflex, and no jitter through the consecutive_frames panel. post-contact f0713 shows a faint shadow smear at the top of the wordmark — this reads as a legitimate dropped-shadow rather than a synthesis artifact, hence contact_shadow moves 3 -> 4. Texture_match drops 4 -> 3 (same inpaint smoothness issue as floor). Net: walkover IS the win this experiment was chasing.",
+  "min_score": 3
+}

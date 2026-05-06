@@ -1,0 +1,3 @@
+# full — short-form prose
+
+At full-frame scale across 5 sampled timestamps, the broadcast composite holds together: back banner, side banner, and floor mark sit naturally without any one of them shouting 'ad insertion'. Court geometry is rock-stable — no crawling baselines, no warping, perspective plausibility is full marks. Color reads as a real broadcast. The floor-region halo flagged at the cropped scale is barely visible at full frame; only a careful viewer would catch the cooler-rectangle around the Red Bull mark. The biggest deviation from P3-A5 is a slight brightness cooling on the floor patch (the wider feather exposes more lum mismatch). No edge seams visible at this scale on any region.

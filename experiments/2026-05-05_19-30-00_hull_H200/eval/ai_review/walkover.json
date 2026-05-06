@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 3,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "Walkover frames 685-723 are the strictest test. halo_presence is fully clean (5) — no luminance bloom around Red Bull at any timestamp on the forensic sheets (entry/pre-contact/contact/post-contact/exit). The composite shows the player's feet occluding the patch correctly across the window, and the suspected-leak-overlay panel shows a clean Red Bull bake. The edge_seam_visibility deduction (3) is the same thin perimeter line seen in the floor region — visible on the consecutive_frames strip, particularly across the top edge of the patch — and BTN's stable H prevents it from walking but does not eliminate it. Original-survival panel still shows residual MELBOURNE bleed-through (ongoing single-pass synthesis limit, unchanged from prior runs). Player contact shadow unchanged: mark stays fully opaque under feet, a separate axis from this experiment.",
+  "min_score": 3
+}
