@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner: Red Bull replaces Kia cleanly across crops_strip and motion_strips early/mid/late. No rectangular seam, no halo on the dark fabric. Letter edges are crisp; only a very faint reflex on the bull horns visible if scrutinised. Texture matches the slightly mottled banner fabric well (4 not 5 — wordmark surface reads marginally smoother than Kia's, but this is at-the-pixel level). Brightness 4: the white Red Bull mark is a touch brighter than Kia's slightly desaturated tone in the original row, very minor. No jitter in motion strips. Quality bar (top row Kia) is matched.",
+  "min_score": 4
+}

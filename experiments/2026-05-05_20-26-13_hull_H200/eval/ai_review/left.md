@@ -1,0 +1,3 @@
+# Left side-banner (P3-A17)
+
+The targeted experiment for this surface: obj_4 mask_dilate_px=4 (was 8) to tighten the perimeter trim. Scrubbing early/mid/late motion strips, the Red Bull wordmark and bull-rings now read as crisp paint — no haze at letter tops, no ghost echo around the wing-tips, no rectangular patch seam against the bright blue panel. The reflex that kept this region pinned at 4/5 in P3-A5 and P3-A12 is gone at viewing scale. Halo remains zero (the tighter trim did not re-introduce a perimeter glow as the dilate-down direction would risk). Brightness/saturation sit slightly cooler than the YoPRO baseline so those stay at 4. Net: edge_reflex moves 4 → 5 — left-banner reflex tightening lands as designed.

@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "Walkover window 685-723: player crosses the floor logo. forensic sheets at entry/pre/contact/post/exit show the player feet/shoes correctly cutting in front of the Red Bull wordmark — the survival overlay column is essentially identical to the P3-A5 baseline (no new leaks introduced by shade_strength=0.6). consecutive_frames strip is steady — no patch wobble across f0685-f0724. The mark stays opaque under the planted foot rather than receiving a contact shadow (separately tracked weakness). No halo glow around the wordmark in any of the five forensic frames; no letter-edge reflex on the bulls. shade_strength=0.6 leaves walkover behavior untouched.",
+  "min_score": 3
+}

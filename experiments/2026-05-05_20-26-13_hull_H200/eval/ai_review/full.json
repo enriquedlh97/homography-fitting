@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Whole-frame view at thumbnail scale — broadcast plausibility check. Across the strip the back banners, side banner and floor logo all sit naturally on the painted surfaces; nothing pops as a virtual insert at this distance. No floating rectangles, no halos visible at thumbnail scale. The composite reads as a clean broadcast image. Texture is the only soft dimension and only because the smoothed floor inpaint is faintly visible if you look for it.",
+  "min_score": 4
+}
