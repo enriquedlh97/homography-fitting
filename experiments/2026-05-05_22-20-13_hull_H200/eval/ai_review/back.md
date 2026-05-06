@@ -1,0 +1,3 @@
+## Back — visual review
+
+Back banner Red Bull substitutions match P3-A17 — the shadow synthesis is scoped to court_floor and does not touch banner pipeline. Across early/mid/late motion strips and the crops_strip, the Kia → Red Bull substitution reads natural: same perspective, same scale, crisp letter edges, no halo glow at the perimeter, no reflex/ringing along the bull silhouettes. The "Red Bull" wordmark and twin-bull icon sit on the same midnight-blue banner plate as the original Kia mark, and the canvas weave/grain fades smoothly into the surrounding banner. Painted_on_vs_pasted_on holds at 4 because the inpainted region underneath is slightly smoother than the banner fabric — same trade-off as P3-A17, not a regression. All other dimensions 5/5.
