@@ -1,7 +1,20 @@
 {
-  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 4, "edge_reflex": 4},
-  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
-  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
-  "notes": "Left banner identical to other shadow_strength variants. Stable insertion, mild softness on bull rings.",
-  "min_score": 4
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Left side banner is the strongest remaining ceiling. Color/hue/saturation match the blue diagonal banner perfectly — the Red Bull wordmark sits on the same blue field as YoPRO. However, comparing top vs bottom rows, the YoPRO original has crisp, sharp letter edges while the composite Red Bull shows subtle letter-edge softness and a faint reflex/ghost along the wordmark and the bull rings — visible across early/mid/late strips, consistently. No bright halo (background is similar saturation), but the edge_reflex artifact the rubric v2 flags is mildly present. Geometry rides the diagonal banner plane well; size is plausible though the bull pair sits slightly low in the available banner area vs the YoPRO baseline.",
+  "min_score": 3
 }
