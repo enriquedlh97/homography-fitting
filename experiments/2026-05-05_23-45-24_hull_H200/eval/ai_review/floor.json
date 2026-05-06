@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 3},
+  "notes": "Floor logo s=0.55 r=15 b=10: shadow under the player is slightly weaker than the s=0.6 baseline. Logo reads cleanly painted on the matte court. Halo well-controlled. Contact shadow density looks a touch under the credible threshold for grounding feet, hence player_contact_shadow drops 1 vs baseline.",
+  "min_score": 3
+}

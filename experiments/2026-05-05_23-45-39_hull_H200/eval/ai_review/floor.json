@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
+  "notes": "Floor s=0.6 r=20 b=14: larger radius produces a softer, more diffuse falloff which integrates better with the matte court paint. Logo stable, halo controlled, occlusion clean. Equivalent to baseline player_contact_shadow with slightly more cinematic spread.",
+  "min_score": 4
+}
