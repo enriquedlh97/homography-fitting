@@ -1663,7 +1663,16 @@ Lessons learned (from agent):
 
 User extended deadline to give Phase 3 a full overnight push. ~14 hours wall clock. Dispatched 12 successive waves of cycles (P3-A6 through P3-A32), iterating on all dimensions of the rubric. Key findings:
 
-### Best Phase 3 candidate (FINAL UPDATE): P3-A33/a2
+### Best Phase 3 candidate (FINAL FINAL): P3-A38/e2
+
+**Run dir:** `experiments/2026-05-06_05-33-48_hull_H200/`
+**Config:** `configs/experiments/eval_walkover_p3_a38_e2_obj4_padding_0.yaml` = P3-A33/a2 + `obj_4 padding: 0.035 → 0.0`
+
+**Why this is FINAL FINAL:** Lifts `left.realism.edge_reflex` from 4 → **5** (the v2 user-flagged calibration dimension). The other dimensions held — left's run-level min_score is still 4 (now constrained by texture_match and size_plausibility, both NON-v2 dimensions). All other regions hold at P3-A33/a2 levels. This is the variant that most explicitly addresses the user's two flagged artifacts (edge_reflex on the left banner, halo on the floor — both at 5 now).
+
+Per-region rubric: back=5, full=5, **left=4** (edge_reflex=5 + halo_presence=5; left min held by texture_match=4 + size_plausibility=4), floor=4, walkover=4.
+
+### Best Phase 3 candidate (PRIOR — refined by P3-A38/e2): P3-A33/a2
 
 **Run dir:** `experiments/2026-05-06_02-04-28_hull_H200/`
 
