@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner unchanged from P3-A17 — the shadow synthesis is court_floor-only. Red Bull replaces Kia cleanly; the wordmark sits at the same scale and perspective as the original Kia mark. Letters are crisp, no halo around 'Red Bull', no edge reflex on the bulls or letters. Faint loss in painted_on_vs_pasted_on (4 vs 5) because the canvas underpaint reads slightly cleaner than the surrounding banner fabric grain — not a regression vs P3-A17.",
+  "min_score": 4
+}

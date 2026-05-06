@@ -1,0 +1,3 @@
+## Left — visual review
+
+YoPRO → Red Bull substitution on the angled left side banner. Reads as natural as the P3-A17 baseline — shadow synthesis is scoped to court_floor and does not affect this surface. Across all motion strips (early/mid/late) and crops, the Red Bull mark sits at the same perspective and scale as YoPRO, the bulls are crisp, the wordmark lettering tracks the angled banner plane correctly. No halo around the perimeter; the only artifact left over from P3-A17 is a very faint reflex hint along the bull rings at high zoom, holding edge_reflex at 4 rather than 5. All other dimensions 5/5; painted_on_vs_pasted_on 4 (canvas plate slightly smoother than original micro-grain).
