@@ -1,0 +1,3 @@
+# walkover
+
+Walkover window 685-723 is unchanged from P3-A33/a2 — the floor object was not modified by this run's back-banner inpaint_noise change. Player legs and feet correctly occlude the Red Bull wordmark and bulls in consecutive_frames; mask hull holds across entry, contact and exit. Player-contact shadow at contact (f0704) reads as plausibly grounded rather than a painted blob. The forensic suspected-leak overlays at f0685 and f0723 still expose residual MELBOURNE pixels behind the right side of the Red Bull lockup — same leak pattern as the baseline, neither improved nor worsened. No jitter. A scrubbing viewer would only notice the leak if pausing on the entry/exit frames at full resolution.

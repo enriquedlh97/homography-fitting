@@ -1,0 +1,3 @@
+# back
+
+A scrubbing viewer would not notice a difference vs P3-A33/a2. The Red Bull wordmark and bull silhouettes sit cleanly on the dim purple back wall in every motion-strip sample. With `inpaint_noise=0.0` (down from 0.22) the logo is marginally crisper / less grainy, but the back wall behind it is itself low-detail, so the lack of synthetic film grain doesn't read as a smoothness mismatch — it reads as ordinary painted signage. Hue/brightness/saturation match the venue lighting. No halo, no edge reflex, no jitter, no plane-breathing. Indistinguishable from baked-in advertising at this scale; back stays at the 5/5/5/5/5 ceiling that P3-A33/a2 already held.
