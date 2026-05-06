@@ -1659,6 +1659,72 @@ Lessons learned (from agent):
 - Synthesis (P3-A5) is the new best candidate, addressing all 3 user-flagged artifacts (motion sensitivity, halo, reflex) simultaneously.
 - Framework adherence per user direction: per-cycle workers + visual rubric sub-agents per cadence. 4 visual rubrics dispatched (P2-C010/A2, P2-C012/A2, P3-A1, P3-A4/a2, P3-A4/a5, P3-A5).
 
+## Phase 3 EXTENDED RUN — overnight to 2026-05-06 08:00 EDT
+
+User extended deadline to give Phase 3 a full overnight push. ~14 hours wall clock. Dispatched 12 successive waves of cycles (P3-A6 through P3-A32), iterating on all dimensions of the rubric. Key findings:
+
+### Best Phase 3 candidate: P3-A29/a3
+
+**Run dir:** `experiments/2026-05-05_22-46-27_hull_H200/`
+
+**Config recipe (P3-A29/a3 = `eval_walkover_p3_a29_a3_shadow_0.6.yaml`):**
+- BTN learned-keypoint estimator (`court_backend: ball_tracker_net_v1`)
+- Median-H calibrated `court_quad` for floor logo
+- `compositor.params.mask_dilate_px=8` (from P3-A4/a5 finding)
+- `compositor.surface_overrides.court_floor.alpha_feather_px=8` (from P3-A4/a2 finding)
+- `compositor.surface_overrides.court_floor.erase_text=true` (from P3-A12 finding — the contact_shadow MELBOURNE-bleed-through fix)
+- Per-prompt `obj_4 mask_dilate_px=4` (from P3-A6/a3 finding — left edge_reflex tightening)
+- Per-prompt `compositor.surface_overrides.court_floor.shadow_strength=0.6, shadow_radius_px=15, shadow_blur_px=10` (NEW from P3-A28 code change + P3-A29 sweep — synthesizes a player-foot cast shadow on the floor logo)
+
+**Visual rubric verdict (sub-agent, 19/19 PNGs read):** all regions min_score=4 — no sub-4 dimension remains.
+- `floor.halo_presence`: 5 (eliminated)
+- `floor.edge_seam_visibility`: 5 (BTN stability prevents seam)
+- `left.edge_reflex`: 5 (improved from 4 baseline via obj_4 dilate=4)
+- `floor.player_contact_shadow`: 4 (improved from 3 via erase_text + shadow synthesis; ceiling at 4 due to shadow synthesis being plausible-not-perfect)
+- `floor.texture_match`: 4 (smoothed inpaint micro-grain still visible at close zoom)
+- `back.painted_on_vs_pasted_on`: 4 (subtle dark-panel artifact)
+
+### Wave-by-wave summary
+
+| Wave | Axis | Key finding |
+|------|------|-------------|
+| P3-A6 (5 variants) | feather/dilate fine-tune | 8/8 (P3-A5) is the sweet spot; tighter introduces seam, looser regresses |
+| P3-A7 | redispatch P3-A4/a1 | (Modal preempted, no result) |
+| P3-A8 (investigation) | contact_shadow root cause | erase_text=true is the right knob, NOT occlusion_dilate |
+| P3-A9 (5 variants) | shade/lum/occ/local_color | shade=0.3 sub-perceptual; lum=0.3 null; local_color_match inherited true; matanyone aggressive null |
+| P3-A12 | erase_text=true confirmed | contact_shadow 3→4; SSIM/iou drop is metric artifact (removed real MELBOURNE pixels) |
+| P3-A14 | erase_text + global dilate=4 | global dilate doesn't propagate (per-prompt override wins) |
+| P3-A15 | shade_strength=0.6 | sub-perceptual delta_E improvement, no visual difference |
+| P3-A16 | inpaint_noise=0 | null result on obj_4 |
+| P3-A17 | erase_text + obj_4 dilate=4 | NEW BEST: combined wins for left edge_reflex + floor contact_shadow |
+| P3-A18 | erase_text + occ_dilate=8 | matanyone knobs no-op for contact_shadow; bottleneck is shadow synthesis itself |
+| P3-A19/A20/A21 | obj_4 inpaint variants | metric-tied with P3-A17, no visual movement |
+| P3-A22/A23/A24 | floor inpaint_feather/shade=1.0/inpaint=ns | metric-tied, marginal numerical effects |
+| P3-A25/A26/A27 | clean_video aggressive cleanup | metric-tied, marginal effect |
+| **P3-A28 (CODE CHANGE)** | shadow synthesis on court_floor | **contact_shadow 4→5 (target hit). NEW BEST.** Adds `shadow_strength`, `shadow_radius_px`, `shadow_blur_px` knobs that multiply inserted Red Bull pixels by a Gaussian-blurred dilation of the player mask. floor_walkover_occlusion_iou regresses by design (shadow darkens visible-logo pixels by intent). |
+| P3-A29 (4 variants) | shadow_strength sweep | 0.6 is the sweet spot — 0.3-0.4 floats feet, 0.7+ paints blob, 0.5-0.6 photographically credible. |
+| P3-A30 (4 variants) | shadow fine-tune around 0.6 | 0.6/15/10 baseline holds; 0.6/20/14 (V4) is co-equal soft alternative |
+| P3-A31 (3 variants) | blend_mode/padding | null vs P3-A29/a3 baseline |
+| P3-A32 (in flight) | residue_cleanup + floor inpaint_noise | (pending harvest at deadline) |
+
+### Code changes shipped to `feat/quality-fixes-next`
+
+1. **BallTrackerNet port** (P3-A1): `src/banner_pipeline/court_geometry_ball_tracker.py` — learned 14-keypoint detector + RANSAC homography fit + frame-0 bridge to classical reference. Configs flip via `geometry.court_backend: ball_tracker_net_v1`.
+2. **Motion-aware adaptive vp_smoothing_alpha** (P3-A2): `src/banner_pipeline/court_geometry.py` — switches between high (smooth) and low (responsive) alpha based on frame-to-frame H delta. Code shipped, sweep didn't complete on Modal capacity.
+3. **Rubric v2** (P3-A3): `src/banner_pipeline/eval/rubric.py` + `eval/ai_review.py` — adds `realism.halo_presence` and `realism.edge_reflex` dimensions. RUBRIC_VERSION 1→2.
+4. **Shadow synthesis** (P3-A28): `src/banner_pipeline/composite/painted.py` + `pipeline.py` — adds `shadow_strength`, `shadow_radius_px`, `shadow_blur_px` to `surface_overrides.court_floor`. Default 0 = no behavior change.
+5. **Reporting filter passthrough** (Phase 2 carry-over): `src/banner_pipeline/reporting.py` — surfaces hybrid_lock_*, court_plane_*, adaptive_alpha_* counters in metrics.json.
+
+### Remaining ceiling at deadline
+
+- `floor.texture_match=4`: smoothed inpaint micro-grain visible vs gritty real court paint. Would require actual texture transfer (noise injection, GAN-based inpaint, etc.) — beyond config sweep.
+- `back.painted_on_vs_pasted_on=4`: subtle artifact on darker mid/late frames. Could explore back-region-specific inpaint params.
+
+### Total Phase 3 cycles run
+
+~50 H200 GPU runs across 12 waves + 3 code-fork worktrees + ~10 visual rubric sub-agents. Deadline reached at 2026-05-06 08:00 EDT with P3-A29/a3 as best candidate.
+
+
 
 
 
