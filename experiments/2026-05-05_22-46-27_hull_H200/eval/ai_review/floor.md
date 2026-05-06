@@ -1,0 +1,1 @@
+At shadow_strength=0.6 the contact shadow has noticeable density — player feet plant convincingly on the court. Slightly heavier than the 0.5 baseline; still feels organic rather than painted. Geometry and halo behaviour unchanged.

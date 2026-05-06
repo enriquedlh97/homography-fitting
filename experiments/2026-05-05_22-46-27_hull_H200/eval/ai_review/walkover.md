@@ -1,0 +1,1 @@
+Walkover at shadow_strength=0.6: contact shadow at f0704/f0713 has solid density, anchoring the player to the court. Slightly denser than 0.5; still photographically credible. Hull occlusion stays clean.

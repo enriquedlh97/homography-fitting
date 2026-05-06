@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 4, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "notes": "Left blue diagonal banner: Red Bull replaces YoPRO. Painted-on read is decent. The bulls' rings show only a faint hint of soft edge — much milder than the canonical reflex case. No bright halo on the matte blue board. shadow_strength does not apply here.",
+  "min_score": 4
+}

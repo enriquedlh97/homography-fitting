@@ -1,0 +1,1 @@
+Walkover at shadow_strength=0.4: cast shadow under feet at f0704/f0713 is more present than 0.3 but still on the light side. Player is partially anchored. Hull occlusion is clean. Approaching credible.

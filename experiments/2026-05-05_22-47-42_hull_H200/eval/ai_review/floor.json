@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 3, "jitter_visible": 4, "player_contact_shadow": 3},
+  "notes": "Floor logo with shadow_strength=0.4: contact shadow is starting to register but still light. Player feet feel slightly less floaty than 0.3, not yet fully grounded. Halo well-controlled. Geometry stable.",
+  "min_score": 3
+}

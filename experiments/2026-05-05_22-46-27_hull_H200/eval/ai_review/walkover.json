@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
+  "notes": "Walkover at shadow_strength=0.6: at f0704 (contact) and f0713 (post-contact), shadow under feet has solid density. Player feels grounded without obvious painted blob. Slightly heavier than 0.5 baseline. Hull occlusion clean. This is in the credible zone but on the dense side.",
+  "min_score": 4
+}

@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
+  "notes": "Floor logo with shadow_strength=0.6: contact shadow has good density — feet read as planted on the court. Slightly stronger than 0.5 baseline; still within credible range, doesn't yet read as painted-on. Halo well-controlled. Geometry stable.",
+  "min_score": 4
+}
