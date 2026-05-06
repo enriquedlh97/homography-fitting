@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 2,
+    "edge_seam_visibility": 4,
+    "texture_match": 3,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 1,
+    "saturation_match": 1
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "MAJOR REGRESSION vs P3-A33/a2 baseline. Turning on obj_4 local_color_match=true with lum_strength=0.3 has collapsed the Red Bull logo's white wordmark and bulls into the blue banner — across crops_strip, motion_strip_early/mid/late the logo reads as a faint ghost barely separable from the banner fabric. The original YoPRO baseline above is bright opaque white; the composite below is a washed-out semi-transparent stamp. The local color match ate the logo's contrast. On the upside: edge_reflex DID lift to 5 (no smearing because there is barely any logo left to ring), and halo is gone for the same reason — but that's pyrrhic; the logo is unreadable. Hue is roughly correct but brightness/saturation crash to 1. Geometry on the diagonal plane is unchanged. min_score drops from 4 (a2) to 1.",
+  "min_score": 1
+}

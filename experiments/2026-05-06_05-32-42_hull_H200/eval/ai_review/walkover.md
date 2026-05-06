@@ -1,0 +1,3 @@
+# walkover
+
+A viewer watching frames 685–723 sees the player walk across the floor Red Bull and the logo stays planted on the court — no jitter, no halo, no significant leak through the player's legs. The biggest issue at this zoom is the player-contact shadow: feet sit on top of the wordmark rather than visually grounding it, which gives a slightly stamp-like quality during contact. Suspected-leak panels confirm small color survival at the bulls' rings in post-contact frames but it is masked by the court paint's similar luminance. Overall solid; the e3 obj_4 change does not affect this region.

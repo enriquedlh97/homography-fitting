@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 3,
+    "edge_seam_visibility": 3,
+    "texture_match": 4,
+    "halo_presence": 3,
+    "edge_reflex": 2
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Left side banner Red Bull on the slanted blue side fabric replacing YoPRO. Color and brightness match the banner well. Visible edge reflex / smearing on letter edges — clearest on the 'Red Bull' wordmark across all motion strips, where letters carry a faint duplicate echo above and below. The bull silhouettes show subtle ringing around the horns and rings vs the very crisp YoPRO original. Faint luminance halo also detectable on the wordmark. Geometry stable. This object is not affected by the x4 shadow change — same artifact pattern as P3-A33/a2 baseline carries over.",
+  "min_score": 2
+}
