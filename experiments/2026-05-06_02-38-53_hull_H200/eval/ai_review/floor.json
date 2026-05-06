@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 3,
+    "texture_match": 4,
+    "halo_presence": 3,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Court-floor Red Bull replacing MELBOURNE wordmark. The ELBOUR original is a flat dark-blue painted-on band; the Red Bull lockup sits on a slightly different blue patch where the inpaint cleaned the original wordmark. With feather=4 (tighter than baseline 8), the boundary between the inpainted patch and surrounding court paint is visible as a faint rectangular tonal seam in motion_strip_late frames — slightly more pronounced than feather=8. Halo around the lockup remains visible as a soft luminance band on the matte court (canonical Red Bull-on-Melbourne case) — score 3, not improved by tighter feather. Letter-edge reflex: contained, similar to baseline. Geometry, jitter and occlusion are stable.",
+  "min_score": 3
+}

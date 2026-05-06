@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Full-frame composite at broadcast zoom. Side banners, back curtain, and floor lockup all read as plausible — no obvious paste-ons. Color, brightness and saturation match arena look. Geometry consistent across the strip. The inpaint_method=ns change is invisible at full-frame zoom; only resolvable in close-ups.",
+  "min_score": 4
+}
