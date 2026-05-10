@@ -540,7 +540,85 @@ These are the canonical artifacts referenced in the report (§7.4).
 
 ---
 
-## 10. References
+## 10. Parallel explorations — other branches we tried
+
+In addition to the `feat/quality-fixes-next` track that produced the final delivered output (and its full Phase 1 → Phase 2 → Phase 3 narrative documented above), the team explored several parallel directions on separate branches. None of them are part of the final deliverable, but each one investigates a question that is worth recording for follow-up work. All four branches are kept on the remote.
+
+### 10.1 Auto-detection of placement regions via SAM3 text prompts
+
+**Branch:** [`feat/sam3-v2`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3-v2) · branch [`README_SAM3_V2.md`](https://github.com/enriquedlh97/homography-fitting/blob/feat/sam3-v2/README_SAM3_V2.md)
+
+The main pipeline requires a human to click 1–3 positive points inside each ad-replacement region on a chosen seed frame. This branch removes that step by integrating **SAM3** with a text-prompt-driven auto-detection path. The user supplies a textual description of what to detect (e.g. `"logo"`); SAM3 runs detection + segmentation on every frame; the rest of the pipeline (tracking, fitting, compositing) is unchanged.
+
+- **What's added:** new segmenter type `sam3_video` driven by text prompts; new configs `configs/experiments/sam3_auto.yaml` (generic) and `configs/experiments/sam3_auto_zoom.yaml` (tuned for `data/zoom_in_camera_change.mp4`); new runner `scripts/modal_run_sam3.py`. Detection filtering, EMA tracking, and hybrid stabilization are wired into the SAM3 path.
+- **Hardware:** all runs on **A100-80GB** via Modal.
+- **Key results:**
+
+  | Scenario | Run | Detected | Segmented | Output FPS |
+  |---|---|---|---|---|
+  | Standard clip | `2026-04-29_10-11-10_sam3_pca_A100-80GB` | — | 21 | 0.93 |
+  | Zoom + camera change | `2026-05-04_23-41-58_sam3_pca_A100-80GB` | 38 | 27 | 0.99 |
+
+- **Takeaway:** detection quality is acceptable for static and slowly-changing footage, but throughput is the binding constraint — full per-frame SAM3 inference comes in around **1 fps**, ~3× slower than the manually-prompted SAM2 baseline. Kept as the reference full-quality auto-detection implementation; superseded for production by the lighter variant on `feat/sam3-light-v1` (next).
+
+### 10.2 SAM3-light — scene-change-gated re-runs
+
+**Branch:** [`feat/sam3-light-v1`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3-light-v1) · branch [`README_SAM3_LIGHT_V1.md`](https://github.com/enriquedlh97/homography-fitting/blob/feat/sam3-light-v1/README_SAM3_LIGHT_V1.md)
+
+Direct follow-up to `feat/sam3-v2`: instead of running SAM3 inference on every frame, run it once on frame 0 to lock in the segmentation, then only re-run when the scene actually changes. Reuse the previous masks (adapted by the existing tracking + optical-flow stage) on every frame in between.
+
+- **Core idea.** Frame 0 → full SAM3 run; store the frame's HSV histogram as the *target*. Frame `t > 0`: compute the current frame's HSV histogram and the correlation `sim = correlation(target_hist, cur_hist)`. If `sim < similarity_threshold` (default `0.85`) — assume a camera change / zoom / new objects entered → re-run SAM3, promote the new frame to *target*. Otherwise reuse the active masks.
+- **What's added:** new segmenter `src/banner_pipeline/segment/sam3_light_video.py` (respects the same `(video_segments, frame_dir, frame_names)` contract as `SAM3VideoSegmenter`); config `configs/experiments/sam3_light_auto.yaml`; new metric fields `num_rerun_frames`, `rerun_frame_indices`, `mean_similarity_score`, `similarity_threshold`.
+- **Throughput.** **~3–4 fps** on the same A100-80GB hardware (3–4× the full-SAM3 path), with comparable detection quality on static / slowly-changing footage.
+- **Prompt-tuning experiments.** SAM3 detection quality depends heavily on the text prompt. Best generic prompt found was **`sponsor logo on fixed advertising board`** (run `2026-05-06_16-13-17_sam3_pca_A100-80GB`, 9 segmented, **3.95 fps**). Brand-specific prompts (e.g. `KIA sponsor logo on fixed advertising board`) detect fewer logos but run faster (`2026-05-07_17-09-30`, 8 detected, **4.09 fps**). Overly restrictive prompts (e.g. `sponsor logo on fixed advertising board on tennis court perimeter`) regress detection count.
+- **Takeaway.** The HSV-similarity gate is the real unlock — SAM3 is only re-executed on a few selected keyframes, so cost scales with scene changes rather than frame count. Prompt phrasing matters as much as the algorithm. This is the preferred SAM3 path for static or slowly-changing footage; for very dynamic clips the gate fires too often and the speedup collapses.
+
+### 10.3 Court-geometry stabilisation + temporal-rectified compositor
+
+**Branch:** [`feat/court-geometry-stabilisation`](https://github.com/enriquedlh97/homography-fitting/tree/feat/court-geometry-stabilisation)
+
+A separate axis from the main `feat/quality-fixes-next` track. Explores a different way of stabilising placements: instead of a hybrid_lock state machine, do the compositing in a **rectified canonical plane** and warp back to the image. Adds court-line detection + vanishing-point estimation + a hybrid temporal mask stabilization pass via optical flow.
+
+- **What's added:**
+  - **Stabilization** (`src/banner_pipeline/stabilization.py`): hybrid temporal mask stabilization. Estimates inter-frame motion via Shi-Tomasi corners + Lucas-Kanade pyramidal tracking, warps previous masks forward, fuses them with the raw tracker output. Hard-hold for static frames, weighted blending for moving frames, mask carry-forward when the tracker drops an object. Gated by IoU between predicted and raw masks.
+  - **Court geometry estimation** (`src/banner_pipeline/court_geometry.py`): Hough-line detector → classify lines into width (horizontal) and depth (perspective) families → estimate vanishing points for each family → smooth temporally via EMA → produce a per-frame `CourtGeometryEstimate` with VPs, dominant directions, court boundary lines, and an image-to-court homography.
+  - **Five fitter strategies** chosen per-object based on `geometry_model` and `surface_type`:
+
+    | Strategy | When used | Algorithm |
+    |---|---|---|
+    | `pca` / `lp` / `hull` | `mask_free_quad` or geometry disabled | Mask-only geometric fitting |
+    | `fronto_parallel_wall_banner` | `back_wall_banner` surfaces | Oriented rectangle from mask contour + smoothed court width direction |
+    | `vp_constrained_horizontal_banner` | Horizontal banners with VP | Support lines + VP rays from the depth vanishing point |
+    | `vp_constrained_vertical_banner` | `side_wall_banner` surfaces | Support lines + VP rays from the width vanishing point |
+    | `court_plane` | `court_marking` surfaces | Quad projected via the court homography from a stored local-plane template |
+
+    All geometry-constrained fitters smooth their parameters temporally and support hold-last-good + fallback-to-mask-free-quad when the geometry estimate is unavailable.
+  - **`temporal_rectified` compositor** (`src/banner_pipeline/composite/temporal_rectified.py`): stateful. Rectifies the quad region to a canonical plate, caches a clean plate (wall) or updates a shading field (court), composites the logo in rectified space, and warps back. Supports wall-plate freezing after initialisation and court-plane shading adaptation via per-frame luminosity-ratio estimation.
+- **Configs:** `configs/sam3_default.yaml` (wall-banner), `configs/sam3_court_eval.yaml` (court-plane validation for the left-court ad).
+- **Test coverage:** `tests/test_temporal_rectified_compositor.py`, `tests/test_court_geometry.py`.
+- **Takeaway.** This branch carries the most thoughtful re-architecture of the geometry + compositor stack we tried. The `temporal_rectified` compositor, in particular, is a different point in the design space from the LED-blend inpaint compositor that the final main-line uses — it caches a clean plate per surface class instead of inpainting per frame. Most useful as a follow-up direction if the production target shifts to broadcast clips with significantly more camera motion than the Melbourne walkover demo.
+
+### 10.4 SAM3 video tracker (early)
+
+**Branch:** [`feat/sam3`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3)
+
+The earlier of the two SAM3 attempts. Adds `src/banner_pipeline/segment/sam3_video.py` and the SAM3 video-tracker plumbing into the existing pipeline. Superseded by the more polished `feat/sam3-v2` (auto-detection with text prompts) and `feat/sam3-light-v1` (scene-change-gated). Kept as a checkpoint of the integration path; the lighter variant is the preferred follow-up.
+
+### Summary — when each branch is useful
+
+| Branch | Best for | Throughput | Status |
+|---|---|---|---|
+| `feat/quality-fixes-next` (FINAL on main) | Manually-prompted, demo-quality static-and-walkover content with dynamic homography | ~2.7 fps (H200) | **Production** |
+| `feat/sam3-light-v1` | Auto-detected ad regions on static / slowly-changing footage | ~3–4 fps (A100-80GB) | Preferred SAM3 path |
+| `feat/sam3-v2` | Reference full-quality SAM3 implementation | ~1 fps (A100-80GB) | Reference; production-superseded by sam3-light-v1 |
+| `feat/court-geometry-stabilisation` | Re-architecture for higher camera-motion broadcasts (rectified compositor + VP-constrained fitters) | not benchmarked head-to-head | Follow-up direction |
+| `feat/sam3` | Early SAM3 integration checkpoint | — | Superseded |
+
+Each branch's own README is the authoritative design doc for that direction.
+
+---
+
+## 11. References
 
 ### File-path index
 

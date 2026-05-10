@@ -84,6 +84,18 @@ All four per-region scorecards pass. Walkover-window evaluation passes (gates `>
 | Understand the eval framework (gates, walkover detection, side-by-side video) | `docs/EVALUATION.md` |
 | Read the raw append-only experiment log | `docs/EXPERIMENT_LEDGER.md` |
 | Continue the autonomous experimentation work | `docs/AGENT_BRIEFING.md` |
+| See the parallel directions we tried on other branches | `docs/FINAL_REPORT.md` §10 |
+
+## Other branches we tried (parallel explorations)
+
+In addition to the production track that is on `main`, the team explored several parallel directions on separate branches. Each is documented with throughput numbers, key results, and follow-up directions in `docs/FINAL_REPORT.md` §10.
+
+| Branch | Direction |
+|---|---|
+| [`feat/sam3-v2`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3-v2) | Auto-detection of placement regions via SAM3 text prompts (no manual clicking). ~1 fps on A100-80GB. |
+| [`feat/sam3-light-v1`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3-light-v1) | SAM3 + HSV scene-change gate that re-runs detection only when the scene changes. ~3–4 fps. |
+| [`feat/court-geometry-stabilisation`](https://github.com/enriquedlh97/homography-fitting/tree/feat/court-geometry-stabilisation) | Rectified-plane compositor + VP-constrained fitters + hybrid mask stabilization via optical flow. |
+| [`feat/sam3`](https://github.com/enriquedlh97/homography-fitting/tree/feat/sam3) | Early SAM3 video-tracker integration checkpoint (superseded by `feat/sam3-light-v1`). |
 
 ## Reproduce the final
 

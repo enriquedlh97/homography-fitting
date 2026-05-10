@@ -2,6 +2,10 @@
 
 All notable milestones for the capstone project. Newest first.
 
+## 2026-05-10 — Documented parallel-exploration branches
+
+- `docs/FINAL_REPORT.md` §10 added: summary of four parallel directions explored on other branches (`feat/sam3-v2` auto-detection via text prompts; `feat/sam3-light-v1` HSV scene-change-gated SAM3; `feat/court-geometry-stabilisation` rectified-plane compositor + VP-constrained fitters; `feat/sam3` early SAM3 integration). Each entry covers throughput, key results, and follow-up direction. README gains a corresponding "Other branches we tried" section linking to each branch on GitHub.
+
 ## 2026-05-06 — Final hand-off
 
 - **Final delivered output designated:** P3-A1 (config `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`, run `experiments/2026-05-05_18-38-39_hull_H200/`).
