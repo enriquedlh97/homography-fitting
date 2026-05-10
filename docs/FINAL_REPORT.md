@@ -79,58 +79,134 @@ outputs/composited.mp4
 
 Run via `scripts/modal_run.py` on Modal GPUs (H200 default; B200 for SAM3 paths). The orchestrator writes `metrics.json` (timing + GPU info), `outputs/composited.mp4` (the result), and a frozen `config.yaml` per run.
 
-### 3.1 Segmentation: SAM2 image segmenter
+### 3.1 Segmentation — SAM2 image / video
 
-We use SAM2 (Segment-Anything 2) in image mode. The user clicks 1–3 positive points inside each banner / logo region on a chosen seed frame; SAM2 returns the segmentation mask. The mask is then propagated across all frames via the SAM2 video tracker, configured via `pipeline.segmenter.type` in the config. SAM3 (`sam3_image`) is also wired in but the final pipeline uses SAM2 — SAM3 requires FlashAttention and a higher-tier GPU.
+**Source:** `src/banner_pipeline/segment/sam2_image.py`, `src/banner_pipeline/segment/sam2_video.py`, base interface in `src/banner_pipeline/segment/base.py`.
 
-Source: `src/banner_pipeline/segment/sam2_image.py`, `src/banner_pipeline/segment/sam2_video.py`.
+**How it's built.** The user runs `scripts/collect_prompts.py` against a chosen seed frame and clicks 1–3 positive points inside each ad-replacement region (and optional negative points). The clicks are saved into the YAML config as `prompts[i].points` + `labels`. At pipeline-start, `SAM2ImageSegmenter` loads the SAM2 hierarchical Hiera tiny checkpoint (`sam2/checkpoints/sam2.1_hiera_tiny.pt`) and runs `predict()` on the seed frame, producing a binary mask per region. The mask is then handed to `SAM2VideoSegmenter` which propagates it across all 767 frames via SAM2's video tracker (memory-attention, no per-frame clicks). The output of this stage is a per-frame, per-region binary mask.
 
-### 3.2 Quad fitting: hull fitter
+The pipeline registers segmenters in a dispatch dict (`SEGMENTERS = {"sam2_image": SAM2ImageSegmenter, …}`) so adding `sam3_image` is a single-line `SEGMENTERS["sam3_image"] = SAM3ImageSegmenter` registration plus a config switch `segmenter.type: sam3_image`. SAM3 is wired but unused by the final config because it needs FlashAttention and a higher-tier GPU.
 
-The per-frame mask is reduced to a 4-corner quad (the "placement quad" in image coordinates). Three fitters are available — `pca`, `lp`, `hull` — chosen via `pipeline.fitter.type`. The final pipeline uses **hull** (`fitting/hull_fit.py`), which is robust to regions whose mask extends partially off-screen.
+### 3.2 Quad fitting — hull fitter
 
-### 3.3 Court geometry: classical_lines vs BallTrackerNet
+**Source:** `src/banner_pipeline/fitting/hull_fit.py` (FINAL); `pca_fit.py` and `lp_fit.py` for the alternative fitters; base in `fitting/base.py`.
 
-The court-geometry estimator computes a homography from the broadcast image to a canonical court reference plane. This is what lets us anchor placements to the physical court surface even as the camera moves.
+**How it's built.** Each per-frame binary mask is reduced to a 4-corner quad (the "placement quad" in image coordinates). Three fitter algorithms are available, dispatched via `pipeline.fitter.type`:
 
-Two backends:
-
-| Backend | Source | What it does |
+| Fitter | Algorithm | Best for |
 |---|---|---|
-| `classical_lines_v1` | `src/banner_pipeline/court_geometry.py` | Hough-line detector on court markings → RANSAC. The original baseline. |
-| `ball_tracker_net_v1` (FINAL) | `src/banner_pipeline/court_geometry_ball_tracker.py` | Learned 14-keypoint detector based on **BallTrackerNet** (Stylianou-Konstantinidis et al., 2020) — a CNN originally trained for tennis-ball tracking that detects court-specific keypoints. We extract one keypoint per heatmap channel via Hough-circle peak detection, then RANSAC a court-reference→image homography. Frame-0 is bridged to V68's manually-clicked corners so the per-frame BTN estimates are calibrated to the production seed. |
+| `pca` | Weighted PCA with Hann windows | Rectangular banners with clean masks |
+| `lp` | Linear programming over supporting lines | Tight convex bounds when the mask is well-defined |
+| `hull` (FINAL) | Convex-hull vertex deduction | Regions whose mask extends partially off-screen — the case we have for back banners |
 
-Selected via `pipeline.geometry.court_backend` in the YAML config. The default is `classical_lines_v1`; the final config sets `ball_tracker_net_v1`. **Phase 2 conclusively showed that `classical_lines_v1` is too frame-to-frame noisy to gate on (§5); the BTN port was the unblock that made dynamic homography viable.**
+The hull fitter computes the convex hull of the mask, then deduces 4 corner points by maximizing perpendicular distance from each candidate edge. It tolerates partial occlusion better than PCA or LP. The output is a `(4, 2)` float array of placement-quad image coordinates per object per frame. EMA smoothing with `tracking.ema_alpha` is applied to keep the corners stable across frames.
+
+### 3.3 Court geometry — classical_lines vs BallTrackerNet
+
+The court-geometry estimator computes a homography from the broadcast image plane to a canonical court reference plane. This is what lets us anchor placements to the physical court surface even as the camera moves. Two backends are available, dispatched via `pipeline.geometry.court_backend`:
+
+#### Backend A — `classical_lines_v1` (Phase 2 baseline)
+
+**Source:** `src/banner_pipeline/court_geometry.py` (the `CourtGeometryEstimator` class, ~1450 lines).
+
+**How it's built.** Per frame: Canny edge detector → probabilistic Hough lines → cluster lines into court-marking candidates by orientation → RANSAC over candidate line intersections to find the four court corners → solve for the homography from the canonical court plane to the image. EMA-smooth the homography across frames via `vp_smoothing_alpha`.
+
+**Why Phase 2 retired this as the dynamic backend.** The Hough detector picks up edges from non-court lines (player limbs, banner edges, line-judge shadows) more often than expected. The RANSAC is robust to a few outliers but not to a structured noise floor — and per-frame we get a structured noise floor, not isolated outliers. Result: the per-frame estimated H is biased by 5–15 px frame-to-frame even when the camera is genuinely static. See §5.
+
+#### Backend B — `ball_tracker_net_v1` (FINAL)
+
+**Source:** `src/banner_pipeline/court_geometry_ball_tracker.py` (~720 lines, ported from BallTrackerNet's CVPR 2020 reference implementation).
+
+**How it's built.** Per frame:
+
+1. Resize the input frame to 640×360 RGB and normalize.
+2. Run a 14-output-channel CNN (PyTorch, batched on the Modal GPU). Each output channel is a 640×360 heatmap for one specific court keypoint (corners + line intersections).
+3. Extract one keypoint per heatmap channel via Hough-circle peak detection — the same method as the BTN reference implementation. This produces a list of 14 image-coordinate keypoints with confidence scores.
+4. RANSAC a homography from the canonical court reference (a fixed 14-point template in court-plane coordinates) to the detected image-plane keypoints. Use cv2.findHomography with `method=cv2.RANSAC`, threshold tuned to 5 px.
+5. **Frame-0 bridge**: on the first frame, the BTN-estimated homography is composed with V68's manually-clicked-corner homography to produce a calibration that aligns the BTN reference frame to V68's seed. From frame 1 onward, every BTN-estimated H goes through this calibration, so the per-frame BTN output is always in V68's coordinate frame.
+
+The bridge means we get the best of both: V68's pixel-perfect production seed (the manually-clicked corners) AND BTN's per-frame motion tracking. Without the bridge, BTN's reference frame would be its own learned origin, which would not necessarily align with V68's clicked corners.
 
 ### 3.4 Hybrid lock — the static-vs-dynamic compromise
 
-Source: `src/banner_pipeline/court_geometry.py:HybridLockState`. A per-frame state machine that decides, on each frame, whether to use the per-frame BTN-estimated homography or to stay at the seed (frame-0, bridged to V68's manually-clicked corners).
+**Source:** `src/banner_pipeline/court_geometry.py` lines 1351–1450. The class is `HybridLockState`; the per-frame entry point is `step()` at line 1415.
 
+**How it's built.** A small state machine that runs after every estimator call. The state tracks the seed homography (frame 0) and a "ramp progress" counter. Per-frame logic:
+
+```python
+# pseudocode of HybridLockState.step()
+disp = max_corner_distance(project(seed_corners, H_seed), project(seed_corners, H_t))
+if disp < self.tolerance_px:
+    self.ramp_progress = 0
+    return self.H_seed                                     # locked
+else:
+    self.ramp_progress += 1
+    alpha = min(1.0, self.ramp_progress / self.ramp_min_frames)
+    return blend(self.H_seed, H_t, alpha)                  # ramp
 ```
-project seed_corners through new H_t            → corners_t
-displacement_t = max corner-to-corner distance(seed, corners_t)
-if displacement_t < tolerance_px:               → stay at seed (locked)
-else:                                            → ramp toward H_t over ramp_min_frames
+
+In the final config: `tolerance_px: 30, ramp_min_frames: 3, ramp_motion_px_per_frame: 2.0`. The 30-px tolerance is loose enough that the eye doesn't see micro-jitter from BTN's per-frame estimation but tight enough that real camera motion (PTZ pans, walkover handheld drift) crosses the threshold and the dynamic estimate kicks in. The 3-frame ramp prevents pop artifacts when the gate fires.
+
+The Melbourne clip is a mostly-static camera, so the vast majority of the 767 frames stay locked (visually pixel-identical to V68 gold). The ~80 walkover-window frames (685–723) where the camera drifts get a stable BTN re-estimation — without hybrid_lock, the placements would slide off the court in those frames.
+
+### 3.5 Person-mask occlusion — MatAnyone2
+
+**Source:** Configured via `pipeline.occlusion_masker.type: matanyone2`. The MatAnyone2 model is loaded into the Modal worker image (CVPR 2026 alpha matting; PyTorch CNN that predicts a per-pixel alpha matte for foreground-person pixels).
+
+**How it's built.** The model takes the original frame and a sparse set of positive prompt points (the player's center) and returns a continuous alpha matte (0 = fully background, 1 = fully foreground person) at full resolution. We run it once per frame. The matte is post-processed with `mask_smooth: true` and `mask_close_px: 5` to smooth temporal flicker and close pinhole gaps. The final compositor uses this alpha matte to occlude any logo pixels behind the player — `final_pixel = composite_pixel * (1 - person_alpha) + frame_pixel * person_alpha`.
+
+We deliberately do not use a "person detector + bounding-box mask" approach because at the walkover window the player's silhouette is intricate (legs, racket arm) and a binary box would cause visible stripes through the floor logo. Alpha matting handles the silhouette correctly.
+
+### 3.6 Compositor — inpaint + LED-blend + (optional) shadow synthesis
+
+**Source:** `src/banner_pipeline/composite/painted.py` (~570 lines). Entry point `painted_court_composite()` at line 19. Surface-aware override dispatch via `compositor.surface_overrides.<surface_type>`.
+
+**How it's built — per frame, per placed region:**
+
+1. **Erase the original ad** (`_erase_original_text`, line 411 of `painted.py`). Inpaint the placement quad's pixels using `inpaint_method: median_fill` — a temporal-median fill from neighbouring frames in a clean-court video (when one is available; the Melbourne config provides `data/clean_court_de_35px_temporal_median_quad.mp4` as the clean-plate reference). Spatial-median fallback when temporal is unavailable. Feathered alpha controlled by `alpha_feather_px`, configurable dilate via `mask_dilate_px`, configurable padding via `padding`.
+2. **Warp the new logo** (`cv2.warpPerspective`) into the placement quad using the per-frame homography (locked or BTN-estimated per §3.4).
+3. **LED-style brightness re-baking** (the `local_color_match: true` + `blend_mode: led` settings). For each pixel inside the placement quad: take the warped logo's RGB value, then re-bake its luminance against the local surface luminance (computed from the inpainted background). This makes the logo read like a physical paint/print job — the logo brightness adapts to local lighting on the surface, just as a real painted ad would. Without this, the placed logo looks like a 2D overlay floating on top of the frame.
+4. **Optional shadow synthesis on `court_floor`** (lines 379–409 of `painted.py`; controlled by `shadow_strength` knob, default 0.0 = disabled). When enabled: the inserted Red Bull pixels are multiplied by `1.0 - shadow_strength * gaussian_blur(player_mask, shadow_radius_px, shadow_blur_px)`, synthesizing a soft player-foot cast shadow on the floor logo. This was used in the autonomous Phase 3 winner; **the FINAL config disables it** (`shadow_strength: 0.0`) because direct visual review showed it darkened the logo too aggressively (§6.5).
+5. **Person-mask occlusion** (per §3.5). The final pixel is `composite * (1 - person_alpha) + original * person_alpha`.
+
+**Final config's surface override block** (excerpt from `eval_walkover_p3_a1_ball_tracker_net_v1.yaml`):
+
+```yaml
+compositor:
+  type: inpaint
+  params:
+    padding: 0.1
+    lum_strength: 0.0
+    inpaint_method: median_fill
+    mask_dilate_px: 20
+    alpha_feather_px: 1
+    quad_pad_px: 20
+    local_color_match: true
+    blend_mode: led
+  surface_overrides:
+    court_floor:
+      padding: 0.0
+      alpha_feather_px: 25
+      erase_text: false        # Phase 3 P3-A12 set this to true; rejected on visual review
+      shade_strength: 0.0
+      quad_expand_px: 80
+      occlusion_dilate_px: 2
+      # shadow_strength: 0.0   # Phase 3 P3-A28 lifted this to 0.6; rejected on visual review
 ```
 
-In the final config: `tolerance_px: 30, ramp_min_frames: 3, ramp_motion_px_per_frame: 2.0`.
+### 3.7 Pipeline orchestration
 
-The Melbourne clip is mostly a static camera, so most of the 767 frames stay locked (visually pixel-identical to V68 gold). The ~80 walkover-window frames where the camera does drift get a stable BTN re-estimation — without this, the placements would slide off the court in those frames. The `vp_smoothing_alpha: 0.5` parameter EMA-smooths the per-frame BTN estimates so that, even when unlocked, the placement transitions are not jittery.
+**Source:** `src/banner_pipeline/pipeline.py` (~3800 lines — the orchestrator and the per-frame loop). Modal entrypoint: `scripts/modal_run.py`. Local-CPU entrypoint: `scripts/run_experiment.py`.
 
-### 3.5 Compositor: inpaint + LED-blend
+**How it's built.** `Pipeline.from_config()` (in `pipeline.py`) loads the frozen YAML, instantiates the segmenter / fitter / compositor / occlusion-masker via dispatch dicts, and validates the prompt schema. The video loop has two paths:
 
-Source: `src/banner_pipeline/composite/painted.py`. For each frame, for each placed region:
+- **`mode: video`** — segments per-frame via SAM video tracker, fits per-frame quads via the chosen fitter, composites. The simple path. Used in earlier phases.
+- **`mode: video_hybrid`** (FINAL) — adds the court-geometry estimator + hybrid_lock state machine + MatAnyone2 person-mask path. Per-frame: SAM mask → hull fit → BTN homography → hybrid_lock decision → composite under person-mask occlusion. This is what produces the final composite.
 
-1. **Erase the original ad** — inpaint the placement quad's pixels using `median_fill` (a temporal-median fill from neighbouring frames where available, or a spatial median otherwise). Feathered alpha, configurable dilate, configurable padding.
-2. **Warp the new logo** into the placement quad using the per-frame homography (locked or BTN-estimated, per §3.4).
-3. **LED-blend brightness re-baking** — the `local_color_match` + `blend_mode: led` settings re-bake the warped logo's brightness response to match the local surface luminance, so the logo reads like a physical paint/print job, not a pasted overlay.
-4. **Person-mask occlusion** — MatAnyone2 (CVPR 2026 alpha matting) produces a per-frame alpha matte for any people in the frame. The matte is composited over the placed logo so the player's body occludes the logo correctly.
-
-Surface-aware overrides via `compositor.surface_overrides.<surface_type>` allow per-surface compositor tuning. The final config keeps V68's compositor settings: `mask_dilate_px: 20`, `alpha_feather_px: 1`, `inpaint_method: median_fill`, `local_color_match: true`, `blend_mode: led`, plus a court_floor override with `padding: 0.0`, `alpha_feather_px: 25`, `quad_expand_px: 80`, `occlusion_dilate_px: 2`, and **no shadow synthesis, no `erase_text` modification** (those were the autonomous Phase 3 changes that visual review rejected — §6.5).
-
-### 3.6 Pipeline orchestration
-
-Source: `src/banner_pipeline/pipeline.py`. Loads the frozen config, builds the segmenter / fitter / compositor instances, runs the video loop, writes outputs and metrics. The Modal entrypoint is `scripts/modal_run.py`. Local-CPU equivalent is `scripts/run_experiment.py` (configurable but slower).
+The orchestrator writes:
+- `outputs/composited.mp4` — the result
+- `metrics.json` — top-level timing + GPU info
+- `config.yaml` — frozen config, byte-identical reproducibility
 
 ---
 
@@ -253,10 +329,38 @@ P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the autonomous winn
 
 ### 7.1 The deliverable
 
-**Run dir:** `experiments/2026-05-05_18-38-39_hull_H200/`
-**Config:** `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`
-**Output video:** `experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`
-**Side-by-side vs gold:** `experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`
+| | |
+|---|---|
+| **Run dir** | [`experiments/2026-05-05_18-38-39_hull_H200/`](../experiments/2026-05-05_18-38-39_hull_H200/) |
+| **Config** | [`configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`](../configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml) |
+| **Output video** | [`outputs/composited.mp4`](../experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4) |
+| **Side-by-side vs V68 gold** | [`eval/vs_reference_side_by_side.mp4`](../experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4) |
+| **Quality metrics JSON** | [`eval/quality_metrics.json`](../experiments/2026-05-05_18-38-39_hull_H200/eval/quality_metrics.json) |
+| **Auto-generated report.md** | [`eval/report.md`](../experiments/2026-05-05_18-38-39_hull_H200/eval/report.md) |
+
+**Inline preview — paired crops (top = original baked-in ad / bottom = our composite):**
+
+Back banners:
+
+![Back banners crop strip](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png)
+
+Left side banner:
+
+![Left banner crop strip](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png)
+
+Court floor logo:
+
+![Floor logo crop strip](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png)
+
+Full-frame:
+
+![Full-frame crop strip](../experiments/2026-05-05_18-38-39_hull_H200/eval/full/crops_strip.png)
+
+**Inline preview — walkover window forensic sheet (player on the logo, frame 0704):**
+
+![Walkover contact frame](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png)
+
+Columns left-to-right: original | clean court (no logo, no player) | our composite | original-clean delta heatmap | survival heatmap (logo pixels persisting through the matte) | suspected leak red overlay.
 
 ### 7.2 Per-region scorecard (extracted from `eval/quality_metrics.json`)
 
@@ -299,20 +403,49 @@ All other regression flags `false`:
 
 **Reading the regression flag.** `any_regression: true` is intentional — it's a side effect of having dynamic homography, not a quality regression. The numerical eval framework is conservative on purpose; the human visual call overrides on this one gate.
 
-### 7.4 Visual artifacts (referenced for slides / report)
+### 7.4 Visual artifacts (full path index for slides / report)
 
-The eval framework produces a fixed set of PNG/MP4 artifacts. Direct paths so the presentation can pull them:
+The eval framework produces a fixed set of PNG/MP4 artifacts. Every path below is committed to the repo at `feat/quality-fixes-next` and ready to be lifted into a slide deck.
 
-- **Per-region crop strips** (6 evenly-spaced full frames, 3× upscaled, original-on-top + composite-on-bottom):
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png`
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png`
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png`
-- **Per-region motion strips** (8 consecutive frames at early / mid / late points in the clip):
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/<region>/motion_strip_<early|mid|late>.png`
-- **Walkover forensic sheets** (6-column layout — original | clean | composite | delta | survival | leak overlay — at 5 key frames in the walkover window):
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_*.png`
-- **Side-by-side regression video** (current | gold | abs-diff heatmap):
-  - `experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`
+**Final composited video:**
+- [`experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`](../experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4) — the deliverable.
+
+**Side-by-side regression video** (current | V68 gold | abs-diff heatmap):
+- [`experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`](../experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4)
+
+**Per-region crop strips** (6 evenly-spaced full frames, 3× upscaled, original-on-top + composite-on-bottom paired):
+- [`eval/back_banners/crops_strip.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png)
+- [`eval/left_logo/crops_strip.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png)
+- [`eval/floor_logo/crops_strip.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png)
+- [`eval/full/crops_strip.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/full/crops_strip.png)
+
+**Per-region motion strips** (8 consecutive frames at 15% / 50% / 85% of the clip):
+- back: [`motion_strip_early.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_early.png) · [`motion_strip_mid.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_mid.png) · [`motion_strip_late.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_late.png)
+- left: [`motion_strip_early.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_early.png) · [`motion_strip_mid.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_mid.png) · [`motion_strip_late.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_late.png)
+- floor: [`motion_strip_early.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_early.png) · [`motion_strip_mid.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_mid.png) · [`motion_strip_late.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_late.png)
+
+**Walkover forensic sheets** (6-column layout — original | clean | composite | original-clean delta | survival | leak-red overlay — at 5 key frames spanning the walkover window 685–723):
+- [`forensic_sheet_entry_f0685.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_entry_f0685.png)
+- [`forensic_sheet_pre_contact_f0694.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_pre_contact_f0694.png)
+- [`forensic_sheet_contact_f0704.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png) — **player ON the logo**
+- [`forensic_sheet_post_contact_f0713.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_post_contact_f0713.png)
+- [`forensic_sheet_exit_f0723.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_exit_f0723.png)
+
+**Walkover consecutive-frames strip** (every frame in the auto-detected window 685–723):
+- [`eval/walkover/consecutive_frames.png`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/consecutive_frames.png)
+
+**Machine-readable outputs:**
+- [`eval/quality_metrics.json`](../experiments/2026-05-05_18-38-39_hull_H200/eval/quality_metrics.json) — flat schema, schema_version=1
+- [`eval/report.md`](../experiments/2026-05-05_18-38-39_hull_H200/eval/report.md) — human rollup with embedded artifact paths
+- [`eval/walkover/window.json`](../experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/window.json) — `{"start": 685, "end": 723, "method": "delta_threshold"}`
+- [`eval/back_banners/metrics.json`](../experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/metrics.json) · [`left_logo`](../experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/metrics.json) · [`floor_logo`](../experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/metrics.json) · [`full`](../experiments/2026-05-05_18-38-39_hull_H200/eval/full/metrics.json) — per-region metric subsets
+
+**Frozen recipe:**
+- [`config.yaml`](../experiments/2026-05-05_18-38-39_hull_H200/config.yaml) — exact frozen config that produced this run
+- [`metrics.json`](../experiments/2026-05-05_18-38-39_hull_H200/metrics.json) — top-level timing + GPU info
+
+**Reference (V68 gold) for comparison:**
+- [`experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/outputs/composited.mp4`](../experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/outputs/composited.mp4) — the V68 manually-clicked static-homography baseline used as the eval-framework regression gold
 
 ---
 
