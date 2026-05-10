@@ -57,11 +57,10 @@ of the iterations on the static clip:
 
 | Prompt | Run | Detected / Segmented | Output FPS | Notes |
 |---|---|---|---|---|
-| `logo` (baseline) | `2026-04-30_20-58-45_sam3_pca_A100-80GB` | — | 2.68 | very stable, but misses several logos |
+| `logo` (baseline) | `2026-04-30_20-58-45_sam3_pca_A100-80GB` | 20 | 2.68 | stable, but sparse detections across the frame |
 | `advertising banner` | — | few | — | merges logos together |
 | `sponsor logo on fixed courtside advertising board` | `2026-05-03_22-01-40_sam3_pca_A100-80GB` | 11 detected | 3.37 | better, still misses lateral banners |
-| `sponsor logo on fixed advertising board at the bottom of the field on the court, one lateral` | — | 13 segmented | 2.70 | wordy, no real gain |
-| `sponsor logo on fixed advertising board on tennis court perimeter` | — | 6 segmented | 4.11 | too restrictive |
+| `sponsor logo on fixed advertising board on tennis court perimeter` | `2026-05-03_22-27-16_sam3_pca_A100-80GB` | 6 segmented | 4.11 | too restrictive |
 | **`sponsor logo on fixed advertising board`** ✅ | `2026-05-06_16-13-17_sam3_pca_A100-80GB` | 9 segmented | 3.95 | **chosen final prompt** |
 | `KIA sponsor logo on fixed advertising board` | `2026-05-07_17-09-30_sam3_pca_A100-80GB` | 8 detected | **4.09** | brand-specific prompt, fastest run |
 
