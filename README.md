@@ -1,24 +1,69 @@
-# Banner Pipeline
+# Banner Pipeline — Virtual Ad Insertion in Tennis Broadcasts
 
-Video banner/logo replacement using SAM2 or SAM3.1 segmentation. Detects billboard regions in video frames, tracks them across all frames, fits perspective-aware quadrilaterals, and composites new logos with correct aspect ratio and luminosity matching.
+Capstone hand-off. SAM2-based banner / logo replacement on real broadcast footage: detects placement regions, tracks them across all frames, fits perspective-aware quadrilaterals via court-plane homography, and composites new logos with correct aspect ratio, brightness response, and player occlusion.
+
+## What's in this repo
+
+This is the final commit of a capstone project on virtual ad insertion. The Melbourne walkover demo clip is the canonical test case — a 13-second broadcast clip with five simultaneous virtual ad placements (3 back banners, 1 left side banner, 1 court-floor Red Bull walkover logo) over a player walking across the court.
+
+**Final delivered output:** `experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`
+
+**Recipe** (config `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`):
+- V68 manually-clicked court corners as the seed homography
+- BallTrackerNet learned 14-keypoint detector for per-frame court geometry estimation
+- Hybrid lock at 30-px tolerance — stays pixel-locked at the seed when the camera is static, ramps to the BTN estimate when motion exceeds tolerance
+- V68's compositor settings (median_fill inpaint, LED brightness re-baking, MatAnyone2 person-mask occlusion)
+
+**Side-by-side vs the V68 static-clicked gold:** `experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`
+
+## Where to start reading
+
+| You want to | Read |
+|---|---|
+| Read the canonical project narrative — problem, approach, every phase, why the final approach won | **`docs/FINAL_REPORT.md`** |
+| Reproduce the final result | "Reproduce the final" below |
+| Understand the eval framework (gates, walkover detection, side-by-side video) | `docs/EVALUATION.md` |
+| Read the raw append-only experiment log | `docs/EXPERIMENT_LEDGER.md` |
+| Continue the autonomous experimentation work | `docs/AGENT_BRIEFING.md` |
+
+## Reproduce the final
+
+```bash
+# 1. Install dependencies (uv: https://docs.astral.sh/uv/)
+uv sync
+
+# 2. Authenticate Modal (one-time)
+uv run modal setup
+
+# 3. Run the final config on H200
+uv run modal run scripts/modal_run.py \
+    --config configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml \
+    --gpu H200 --mode video_hybrid
+
+# 4. Score the deterministic eval framework
+uv run python -m banner_pipeline.eval \
+    --experiment experiments/<your_run_dir>/ --reference auto
+```
+
+This produces `outputs/composited.mp4`, `eval/quality_metrics.json`, `eval/report.md`, per-region crop strips, walkover forensic sheets, and a side-by-side regression video against the V68 gold.
 
 ## Setup
 
 ```bash
-# 1. Clone and enter the repo
+# Clone and enter the repo
 git clone <repo-url> && cd homography-fitting
 
-# 2. Install all dependencies (requires uv: https://docs.astral.sh/uv/)
+# Install all dependencies (requires uv: https://docs.astral.sh/uv/)
 uv sync
 
-# 3. Install pre-commit hooks
+# Install pre-commit hooks
 uv run pre-commit install
 
-# 4. Authenticate with Modal (one-time, for GPU runs)
+# Authenticate with Modal (one-time, for GPU runs)
 uv run modal setup
 ```
 
-SAM2 setup is only needed for **local** runs. Modal builds SAM2 from source automatically.
+SAM2 is built from source automatically on the Modal worker. Local runs need it locally:
 
 ```bash
 # Only if running locally (not needed for Modal)
@@ -27,99 +72,31 @@ pip install -e ./sam2
 cd sam2/checkpoints && ./download_ckpts.sh && cd ../..
 ```
 
-## Running the pipeline
+## Running the pipeline (general)
 
-Two-step process: collect clicks locally, then run on a remote GPU.
+Two-step process: collect clicks locally on a chosen seed frame, then run on a remote GPU via Modal.
 
-### Step 1: Select banner regions (local, no GPU needed)
+### Step 1 — Select banner regions (local, no GPU)
 
 ```bash
 uv run python scripts/collect_prompts.py --config configs/default.yaml
-uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml
-uv run python scripts/collect_prompts.py --config configs/sam3_court_eval.yaml
 ```
 
-This opens the selected frame of the video and saves the prompt points into the config automatically.
+This opens the seed frame and saves the prompt points into the config automatically. SAM2: left-click positive points. SAM3: left-click positive, right-click negative, `U` to undo, `N` for next object.
 
-- SAM2: left-click positive points as usual.
-- SAM3: left-click positive points, right-click negative points, `U` undo, `N` next object.
-- SAM3 prompting works best with 1 to 2 positive clicks inside the banner plus negative clicks on nearby background. Do not outline the whole perimeter.
-
-### Step 2: Run on a GPU via Modal
-
-For walking-over renders, use only `H200` or `B200`. Use `H200` as the practical
-default for short previews, and launch paired `H200` + `B200` jobs for heavy
-checkpoint renders, keeping the first successful result.
+### Step 2 — Run on a Modal GPU
 
 ```bash
-# Video mode (processes all frames, outputs .mp4)
-uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode video
-uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
-uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode video
+# Video mode (full clip)
+uv run modal run scripts/modal_run.py --config <config>.yaml --gpu H200 --mode video_hybrid
 
-# Image mode (processes single frame, outputs .png)
-uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode image
-uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
-uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode image
+# Image mode (single frame preview)
+uv run modal run scripts/modal_run.py --config <config>.yaml --gpu H200 --mode image
 ```
 
-For SAM3, use `--mode image` first to preview the prompt-stage masks and geometry-constrained quads on the selected frame. If the preview looks wrong, or the preview metrics do not include `geometry_*`, adjust the clicks or config before running `--mode video`.
-The shipped SAM3 parity configs use `inpaint`, which is the same compositor family as the stronger SAM2 baseline.
-
-`configs/sam3_default.yaml` must not be run on `T4`. The launcher rejects
-that combination locally before any remote build starts because SAM3 requires
-FlashAttention and `T4` is not supported for that path.
-
-### SAM3 Quick Check
-
-Use this loop to validate that SAM3 is working before launching a full video run:
-
-```bash
-# 1. Collect or recollect prompts on a chosen frame
-uv run python scripts/collect_prompts.py --config configs/sam3_default.yaml --frame 0
-uv run python scripts/collect_prompts.py --config configs/sam3_court_eval.yaml --frame 0
-
-# 2. Preview the wall-banner config and inspect the metrics
-uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode image
-
-# 3. Preview the court-plane eval config and inspect the metrics
-uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode image
-
-# 4. Confirm the preview metrics include geometry_* and show the intended fit method
-
-# 5. If the previews look good, run the full video
-uv run modal run scripts/modal_run.py --config configs/sam3_default.yaml --gpu A100 --mode video
-uv run modal run scripts/modal_run.py --config configs/sam3_court_eval.yaml --gpu A100 --mode video
-```
-
-The preview run writes a single composited image to `experiments/.../outputs/composited.png`.
-Inspect that PNG and the saved `metrics.json` before running `--mode video`.
-
-### SAM3 Prompting Rules
-
-- Use 1 to 2 positive clicks inside each banner.
-- Add 1 negative click on adjacent background if the mask bleeds.
-- Do not outline the whole banner perimeter with many positive points.
-- When validating a new setup, start with one banner before adding more objects.
-- `configs/sam3_default.yaml` is the wall-banner config. `back_wall_banner` objects now use a fronto-parallel wall solver, while `side_wall_banner` keeps the VP-constrained path when court geometry is confident.
-- `configs/sam3_court_eval.yaml` is the court-plane validation config for `court_marking` prompts. Use it to verify that `court_plane` is active before mixing court ads into a larger run.
-
-### If SAM3 Preview Fails
-
-- Try a different seed frame with `--frame 10`, `--frame 20`, or another clearer frame.
-- Use 2 positive clicks plus 1 negative click instead of a single positive click.
-- Reduce the test to one object and verify that first.
-- If the log shows `usable_outputs=False parsed_nonempty_masks=0`, interpret it as:
-  the prompt request was accepted, but SAM3 returned no usable mask for that preview frame.
-- If the preview metrics are missing `geometry_*` or `stabilization_*` despite those features being enabled in the config, treat the run as invalid. The pipeline now fails loudly for that case instead of silently saving a contour-only experiment.
-
-### Current SAM3 Preview Limitation
-
-`--mode image` returns a single composited preview image, but the current SAM3 implementation still loads the extracted frame set to initialize the predictor session. In other words, it is a preview of the selected frame's output, not yet a truly cheap first-frame-only execution path.
+For walking-over renders (long clips with player occlusion), use `H200` or `B200` and `--mode video_hybrid`. For preview / debugging, `--mode image` produces a single composited PNG.
 
 ### Available GPUs
-
-Pass any of these to `--gpu`:
 
 | GPU | VRAM | Cost/hr |
 |-----|------|---------|
@@ -133,186 +110,171 @@ Pass any of these to `--gpu`:
 | `H200` | 141 GB | $4.54 |
 | `B200` | 192 GB | $6.25 |
 
-SAM3 GPU support:
+`T4` does not support SAM3 (FlashAttention requirement). `B200` requires FlashAttention-4 (`flash-attn-4==4.0.0b8` pinned in the Modal image as of April 2026).
 
-- `T4`: `SAM2` only
-- `L4`, `A10G`, `L40S`, `A100`, `A100-80GB`, `H100`, `H200`: `SAM3` via FlashAttention-2
-- `B200`: `SAM3` via FlashAttention-4
-
-As of April 10, 2026, PyPI only publishes `flash-attn-4` as prereleases, so the Modal B200 image pins `flash-attn-4==4.0.0b8` instead of relying on pip to resolve a final release. See [PyPI](https://pypi.org/project/flash-attn-4/) and the [upstream README](https://github.com/Dao-AILab/flash-attention).
-
-### Current Walking-Over Checkpoint
-
-- Config: `configs/experiments/eval_walkover_v68_clicked_homography_static_preview.yaml`
-- Output: `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/outputs/composited.mp4`
-- Review crops: `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/crops/`
-- Presentation notes: `docs/walkover-redbull-demo-approach.md`
-
-This checkpoint keeps all five accepted Red Bull placements together: the
-MELBOURNE court replacement, the left-court Red Bull, and the three black-wall
-Red Bulls. The two court-floor logos use a fixed court-plane homography
-calibrated from a reference frame, which improves perspective while preserving
-the stable no-jitter behavior needed for the demo.
-
-### Benchmarking across GPUs
-
-Single config, single GPU, multiple averaged runs:
-
-```bash
-uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu T4 --mode video --benchmark 5
-uv run modal run scripts/modal_run.py --config configs/default.yaml --gpu A100 --mode video --benchmark 5
-```
-
-### Benchmark matrix (multiple prompt counts × multiple GPUs)
-
-For systematic comparison, use the matrix runner. It executes every (config, GPU) combination and saves each as its own experiment directory.
-
-**Step 1: Set up configs in `configs/matrix/`**
-
-The repo ships with SAM2 and SAM3 templates that use the same input video but different numbers of tracked objects:
-
-- `configs/matrix/1prompt.yaml`, `configs/matrix/5prompts.yaml`, `configs/matrix/11prompts.yaml`
-- `configs/matrix/sam3_1prompt.yaml`, `configs/matrix/sam3_5prompts.yaml`, `configs/matrix/sam3_11prompts.yaml`
-
-You can reuse the shipped prompts as-is, or recollect them for either SAM2 or SAM3:
-
-```bash
-uv run python scripts/collect_prompts.py --config configs/matrix/1prompt.yaml
-uv run python scripts/collect_prompts.py --config configs/matrix/5prompts.yaml
-uv run python scripts/collect_prompts.py --config configs/matrix/sam3_1prompt.yaml
-uv run python scripts/collect_prompts.py --config configs/matrix/sam3_5prompts.yaml
-```
-
-The SAM3 matrix templates now use sparse positive/negative click seeds instead of SAM2-style outline prompts. If you recollect SAM3 prompts, preview them with `--mode image` before launching the full matrix run.
-
-You can also create your own matrix configs (different videos, fitters, compositors, etc.) — just `cp` an existing one and edit.
-
-**Step 2: Run the matrix**
-
-Two options:
-
-```bash
-# Sequential — runs one at a time, simple output
-./scripts/run_matrix.sh
-
-# Parallel — runs all combinations simultaneously, ~10x faster
-uv run python scripts/run_matrix_parallel.py
-
-# SAM3 matrix example
-uv run python scripts/run_matrix_parallel.py \
-  --configs configs/matrix/sam3_1prompt.yaml configs/matrix/sam3_5prompts.yaml configs/matrix/sam3_11prompts.yaml \
-  --gpus A100 H100 B200
-```
-
-Defaults: `T4 A100 H100 B200` × 3 configs × `--benchmark 3` = 12 jobs.
-
-If a config uses `sam3_video`, any `T4` pairing is skipped before remote execution starts. The valid SAM3 jobs still run.
-
-**Modal concurrency limit:** Starter accounts have a limit of 10 concurrent GPUs. Throttle the parallel runner accordingly:
-
-```bash
-uv run python scripts/run_matrix_parallel.py --max-parallel 10
-```
-
-Excess jobs queue automatically and start as soon as a slot frees up. All combinations still run.
-
-**Customize the matrix:**
-
-```bash
-# Run only specific GPUs
-uv run python scripts/run_matrix_parallel.py --gpus T4 A100
-
-# Run only specific configs
-uv run python scripts/run_matrix_parallel.py --configs configs/matrix/1prompt.yaml configs/matrix/11prompts.yaml
-
-# Lower benchmark count for quick test
-uv run python scripts/run_matrix_parallel.py --benchmark 1
-```
-
-Each combination produces an experiment directory named `<config>_<gpu>` (e.g. `5prompts_A100`), so they're easy to compare.
-
-## Metrics
-
-Each run produces a `metrics.json` in the experiment directory. Example output (video mode, T4):
-
-```json
-{
-  "gpu": "Tesla T4",
-  "gpu_memory_gb": 14.6,
-  "mode": "video",
-  "num_frames": 202,
-  "input_fps": 25.0,
-  "segment_total_s": 95.68,
-  "fit_mean_ms": 10.25,
-  "composite_mean_ms": 202.53,
-  "write_video_s": 2.54,
-  "total_s": 141.21,
-  "output_fps": 1.43
-}
-```
-
-| Metric | Description |
-|--------|-------------|
-| `num_frames` | Total frames in the video |
-| `input_fps` | Original video framerate |
-| `segment_total_s` | Time for the configured SAM video tracker to segment and track objects across all frames |
-| `fit_mean_ms` | Average time to fit a quad per frame |
-| `composite_mean_ms` | Average time to composite logo per frame |
-| `write_video_s` | Time to encode the output video |
-| `total_s` | End-to-end wall time |
-| `output_fps` | Processing speed (`num_frames / total_s`) — compare this to `input_fps` to gauge how far from real-time |
-
-## Experiments and reproducibility
-
-Each run saves to `experiments/<timestamp>_<name>/`:
+## Repository layout
 
 ```
-experiments/2026-04-07_20-38-28_pca_T4/
-  config.yaml      # frozen config with exact click coordinates + all settings
-  metrics.json      # timing, FPS, GPU info
-  outputs/
-    composited.mp4   # output video (or .png for image mode)
+homography-fitting/
+  README.md                               ← you are here
+  CHANGELOG.md                            milestone log
+  docs/
+    FINAL_REPORT.md                       canonical narrative (start here)
+    EVALUATION.md                         eval framework spec
+    EXPERIMENT_LEDGER.md                  append-only experiment log
+    AGENT_BRIEFING.md                     autonomous worker contract (internal)
+  src/banner_pipeline/
+    pipeline.py                           orchestration
+    segment/sam2_image.py, sam2_video.py  segmentation
+    fitting/hull_fit.py, lp_fit.py, …     quad fitters (final = hull)
+    court_geometry.py                     classical_lines_v1 + HybridLockState
+    court_geometry_ball_tracker.py        ball_tracker_net_v1 (FINAL)
+    composite/painted.py                  inpaint compositor + LED-blend
+    eval/                                 deterministic eval framework
+      report.py, walkover.py, contact_sheets.py, side_by_side.py
+  scripts/
+    collect_prompts.py, modal_run.py      main workflow
+    run_pipeline.py, run_experiment.py    local alternatives
+  configs/
+    default.yaml                          starter SAM2 config
+    sam3_default.yaml, sam3_court_eval.yaml
+    experiments/                          268 experiment configs
+      eval_walkover_v68_*.yaml            Phase 1 / 2 (clicked / dynamic)
+      eval_walkover_p3_a1_*.yaml          Phase 3 BTN port (FINAL)
+      …
+    eval/reference.yaml                   gold-mapping for --reference auto
+    matrix/                               benchmark matrix templates
+  data/                                   test clips
+  experiments/                            timestamped runs (configs + outputs + eval)
+    2026-05-05_18-38-39_hull_H200/        ← FINAL deliverable
+  tests/                                  pytest suite
 ```
 
-Everything is tracked in git — configs, metrics, and outputs. For long videos that exceed GitHub's file size limit, the output will be rejected by git; in that case, just add the specific output to `.gitignore` and let teammates reproduce it from the saved config:
+## Pipeline overview
 
-```bash
-# Reproduce an experiment exactly
-uv run modal run scripts/modal_run.py --config experiments/2026-04-07_20-38-28_pca_T4/config.yaml --gpu T4
+End-to-end:
 
-# Reuse same coordinates with different settings
-cp experiments/2026-04-07_20-38-28_pca_T4/config.yaml configs/experiments/my_test.yaml
-# edit fitter.type, compositor.type, etc.
-uv run modal run scripts/modal_run.py --config configs/experiments/my_test.yaml --gpu A100 --mode video
+```
+data/<input>.mov
+  → SAM2 segmenter      (segment/sam2_image.py)
+  → hull quad fitter    (fitting/hull_fit.py)
+  → court geometry      (court_geometry_ball_tracker.py — FINAL)
+  → hybrid lock         (court_geometry.py:HybridLockState)
+  → MatAnyone2 mask     (occlusion alpha matting)
+  → inpaint compositor  (composite/painted.py — median_fill + LED-blend)
+  → outputs/composited.mp4
 ```
 
-## Running locally
+For details on each module and why each was chosen, see `docs/FINAL_REPORT.md` §3.
 
-```bash
-# Interactive (opens UI for clicking + runs SAM2 locally)
-uv run python scripts/run_pipeline.py --config configs/default.yaml --save result.png
+## Configuration
 
-# Run experiment with saved outputs + metrics
-uv run python scripts/run_experiment.py --config configs/default.yaml
-```
-
-## Swapping components
-
-Change the config to use different algorithms:
+All behaviour is config-driven. To change algorithms, edit the YAML:
 
 ```yaml
 pipeline:
   fitter:
-    type: lp           # pca | lp | hull
+    type: hull          # pca | lp | hull
   compositor:
-    type: alpha         # inpaint | alpha
+    type: inpaint        # alpha | inpaint
+  geometry:
+    enabled: true
+    court_backend: ball_tracker_net_v1   # classical_lines_v1 | ball_tracker_net_v1
+    hybrid_lock:
+      enabled: true
+      tolerance_px: 30.0
 ```
 
 | Fitter | Algorithm | Best for |
 |--------|-----------|----------|
 | `pca` | Weighted PCA with Hann windows | Rectangular banners |
 | `lp` | Linear programming supporting lines | Tight convex bounds |
-| `hull` | Hull vertex deduction | Regions extending off-screen |
+| `hull` | Hull vertex deduction | Regions extending off-screen (FINAL) |
+
+| Court backend | Source | Notes |
+|---|---|---|
+| `classical_lines_v1` | `court_geometry.py` | Default. Hough-line detector. Phase 2 found this too noisy to gate on dynamically. |
+| `ball_tracker_net_v1` | `court_geometry_ball_tracker.py` | FINAL. Learned 14-keypoint detector. Stable enough for `hybrid_lock` at `tolerance_px: 30`. |
+
+## Evaluation framework
+
+Every run can be scored post-hoc by the deterministic eval framework:
+
+```bash
+uv run python -m banner_pipeline.eval \
+    --experiment experiments/<run_dir>/ \
+    [--reference auto] \
+    [--regions back,left,floor,full,walkover] \
+    [--walkover-window 690:745]
+```
+
+Exit codes: `0` = pass, `2` = scorecard fail, `3` = pass-but-regression-vs-gold, `1` = framework error.
+
+Per-region hard gates (defined in `src/banner_pipeline/eval/report.py`):
+- `corner_max_jump_px < 2.0`, `corner_accel_p95_px < 1.0`, `quad_area_cv < 0.05`
+- `roi_jitter_ratio ≤ 1.05`, `roi_temporal_ssim_mean > 0.95`
+- Floor-only walkover: `walkover_logo_visible_pct > 0.10`, `walkover_occlusion_iou > 0.80`
+
+Outputs: `eval/quality_metrics.json` (machine-readable, schema-versioned), `eval/report.md` (human rollup), per-region crop strips and motion strips (PNG), walkover forensic sheets (PNG), and a side-by-side regression video against the gold reference (MP4, when `--reference auto`).
+
+Adding a new clip = one entry in `configs/eval/reference.yaml` mapping the input-video basename to its gold dir. No code change.
+
+Full spec: `docs/EVALUATION.md`. Final-run metrics with discussion: `docs/FINAL_REPORT.md` §7.
+
+## Metrics (per-run timing)
+
+Each run also writes a top-level `metrics.json` with timing / GPU info:
+
+```json
+{
+  "gpu": "Tesla H200",
+  "gpu_memory_gb": 139.8,
+  "mode": "video_hybrid",
+  "num_frames": 767,
+  "input_fps": 59.0,
+  "segment_total_s": 95.68,
+  "fit_mean_ms": 10.25,
+  "composite_mean_ms": 202.53,
+  "write_video_s": 2.54,
+  "total_s": 286.5,
+  "output_fps": 2.68
+}
+```
+
+| Metric | Description |
+|--------|-------------|
+| `num_frames` | Total frames in the video |
+| `input_fps` | Original framerate |
+| `segment_total_s` | Time for SAM video tracker to segment + track |
+| `fit_mean_ms` | Average per-frame quad fit time |
+| `composite_mean_ms` | Average per-frame composite time |
+| `write_video_s` | Video encoding |
+| `total_s` | End-to-end wall time |
+| `output_fps` | `num_frames / total_s` |
+
+## Reproducibility
+
+Each run saves `experiments/<timestamp>_<name>_<gpu>/` with:
+- `config.yaml` — frozen config with exact click coordinates and all settings
+- `metrics.json` — timing + GPU info
+- `outputs/composited.mp4` — output
+- `eval/` — full eval framework output (after running `python -m banner_pipeline.eval`)
+
+To reproduce any run exactly: `uv run modal run scripts/modal_run.py --config <run_dir>/config.yaml --gpu H200 --mode video_hybrid`.
+
+To explore variants: `cp <run_dir>/config.yaml configs/experiments/my_test.yaml`, edit, then run.
+
+## Known limits and future work
+
+The final has three known ceilings, documented in `docs/FINAL_REPORT.md` §9:
+
+1. **Texture-match.** The smoothed inpaint micro-grain is visible vs the gritty real court paint at close zoom. Would need real texture transfer (noise injection / GAN-based inpaint).
+2. **Single-clip eval.** Only `melbourne-walking-over-logo.mov` is wired into `configs/eval/reference.yaml`. Adding `data/tennis-clip.mp4` and `data/zoom-clip-melbourne.mov` would catch clip-specific regressions.
+3. **Adaptive vp_smoothing.** Code shipped (P3-A2) but the parameter sweep didn't conclude. Worth completing.
+
+## Internal-only experimentation framework
+
+For the autonomous-worker iteration loop (Phase 3 produced ~50 H200 GPU runs across 14 waves of self-experimenting agents): see `docs/AGENT_BRIEFING.md`. Defines the per-cycle worker contract, parallelism patterns, and the "lessons learned" knowledge-sharing protocol. Internal — not part of the production pipeline.
 
 ## Adding a new segmentation model
 
@@ -321,20 +283,26 @@ pipeline:
 3. Register it in `pipeline.py`: `SEGMENTERS["sam3"] = SAM3ImageSegmenter`
 4. Set `segmenter.type: sam3` in your config
 
-## Project structure
+## Benchmarking across GPUs
 
-```
-src/banner_pipeline/
-  io.py, device.py, geometry.py, ui.py, viz.py   # shared utilities
-  segment/    sam2_image.py, sam2_video.py         # segmentation models
-  fitting/    pca_fit.py, lp_fit.py, hull_fit.py   # quad fitting algorithms
-  homography/ camera.py, court.py                  # camera intrinsics
-  composite/  inpaint.py, alpha.py                 # compositing strategies
-  pipeline.py                                      # orchestration + config
-configs/      default.yaml, experiments/            # experiment configs
-scripts/      collect_prompts.py, modal_run.py,     # main workflow
-              run_pipeline.py, run_experiment.py,    # local alternatives
-              benchmark_fps.py
+Single config across multiple averaged runs:
+
+```bash
+uv run modal run scripts/modal_run.py --config <config>.yaml --gpu H200 --mode video --benchmark 5
 ```
 
-See [MIGRATION.md](MIGRATION.md) for how the old files map to this structure.
+Matrix runner for systematic (config, GPU) comparison:
+
+```bash
+# Sequential
+./scripts/run_matrix.sh
+
+# Parallel (respects 10-concurrent-GPU Modal limit)
+uv run python scripts/run_matrix_parallel.py --max-parallel 10
+```
+
+Templates in `configs/matrix/`. Each combination produces an experiment dir named `<config>_<gpu>` for easy comparison.
+
+## License
+
+Capstone submission. Not yet released open-source.

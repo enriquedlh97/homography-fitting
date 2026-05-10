@@ -1663,7 +1663,21 @@ Lessons learned (from agent):
 
 User extended deadline to give Phase 3 a full overnight push. ~14 hours wall clock. Dispatched 12 successive waves of cycles (P3-A6 through P3-A32), iterating on all dimensions of the rubric. Key findings:
 
-### Best Phase 3 candidate (FINAL FINAL): P3-A38/e2
+### FINAL OVERRIDE — 2026-05-06 (post-deadline visual review)
+
+> **Visual review on 2026-05-06 rejected the autonomous Phase 3 winner (P3-A38/e2). The final delivered output is P3-A1** — `experiments/2026-05-05_18-38-39_hull_H200/`, config `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml` — the BTN port baseline before any compositor tweaks.
+>
+> **Reasoning:** the layered shadow synthesis (P3-A28) + `erase_text=true` (P3-A12) + `obj_4 padding=0` (P3-A38/e2) changes that won on the AI rubric produced visible regressions on direct human viewing. Specifically: (1) shadow synthesis at `shadow_strength=0.6` darkened the Red Bull pixels under the player's feet in a way that read as "blob" rather than "shadow"; (2) `erase_text=true` removed the painted MELBOURNE wordmark from under the floor logo, changing the floor texture context unfavorably; (3) `obj_4 padding=0` exposed harder banner edges that read as "pasted on" more than the slightly-softer P3-A1 baseline. The LLM-driven rubric was scoring in absolute terms rather than direct comparison against the original baked-in ads in the same broadcast frame.
+>
+> **P3-A1 keeps V68's compositor unchanged** and only adds dynamic homography (BallTrackerNet + hybrid_lock@30). When the camera is static (most of the Melbourne clip), the hybrid_lock keeps the placement pixel-locked at the V68 seed — visually identical to V68 gold. When the camera moves (~80 walkover-window frames), the BTN estimate ramps in.
+>
+> **The P3-A38/e2 entry below is preserved as historical record** — it was a documented dead-end on visual review. The Phase 3 code changes (shadow synthesis, rubric v2, BTN port) all remain on `feat/quality-fixes-next` so future work can opt back in if it wants.
+>
+> **Lesson:** a numerical rubric — even an LLM-driven one — is not a substitute for direct human visual review against the ground truth. The deterministic metrics (SSIM, ΔE, jitter, occlusion IoU) are useful as regression gates and outlier detectors but the final accept/reject decision needs a human looking at the video.
+>
+> See `docs/FINAL_REPORT.md` §6.5 for the full reasoning and §7 for the P3-A1 final-result metrics.
+
+### Best Phase 3 candidate (FINAL FINAL — superseded by FINAL OVERRIDE above): P3-A38/e2
 
 **Run dir:** `experiments/2026-05-06_05-33-48_hull_H200/`
 **Config:** `configs/experiments/eval_walkover_p3_a38_e2_obj4_padding_0.yaml` = P3-A33/a2 + `obj_4 padding: 0.035 → 0.0`

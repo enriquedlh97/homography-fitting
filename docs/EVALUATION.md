@@ -1,6 +1,6 @@
 # Evaluation Framework
 
-Canonical reference for evaluating virtual banner placement runs. Sub-agents working in this repo MUST follow this document. Supersedes `docs/evaluation-protocol.md`.
+Canonical reference for evaluating virtual banner placement runs. Supersedes `docs/evaluation-protocol.md`.
 
 ## What this evaluates
 
@@ -36,10 +36,7 @@ uv run python -m banner_pipeline.eval \
     [--reference auto]                                # auto-resolves via configs/eval/reference.yaml
     [--regions back,left,floor,full,walkover]        # subset
     [--walkover-window 690:745]                       # override auto-detect
-    [--with-ai-review]                                # deprecated; visual rubric MANIFEST.md is now always emitted
 ```
-
-The visual rubric `MANIFEST.md` is **always** written under `eval/ai_review/`; the rubric itself is scored by dispatching a sub-agent that reads the crop PNGs via the Read tool. No SDK, no API key. See the "Visual rubric review" section below.
 
 Exit codes:
 - **`0`** — every per-region scorecard passes AND no regression vs gold
@@ -57,7 +54,7 @@ This calls `scripts/run_experiment.py` (or `scripts/modal_run.py` if `MODAL=1`) 
 
 ### Ad-hoc on an existing dir without a fresh run
 
-The framework works on any experiment dir that has at minimum `outputs/composited.mp4` + `config.yaml`. Geometric jitter metrics are richer when `outputs/per_frame_state.json` is also present (emitted by the pipeline since v… of `pipeline.py`); without it, those metrics fall back to the static `placement_quad` from the frozen config (returning 0-jitter, marked with `geometric_source: "static_fallback"`). All other metrics work in both modes.
+The framework works on any experiment dir that has at minimum `outputs/composited.mp4` + `config.yaml`. Geometric jitter metrics are richer when `outputs/per_frame_state.json` is also present (emitted by the pipeline); without it, those metrics fall back to the static `placement_quad` from the frozen config (returning 0-jitter, marked with `geometric_source: "static_fallback"`). All other metrics work in both modes.
 
 ## What gets produced
 
@@ -92,19 +89,10 @@ experiments/<run>/
       forensic_sheet_exit_f<N>.png        # window end
       # 6 columns each: orig | clean | composite | original-clean delta | survival | leak overlay
       occlusion_diagnostic.csv            # (when produced) per-frame leak_ratio, logo_visible_pct, occlusion_iou
-    ai_review/
-      MANIFEST.md                         # ALWAYS written: agent prompt + PNG paths + rubric schema + checklist
-      rubric_version.json                 # ALWAYS written: schema version metadata
-      back.{json,md}                      # written by sub-agent after dispatch (vision via Read)
-      left.{json,md}
-      floor.{json,md}                     # includes temporal.* (occlusion_realism, jitter_visible, player_contact_shadow)
-      walkover.{json,md}                  # same temporal.* fields; the hardest/most-important region
-      full.{json,md}
-      CHECKLIST.md                        # written by sub-agent: every PNG marked [x] read or [ ] skipped + reason
     vs_reference_side_by_side.mp4         # only with --reference
 ```
 
-**All per-region strips are paired** (top row = unmodified original broadcast, bottom row = our composite). The original IS the ground-truth quality bar — the real Kia/Melbourne/etc. ads that were in the broadcast. If our virtual ad reads as natural as the original did, we've succeeded. Without the pairing, agents have no anchor for the rubric and scores collapse to "everything looks fine."
+**All per-region strips are paired** (top row = unmodified original broadcast, bottom row = our composite). The original IS the ground-truth quality bar — the real Kia/Melbourne/etc. ads that were in the broadcast. If our virtual ad reads as natural as the original did, we've succeeded.
 
 ## Quantitative metrics
 
@@ -129,7 +117,6 @@ Each per-region `metrics.json` is a subset; `eval/quality_metrics.json` is the f
 | `noise_variance_ratio` | < 0.30 | "Too clean" — placed region noise is much lower than neighbor patch noise; logo looks pasted-on |
 | `edge_sharpness_ratio` | > 1.8 | Gradients on placement_quad boundary much higher than the rest of the frame; visible cutout edge |
 | `roi_delta_E_lab` | > 5.0 | Lab ΔE between ROI mean and same-surface neighbor patch. **Warning-only**: a placed region is *supposed* to differ from its neighbor when carrying a logo; metric needs replacement with a "did we preserve the underlying surface color" measurement. Surfaces problems but does not gate. |
-| `ai_review_*` | per rubric (1-5 scale, 1 = bad) | Vision-LLM rubric scores (warning-only at first; calibrate after ~10 graded runs) |
 
 ### Reference (gold) comparison — only when `--reference auto` resolves
 
@@ -152,18 +139,18 @@ For each frame in the window:
 - `occlusion_iou` — IoU between `(|original − clean| > T)` and `(|composite − clean_with_logo_baked| > T)` inside `placement_quad`. The "baked logo" comes from the gold composited.mp4 at the same frame index (no warping required when both runs share the input video).
 - `forensic_sheet_f<N>.png` — 6-column horizontal contact sheet: `original | clean | composite | original-clean delta heatmap | survival heatmap | suspected leak red overlay`
 
-## Visual inspection — three layers
+## Visual inspection — two layers
 
 ### Layer 1: PNG crops (always produced — automatic)
 
-Every eval run produces ~15 crop PNGs across 5 region directories. **These are the inputs the visual rubric reviewer reads.** Generated by `scripts/eval_run.py` / `python -m banner_pipeline.eval` from each object's `placement_quad` in the frozen config:
+Every eval run produces ~15 crop PNGs across 5 region directories. Generated by `scripts/eval_run.py` / `python -m banner_pipeline.eval` from each object's `placement_quad` in the frozen config:
 
 ```
 eval/back_banners/
   crops_strip.png            # 6 evenly-spaced frames, 3× upscaled
-  consecutive_frames_early.png  # 8 contiguous frames at 15% of clip
-  consecutive_frames_mid.png    # 8 contiguous frames at 50%
-  consecutive_frames_late.png   # 8 contiguous frames at 85%
+  motion_strip_early.png     # 8 contiguous frames at 15% of clip
+  motion_strip_mid.png       # 8 contiguous frames at 50%
+  motion_strip_late.png      # 8 contiguous frames at 85%
 eval/left_logo/              # same shape
 eval/floor_logo/             # same shape
 eval/full/
@@ -179,63 +166,7 @@ PNG strips are the floor of "scan in seconds" review. **Confirmed produced on ev
 
 `eval/vs_reference_side_by_side.mp4` stacks `current_composited | gold_composited | abs_diff_heatmap` horizontally at 0.5× width per panel. Lets you scrub motion against the gold without alt-tabbing between videos.
 
-### Layer 3: Visual rubric review (sub-agent vision — no SDK)
-
-**The rubric is scored by a sub-agent (general-purpose Claude) reading the crop PNGs via the Read tool — exactly the same as if a user pasted an image into the chat. There is no Anthropic SDK call, no API key, no `ANTHROPIC_API_KEY` to provision. The agent's own vision IS the rubric.**
-
-This is the same pattern that ran the C006/A1, C007/A1, C010/A1, C016/A1 visual comparators during the 2026-05-04 autonomous experimentation cycle.
-
-#### How it works
-
-1. The eval framework writes `eval/ai_review/MANIFEST.md` on every run. The manifest enumerates the per-region crop PNGs and the rubric schema. (Always written; no flag needed.)
-2. Whoever wants the rubric scored — the human reviewer or a manager-agent dispatching a sub-agent — uses the manifest's content as the sub-agent's prompt. The manifest doubles as a copy-paste-ready prompt template.
-3. The sub-agent (general-purpose subagent_type, dispatched via the Agent tool) reads each listed PNG via Read, scores the rubric from its own visual judgment, and writes:
-   - `eval/ai_review/<region>.json` — strict-shaped JSON with `min_score` injected
-   - `eval/ai_review/<region>.md` — short prose ("what would a human viewer notice"), under 150 words.
-4. The next time `python -m banner_pipeline.eval --experiment <dir>` runs, it picks up any sub-agent-written rubric files and surfaces `ai_review_min_score` keys per region in `eval/quality_metrics.json`.
-
-#### Rubric (every region; some fields walkover-only)
-
-```
-realism:
-  painted_on_vs_pasted_on  : 1-5   # 1 = obviously pasted, 5 = looks painted on the surface
-  edge_seam_visibility     : 1-5   # 1 = visible cutout, 5 = invisible blend
-  texture_match            : 1-5   # 1 = wrong material, 5 = matches surface texture
-color:
-  hue_match                : 1-5
-  brightness_match         : 1-5
-  saturation_match         : 1-5
-geometry:
-  perspective_plausibility : 1-5   # quad orientation looks right for the camera angle
-  size_plausibility        : 1-5   # logo size is what a real ad would be
-temporal (floor / walkover only):
-  occlusion_realism        : 1-5   # 1 = obviously broken (logo bleeds onto player), 5 = player walks on logo
-  jitter_visible           : 1-5   # 1 = jumpy, 5 = locked
-  player_contact_shadow    : 1-5   # 1 = no shadow under foot, 5 = realistic contact
-notes: <free-text, ≤150 words>
-```
-
-Mapped from the legacy 10-point visual QA checklist (in `docs/evaluation-protocol.md`) — preserved as rubric dimensions so different reviewers' scores are comparable.
-
-Rubric scores are **warning-only** at first; never gate exit code. After ~10 graded runs we calibrate which rubric dimensions become gates.
-
-#### Sub-agent prompt template (use verbatim or as a starting point)
-
-```
-You are a visual quality reviewer for virtual ad insertions on tennis broadcast footage.
-Read MANIFEST.md at <run>/eval/ai_review/MANIFEST.md, then Read each PNG listed under each
-Region. The Read tool returns image content for you to see (your own vision IS the rubric —
-do not call any external API or SDK).
-
-For each region, fill out the rubric (integer scores 1–5 per dimension; 1 = clearly broken,
-5 = indistinguishable from a real painted-on ad). Write the output files into the same
-ai_review/ directory:
-  - <region>.json (strict JSON, with `min_score` injected)
-  - <region>.md (short prose; under 150 words)
-
-If a region has no PNGs listed, skip it. Pay extra attention to the walkover window if one
-is present — that's where the player walks on the court-floor logo.
-```
+The deterministic numerical eval is a regression gate and outlier detector; the final accept/reject decision is human visual review against the original baked-in ads. See `docs/FINAL_REPORT.md` §6.5 for a documented case where the deterministic metrics + a layered-rubric scorer disagreed with direct human visual review, and the visual review was correct.
 
 ## Generalization to a new court
 
@@ -253,20 +184,7 @@ There is **no Melbourne-specific pixel coordinate** in the eval framework. All R
 
 - Re-running the eval on the same experiment dir must produce a byte-identical `eval/quality_metrics.json`.
 - Implementations must seed any random sampling (`np.random.seed(0)`).
-- AI review (when on) is non-deterministic by nature; treat its scores as advisory.
-- Schema versioning: `eval/quality_metrics.json` includes `"schema_version": <int>`. Bump on breaking changes; sub-agents should fail loudly on mismatch.
-
-## When sub-agents run experiments
-
-Sub-agents launched to iterate on the pipeline must:
-
-1. Run the pipeline (Modal or local) and produce an experiment dir under `experiments/`.
-2. Run `python -m banner_pipeline.eval --experiment <dir> --reference auto`. The `eval/ai_review/MANIFEST.md` is written automatically.
-3. Read the resulting `eval/quality_metrics.json`. If `any_regression == true` or any per-region `pass == false`, the change is a regression — surface it in the agent's final report.
-4. (Optional, recommended for checkpoint-grade runs) Dispatch a separate sub-agent (general-purpose) using the MANIFEST.md as its prompt to fill in the visual rubric. The sub-agent reads PNGs via Read tool (its own vision) and writes `eval/ai_review/<region>.{json,md}`. No SDK, no API key.
-5. Cite specific failures from `eval/report.md` (file paths to the contact sheets) so a human can scrub the visual evidence.
-
-A sub-agent SHOULD NOT claim "the change works" without producing a passing `quality_metrics.json` first.
+- Schema versioning: `eval/quality_metrics.json` includes `"schema_version": <int>`. Bump on breaking changes.
 
 ## Schema (`eval/quality_metrics.json`)
 
@@ -298,16 +216,13 @@ A sub-agent SHOULD NOT claim "the change works" without producing a passing `qua
     "back_roi_ssim_mean": 0.989,
     "floor_walkover_occlusion_iou_delta": -0.02,
     "any_regression": false
-  },
-  "ai_review_min_score": 4,
-  "ai_review_walkover_occlusion_realism": 4
+  }
 }
 ```
 
 ## Out of scope (deliberately)
 
-- LPIPS / DreamSim / VGG-perceptual learned metrics. The sub-agent vision rubric covers perceptual realism qualitatively.
-- **Anthropic SDK / API calls for the rubric.** Removed by design. The rubric is scored by sub-agent vision (Read on PNGs returns image content for the agent to see). No API key, no token cost, no SDK dependency.
+- LPIPS / DreamSim / VGG-perceptual learned metrics. Outside the deterministic eval scope.
 - Full-clip GIF generation. PNG strips + side-by-side mp4 cover the visual need.
 - Multi-run aggregation across many experiments (DB / dashboard). Separate later feature.
 - Person-detector-based occlusion. We use the clean-vs-composite delta heuristic (no model dependency).
