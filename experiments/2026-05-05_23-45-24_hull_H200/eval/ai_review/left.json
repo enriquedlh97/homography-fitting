@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 4, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "notes": "Left side banner stable; YoPRO -> Red Bull replacement consistent across all strips. Mild softness on bull rings but no obvious smearing reflex relative to baseline. Identical to baseline; not affected by shadow_strength.",
+  "min_score": 4
+}

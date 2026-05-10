@@ -1,0 +1,151 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA B200",
+  "gpu_memory_gb": 178.4,
+  "mode": "video",
+  "num_prompts": 7,
+  "num_prompt_points": 36,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmptjh7wp9z/input.mp4",
+  "fitter_type": "hull",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam2.1_hiera_tiny.pt",
+  "object_frame_coverage": {
+    "1": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "2": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "4": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "5": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "6": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "7": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    }
+  },
+  "object_valid_frame_coverage": {
+    "1": {
+      "frames_valid": 15,
+      "coverage_ratio": 0.0743
+    },
+    "2": {
+      "frames_valid": 1,
+      "coverage_ratio": 0.005
+    },
+    "3": {
+      "frames_valid": 0,
+      "coverage_ratio": 0.0
+    },
+    "4": {
+      "frames_valid": 6,
+      "coverage_ratio": 0.0297
+    },
+    "5": {
+      "frames_valid": 1,
+      "coverage_ratio": 0.005
+    },
+    "6": {
+      "frames_valid": 6,
+      "coverage_ratio": 0.0297
+    },
+    "7": {
+      "frames_valid": 57,
+      "coverage_ratio": 0.2822
+    }
+  },
+  "object_rejection_counts": {
+    "1": 187,
+    "2": 201,
+    "3": 202,
+    "4": 196,
+    "5": 201,
+    "6": 196,
+    "7": 145
+  },
+  "object_rejection_reasons": {
+    "1": {
+      "quad_edge_too_short": 187,
+      "quad_aspect_ratio_too_high": 187
+    },
+    "2": {
+      "quad_edge_too_short": 201,
+      "quad_aspect_ratio_too_high": 201
+    },
+    "3": {
+      "quad_edge_too_short": 202,
+      "quad_aspect_ratio_too_high": 202
+    },
+    "4": {
+      "quad_edge_too_short": 196,
+      "quad_aspect_ratio_too_high": 196
+    },
+    "5": {
+      "quad_edge_too_short": 201,
+      "quad_aspect_ratio_too_high": 201,
+      "quad_area_too_small": 13,
+      "mask_coverage_low": 13
+    },
+    "6": {
+      "quad_edge_too_short": 196,
+      "quad_aspect_ratio_too_high": 196,
+      "quad_area_too_small": 6,
+      "quad_mask_iou_low": 6,
+      "mask_coverage_low": 6
+    },
+    "7": {
+      "quad_area_too_small": 5,
+      "quad_edge_too_short": 145,
+      "quad_aspect_ratio_too_high": 145,
+      "quad_mask_iou_low": 5,
+      "mask_coverage_low": 5
+    }
+  },
+  "geometry_config_enabled": false,
+  "geometry_runtime_enabled": false,
+  "geometry_active_objects": [],
+  "stabilization_config_enabled": false,
+  "stabilization_runtime_enabled": false,
+  "segment_total_s": 27.881683421,
+  "fit_mean_ms": 82.36,
+  "fit_std_ms": 4.89,
+  "composite_mean_ms": 4.56,
+  "composite_std_ms": 9.95,
+  "write_video_s": 0.5675,
+  "total_s": 45.4382,
+  "run_total_s": 48.407879771,
+  "output_fps": 4.45,
+  "frames_with_masks": 202,
+  "frames_with_valid_objects": 77,
+  "frames_with_quads": 77,
+  "frames_composited": 77,
+  "object_masks_total": 1414,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 201,
+  "max_consecutive_mask_gap": 0,
+  "git_branch": "feat/quality-fixes",
+  "git_commit_sha": "5c650e1b782cbc7cece3b8006f12c3770be7598e",
+  "requested_config_path": "/tmp/phase_b_video_mode.yaml",
+  "frozen_config_path": "/Users/enriquediazdeleonhicks/repositories/capstone-data-candidates/homography-fitting/experiments/2026-04-24_14-55-24_phase_b_video_mode/config.yaml",
+  "frozen_config_sha256": "962f18d9195d79e2825ab4b68cd733cff07d0d817db36491d4a5f43fd455e528"
+}

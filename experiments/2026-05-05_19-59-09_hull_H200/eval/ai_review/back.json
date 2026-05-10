@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner Kia replaced by Red Bull. The bear-shaped wordmark sits flat against the dark backstop; no perimeter rectangle is visible at any frame across early/mid/late motion strips. The logo is small in this region so micro-edge artifacts are hard to read at this resolution, but at native pixel scale a faint softness is visible on the lower edge of the wordmark and around the bulls (edge_reflex=4 — the original Kia bake reads as crisper). No bright luminance halo around the logo perimeter; the dark backstop hides any glow that may exist. Color sits very slightly cooler than the surrounding panel but reads as legitimate ad print. With BTN's stable per-frame H plus the tighter mask_dilate=4, the patch is snug and stationary frame-to-frame.",
+  "min_score": 4
+}

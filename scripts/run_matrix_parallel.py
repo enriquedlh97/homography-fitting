@@ -32,6 +32,8 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 DEFAULT_CONFIGS = [
     "configs/matrix/1prompt.yaml",
     "configs/matrix/5prompts.yaml",
@@ -39,6 +41,31 @@ DEFAULT_CONFIGS = [
 ]
 DEFAULT_GPUS = ["T4", "A100", "H100", "B200"]
 DEFAULT_BENCHMARK = 3
+
+
+def _load_segmenter_type(config_path: str) -> str:
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    return config.get("pipeline", {}).get("segmenter", {}).get("type", "sam2_video")
+
+
+def _partition_supported_combinations(
+    configs: list[str],
+    gpus: list[str],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    runnable: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str, str]] = []
+    segmenter_types = {cfg: _load_segmenter_type(cfg) for cfg in configs}
+
+    for cfg in configs:
+        segmenter_type = segmenter_types[cfg]
+        for gpu in gpus:
+            if segmenter_type == "sam3_video" and gpu == "T4":
+                skipped.append((cfg, gpu, "SAM3 is unsupported on T4"))
+                continue
+            runnable.append((cfg, gpu))
+
+    return runnable, skipped
 
 
 def run_one(config: str, gpu: str, benchmark: int) -> tuple[str, str, int, str]:
@@ -90,8 +117,17 @@ def main():
             print(f"Run: uv run python scripts/collect_prompts.py --config {cfg}", file=sys.stderr)
             sys.exit(1)
 
-    combos = [(cfg, gpu) for cfg in args.configs for gpu in args.gpus]
+    combos, skipped = _partition_supported_combinations(args.configs, args.gpus)
+    if skipped:
+        print("Skipping unsupported combinations:")
+        for cfg, gpu, reason in skipped:
+            print(f"  - {Path(cfg).name} on {gpu}: {reason}")
+        print()
+
     n = len(combos)
+    if n == 0:
+        print("ERROR: No runnable matrix combinations remain after filtering unsupported pairs.")
+        sys.exit(1)
     max_workers = args.max_parallel or n
 
     print("=" * 60)
@@ -118,6 +154,8 @@ def main():
     print(f"Matrix complete in {elapsed:.1f}s")
     print(f"  Success: {successes}/{n}")
     print(f"  Failed:  {failures}/{n}")
+    if skipped:
+        print(f"  Skipped: {len(skipped)}")
     print("=" * 60)
     print("Results in experiments/")
 

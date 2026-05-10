@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
+  "notes": "Floor s=0.65 r=15 b=10: shadow under feet is a touch heavier than baseline 0.6, near the upper edge of credible. Logo painted-on quality holds. Halo controlled, geometry stable. Borderline starting to read painted-blob heavy; not clearly better than baseline.",
+  "min_score": 4
+}

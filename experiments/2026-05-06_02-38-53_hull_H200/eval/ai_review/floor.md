@@ -1,0 +1,3 @@
+# floor — feather=4 variant (a1)
+
+Court-floor logo replacement. Tightening inpaint feather to 4 produces a slightly more visible rectangular tonal seam between the cleaned inpaint patch and surrounding court paint, especially visible in late motion_strip frames. The canonical Red Bull-on-Melbourne halo remains as a soft perimeter glow — feather=4 does not eliminate it because the artifact is from the lockup compositing itself, not the underlying inpaint feather. Occlusion, jitter and player-contact shadow are stable. Net: floor is not improved over baseline a2 and the seam dimension regresses one notch.

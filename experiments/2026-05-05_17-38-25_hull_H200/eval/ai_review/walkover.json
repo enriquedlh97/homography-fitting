@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
+  "temporal":{"occlusion_realism": 5, "jitter_visible": 5, "player_contact_shadow": 4},
+  "notes": "Player legs occlude the Red Bull mark cleanly through entry (f0685), pre-contact (f0694), contact (f0704), post-contact (f0713) and exit (f0723). The composite never bleeds onto skin, shoes or sock; the suspected-leak overlay panels stay clean. Forensic delta panels show high-frequency court texture, not insertion artifact. Compared against the gate-dormant P2-C010/A2 forensic sheets at the same frame indices, the consecutive_frames strip and exit f0723 sheet look visually identical — the 16 ramping firings did NOT add walkover wobble. No motion-tracking improvement visible either: both variants render the late frames equivalently. Player contact shadow is plausible but not a feature the system actively models, kept at 4.",
+  "min_score": 4
+}

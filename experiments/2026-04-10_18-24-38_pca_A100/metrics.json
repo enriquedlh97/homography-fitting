@@ -1,0 +1,240 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "gpu_memory_gb": 39.5,
+  "mode": "image",
+  "num_prompts": 4,
+  "num_prompt_points": 12,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpvwk7kzt6/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "alpha",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "preview_frame_idx": 0,
+  "preview_objects_with_masks": 4,
+  "preview_objects_with_quads": 4,
+  "preview_ok": false,
+  "preview_failure_reasons": [
+    "obj 1: composite failure (background_fill_unstable)",
+    "obj 2: composite failure (background_fill_unstable)",
+    "obj 4: composite failure (background_fill_unstable)"
+  ],
+  "preview_object_diagnostics": {
+    "1": {
+      "obj_id": 1,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": false,
+      "parsed_nonempty_masks": 1,
+      "mask_area_px": 12717,
+      "mask_bbox": [
+        742,
+        832,
+        1177,
+        865
+      ],
+      "seed_retry_attempted": true,
+      "seed_retry_succeeded": true,
+      "seed_retry_exhausted": false,
+      "seed_retry_num_points": 9,
+      "seed_retry_response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "seed_retry_known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "seed_retry_usable_outputs": true,
+      "fit_status": "ok",
+      "fit_method": "primary",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": "composite",
+      "composite_status": "warning",
+      "composite_failure_reason": "background_fill_unstable",
+      "background_fill_color_bgr": [
+        186,
+        139,
+        114
+      ],
+      "background_fill_spread_bgr": [
+        15.0,
+        18.0,
+        29.0
+      ],
+      "quad_area_px": 12232.12,
+      "quad_aspect_ratio": 13.43,
+      "quad_mask_iou": 0.852,
+      "mask_coverage": 0.9147,
+      "quad_coverage": 0.9255
+    },
+    "2": {
+      "obj_id": 2,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 2,
+      "mask_area_px": 4357,
+      "mask_bbox": [
+        871,
+        28,
+        1026,
+        66
+      ],
+      "seed_retry_attempted": false,
+      "seed_retry_succeeded": false,
+      "seed_retry_exhausted": false,
+      "seed_retry_num_points": null,
+      "seed_retry_response_keys": [],
+      "seed_retry_known_output_keys": [],
+      "seed_retry_usable_outputs": false,
+      "fit_status": "ok",
+      "fit_method": "primary",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": "composite",
+      "composite_status": "warning",
+      "composite_failure_reason": "background_fill_unstable",
+      "background_fill_color_bgr": [
+        171,
+        124,
+        138
+      ],
+      "background_fill_spread_bgr": [
+        81.0,
+        65.0,
+        68.0
+      ],
+      "quad_area_px": 4299.13,
+      "quad_aspect_ratio": 7.92,
+      "quad_mask_iou": 0.7141,
+      "mask_coverage": 0.8492,
+      "quad_coverage": 0.8179
+    },
+    "3": {
+      "obj_id": 3,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 3,
+      "mask_area_px": 789,
+      "mask_bbox": [
+        157,
+        266,
+        190,
+        302
+      ],
+      "seed_retry_attempted": false,
+      "seed_retry_succeeded": false,
+      "seed_retry_exhausted": false,
+      "seed_retry_num_points": null,
+      "seed_retry_response_keys": [],
+      "seed_retry_known_output_keys": [],
+      "seed_retry_usable_outputs": false,
+      "fit_status": "ok",
+      "fit_method": "min_area_rect_fallback",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": null,
+      "composite_status": "ok",
+      "composite_failure_reason": null,
+      "background_fill_color_bgr": [
+        80,
+        62,
+        68
+      ],
+      "background_fill_spread_bgr": [
+        10.0,
+        10.0,
+        9.0
+      ],
+      "quad_area_px": 913.32,
+      "quad_aspect_ratio": 1.37,
+      "quad_mask_iou": 0.8182,
+      "mask_coverage": 0.9924,
+      "quad_coverage": 0.8233
+    },
+    "4": {
+      "obj_id": 4,
+      "frame_idx": 0,
+      "response_keys": [
+        "frame_index",
+        "outputs"
+      ],
+      "outputs_present": true,
+      "known_output_keys": [
+        "out_obj_ids",
+        "out_binary_masks"
+      ],
+      "usable_outputs": true,
+      "parsed_nonempty_masks": 4,
+      "mask_area_px": 4579,
+      "mask_bbox": [
+        676,
+        25,
+        833,
+        66
+      ],
+      "seed_retry_attempted": false,
+      "seed_retry_succeeded": false,
+      "seed_retry_exhausted": false,
+      "seed_retry_num_points": null,
+      "seed_retry_response_keys": [],
+      "seed_retry_known_output_keys": [],
+      "seed_retry_usable_outputs": false,
+      "fit_status": "ok",
+      "fit_method": "primary",
+      "fit_geometry_flags": [],
+      "seed_ok": true,
+      "failure_stage": "composite",
+      "composite_status": "warning",
+      "composite_failure_reason": "background_fill_unstable",
+      "background_fill_color_bgr": [
+        130,
+        82,
+        95
+      ],
+      "background_fill_spread_bgr": [
+        83.0,
+        56.0,
+        62.0
+      ],
+      "quad_area_px": 4456.35,
+      "quad_aspect_ratio": 7.48,
+      "quad_mask_iou": 0.6892,
+      "mask_coverage": 0.8229,
+      "quad_coverage": 0.8093
+    }
+  },
+  "segment_s": 32.262860696000004,
+  "fit_s": 0.10896150100000312,
+  "composite_s": 0.1582089240000002,
+  "total_s": 32.53003112100001,
+  "run_total_s": 32.588991541
+}

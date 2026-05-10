@@ -1,0 +1,1 @@
+Floor logo at shadow_strength=0.4: contact shadow registers more visibly than 0.3 but is still a touch light. Player feet are closer to grounded but not fully anchored. Otherwise unchanged from neighbouring variants.

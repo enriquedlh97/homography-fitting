@@ -1,0 +1,3 @@
+# left
+
+A scrubbing viewer would notice that the Red Bull wordmark on the left side banner is slightly less sharp than the original YoPRO baseline. The hue/brightness/saturation of the blue banner field is matched, the geometry rides the diagonal correctly, and there's no bright halo. But the rubric v2 edge_reflex artifact the user flagged is still mildly present: a soft ghost / drift along the letter edges of "Red Bull" and along the rings of the bull silhouettes. It's not the dramatic smearing of earlier candidates — it's a residual softness, consistent across early/mid/late frames. This is the surface where the production candidate still trails the baked-in advertiser quality bar most visibly. Color and geometry are otherwise production-grade.

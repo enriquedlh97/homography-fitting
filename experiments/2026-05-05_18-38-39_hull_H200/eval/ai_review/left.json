@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Red Bull replaces YoPRO on the diagonal blue side banner. Color match to the blue fabric is very good and perspective sits well across all three motion strips. The original YoPRO letters are crisp and high-contrast; the composite Red Bull letters and the bull rings show a slightly softer edge than the original baseline — there is a mild reflex/ghost along the upper and lower edges of the wordmark and around the bulls' horns, more visible at mid-strip frames. Not a heavy smear, but it is noticeable when paired against the YoPRO baseline so I am not rounding to 5. No bright luminance halo. Stable frame-to-frame.",
+  "min_score": 3
+}

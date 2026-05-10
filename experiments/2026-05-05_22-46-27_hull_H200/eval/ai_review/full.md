@@ -1,0 +1,3 @@
+# full
+
+A scrubbing viewer at full-court scale would not flag any surface. The wide thumbnails show the back wall, the left side banner, and the floor band Red Bull replacements all sitting naturally in the venue. Tone of the broadcast is consistent across original (top row) and composite (bottom row); the venue's overall color cast is preserved. No banner appears to float, no geometry plane is visibly misaligned, no edge seams are visible at this scale. Across the five samples in the strip the composite holds without breathing or tonal drift. At broadcast viewing distance this run is indistinguishable from the baked-in advertiser version.

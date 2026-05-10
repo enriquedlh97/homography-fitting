@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 3,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full-frame strip across 5 sampled timestamps reads as a coherent broadcast composite. Back banner, side banner, and floor mark all sit naturally within the scene at full-frame zoom. Court geometry is stable; no crawling lines, no warping. At full-frame scale, the floor halo flagged in the floor/walkover region is barely perceptible — the floor Red Bull rectangle is fractionally cooler than the surrounding court but only a careful viewer scrubbing the floor crop would notice. Brightness on the floor patch reads slightly cooler/bluer than P3-A5 baseline (3 vs 4) due to the wider feather zone exposing more of the lum mismatch. No region is calling attention to itself at this scale.",
+  "min_score": 3
+}

@@ -33,6 +33,10 @@ checkpoints/
 # IDE
 .cursor/
 .vscode/
+.claude/
+
+# Scratch tmp configs
+*.yaml.tmp
 
 # Perf optimization scratchpad (perf/optimize branch) — top-level only
 /perf/

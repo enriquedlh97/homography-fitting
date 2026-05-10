@@ -1,0 +1,81 @@
+pipeline:
+  mode: video
+  segmenter:
+    type: sam3_video
+    checkpoint: sam3/checkpoints/sam3.1_multiplex.pt
+  fitter:
+    type: pca
+    params:
+      axis: short
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.05
+  camera:
+    focal_length: null
+input:
+  video: data/tennis-clip.mp4
+  logo: data/sponsor_logo.png
+  prompts:
+  - obj_id: 1
+    points:
+    - - 722
+      - 50
+    - - 786
+      - 50
+    - - 754
+      - 22
+    labels:
+    - 1
+    - 1
+    - 0
+  - obj_id: 2
+    points:
+    - - 914
+      - 50
+    - - 986
+      - 50
+    - - 950
+      - 22
+    labels:
+    - 1
+    - 1
+    - 0
+  - obj_id: 3
+    points:
+    - - 1110
+      - 52
+    - - 1186
+      - 52
+    - - 1148
+      - 24
+    labels:
+    - 1
+    - 1
+    - 0
+  - obj_id: 4
+    points:
+    - - 1305
+      - 46
+    - - 1376
+      - 46
+    - - 1342
+      - 20
+    labels:
+    - 1
+    - 1
+    - 0
+  - obj_id: 5
+    points:
+    - - 1480
+      - 49
+    - - 1556
+      - 50
+    - - 1518
+      - 22
+    labels:
+    - 1
+    - 1
+    - 0
+output:
+  dir: experiments/

@@ -22,7 +22,19 @@ BENCHMARK="${BENCHMARK:-3}"
 
 total=0
 for cfg in $CONFIGS; do
+    if [ ! -f "$cfg" ]; then
+        echo "ERROR: Config not found: $cfg"
+        echo "Run: uv run python scripts/collect_prompts.py --config $cfg"
+        exit 1
+    fi
+    is_sam3=0
+    if grep -Eq '^[[:space:]]*type:[[:space:]]*sam3_video([[:space:]]|$)' "$cfg"; then
+        is_sam3=1
+    fi
     for gpu in $GPUS; do
+        if [ "$is_sam3" -eq 1 ] && [ "$gpu" = "T4" ]; then
+            continue
+        fi
         total=$((total + 1))
     done
 done
@@ -34,7 +46,18 @@ for cfg in $CONFIGS; do
         echo "Run: uv run python scripts/collect_prompts.py --config $cfg"
         exit 1
     fi
+    is_sam3=0
+    if grep -Eq '^[[:space:]]*type:[[:space:]]*sam3_video([[:space:]]|$)' "$cfg"; then
+        is_sam3=1
+    fi
     for gpu in $GPUS; do
+        if [ "$is_sam3" -eq 1 ] && [ "$gpu" = "T4" ]; then
+            echo ""
+            echo "============================================================"
+            echo "[skip] Config: $cfg | GPU: $gpu | SAM3 is unsupported on T4"
+            echo "============================================================"
+            continue
+        fi
         i=$((i + 1))
         echo ""
         echo "============================================================"

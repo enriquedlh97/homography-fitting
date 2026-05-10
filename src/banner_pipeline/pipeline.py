@@ -10,19 +10,26 @@ import numpy as np
 import yaml
 
 from banner_pipeline import _perf
+from banner_pipeline import court_geometry as court_geometry_mod
+from banner_pipeline import quality as quality_mod
+from banner_pipeline import stabilization as stabilization_mod
 from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
 from banner_pipeline.fitting.base import QuadFitter
+from banner_pipeline.fitting.fronto_parallel import FrontoParallelBannerFitter
 from banner_pipeline.fitting.hull_fit import HullFitter
 from banner_pipeline.fitting.lp_fit import LPFitter
 from banner_pipeline.fitting.pca_fit import PCAFitter
+from banner_pipeline.fitting.vp_constrained import VPConstrainedBannerFitter
 from banner_pipeline.homography.camera import compute_oriented_homography, estimate_camera_matrix
 from banner_pipeline.io import StreamingVideoWriter, get_video_fps, load_frame
 from banner_pipeline.segment.base import ObjectPrompt, SegmentationModel
 from banner_pipeline.segment.sam2_image import SAM2ImageSegmenter
 from banner_pipeline.segment.sam2_video import SAM2VideoSegmenter
-from banner_pipeline.ui import collect_clicks
+from banner_pipeline.segment.sam3_video import SAM3VideoSegmenter
+from banner_pipeline.tracking import CornerTracker
+from banner_pipeline.ui import OBJ_COLORS_UI, collect_clicks
 
 # ---------------------------------------------------------------------------
 # Registries
@@ -36,12 +43,78 @@ FITTERS: dict[str, type[QuadFitter]] = {
     "pca": PCAFitter,
     "lp": LPFitter,
     "hull": HullFitter,
+    "fronto_parallel": FrontoParallelBannerFitter,
+    "vp_constrained": VPConstrainedBannerFitter,
 }
 
 COMPOSITORS: dict[str, type[Compositor]] = {
     "inpaint": InpaintCompositor,
     "alpha": AlphaCompositor,
 }
+SUPPORTED_BANNER_SURFACE_TYPES = {"banner"}
+COURT_MARKING_SURFACE_TYPE = "court_marking"
+
+
+def _write_per_frame_state(
+    per_frame_state: dict[int, dict[int, dict[str, Any]]],
+    output_path: str,
+) -> None:
+    """Write per-frame, per-object placement state next to the composited video.
+
+    Consumed by the eval framework (banner_pipeline.eval) to compute geometric
+    stability metrics without re-detecting quads from the rendered video.
+    Schema: {"schema_version": 1, "num_frames": N,
+             "frames": {<frame_idx>: {<obj_id>: {"corners": [[x,y]*4], "fitted": bool}}}}.
+    """
+    if not per_frame_state:
+        return
+    import json
+    import os
+
+    outputs_dir = os.path.dirname(os.path.abspath(output_path))
+    if not outputs_dir:
+        return
+    os.makedirs(outputs_dir, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "num_frames": len(per_frame_state),
+        "frames": {
+            str(fid): {str(oid): info for oid, info in frame_info.items()}
+            for fid, frame_info in per_frame_state.items()
+        },
+    }
+    with open(os.path.join(outputs_dir, "per_frame_state.json"), "w") as f:
+        json.dump(payload, f, separators=(",", ":"))
+
+
+def _snapshot_corners(
+    corners_dict: dict[int, np.ndarray] | None,
+    hybrid_lock_extras: dict[int, dict[str, Any]] | None = None,
+) -> dict[int, dict[str, Any]]:
+    """Convert a per-object corners dict into a JSON-serializable snapshot.
+
+    When ``hybrid_lock_extras`` is provided, each object's snapshot is
+    extended with ``seed_corners``, ``estimated_corners``, ``decision`` and
+    ``displacement_px`` fields (only for objects with hybrid_lock state).
+    """
+    if not corners_dict:
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for oid, c in corners_dict.items():
+        if c is None:
+            continue
+        arr = np.asarray(c)
+        if arr.shape != (4, 2):
+            continue
+        entry: dict[str, Any] = {
+            "corners": arr.astype(float).tolist(),
+            "fitted": True,
+        }
+        if hybrid_lock_extras and int(oid) in hybrid_lock_extras:
+            entry.update(hybrid_lock_extras[int(oid)])
+        out[int(oid)] = entry
+    return out
+
 
 # ---------------------------------------------------------------------------
 # Factory functions
@@ -79,6 +152,114 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _normalize_surface_type(surface_type: object) -> str:
+    if surface_type is None:
+        return "banner"
+    text = str(surface_type).strip().lower()
+    return text or "banner"
+
+
+def _surface_skip_reason(surface_type: str) -> str:
+    return f"unsupported_surface_type:{surface_type}"
+
+
+def _merged_compositor_kwargs(
+    *,
+    base_params: dict[str, Any],
+    surface_overrides: dict[str, Any] | None,
+    surface_type: str,
+    prompt: ObjectPrompt | None,
+) -> dict[str, Any]:
+    """Global compositor params, then surface overrides, then per-prompt overrides."""
+    extra_kw = dict(base_params)
+    if prompt is not None and surface_overrides:
+        extra_kw.update(surface_overrides.get(surface_type, {}))
+    if prompt is not None and prompt.compositor_params:
+        extra_kw.update(prompt.compositor_params)
+    return extra_kw
+
+
+def _project_court_plane_rectangle(
+    court_homography: np.ndarray,
+    court_rectangle: list[float] | tuple[float, float, float, float],
+) -> np.ndarray:
+    """Project a canonical court-space rectangle into image coordinates."""
+    if len(court_rectangle) != 4:
+        raise ValueError("court_plane_placement.court_rect must contain [u0, v0, u1, v1].")
+    u0, v0, u1, v1 = [float(value) for value in court_rectangle]
+    local_corners = np.array(
+        [[[u0, v0], [u1, v0], [u1, v1], [u0, v1]]],
+        dtype=np.float32,
+    )
+    projected = cv2.perspectiveTransform(
+        local_corners,
+        court_homography.astype(np.float32),
+    ).reshape(-1, 2)
+    return projected.astype(np.float32)
+
+
+def _project_court_plane_quad(
+    court_homography: np.ndarray,
+    court_quad: list[list[float]] | list[tuple[float, float]],
+) -> np.ndarray:
+    """Project a 4-point court-space quad into image coordinates.
+
+    Unlike `_project_court_plane_rectangle`, the quad is not constrained to be
+    axis-aligned in court coordinates. Use this when the originally-clicked
+    image-space `placement_quad` is a rectangle in IMAGE space (so it becomes
+    a trapezoid in court space due to foreshortening).
+    """
+    arr = np.asarray(court_quad, dtype=np.float64).reshape(-1, 2)
+    if arr.shape[0] != 4:
+        raise ValueError("court_plane_placement.court_quad must contain 4 (u, v) points.")
+    projected = cv2.perspectiveTransform(
+        arr.reshape(1, 4, 2).astype(np.float32),
+        court_homography.astype(np.float32),
+    ).reshape(-1, 2)
+    return projected.astype(np.float32)
+
+
+def _court_plane_placement_prompts(prompts: list[ObjectPrompt]) -> list[ObjectPrompt]:
+    return [prompt for prompt in prompts if prompt.court_plane_placement]
+
+
+def _normalize_geometry_model(geometry_model: object | None) -> str | None:
+    return court_geometry_mod.normalize_geometry_model(geometry_model)
+
+
+def _geometry_enabled(pipeline_cfg: dict[str, Any]) -> bool:
+    return court_geometry_mod.is_enabled(pipeline_cfg.get("geometry"))
+
+
+def _stabilization_enabled(pipeline_cfg: dict[str, Any]) -> bool:
+    return stabilization_mod.StabilizationConfig.from_dict(
+        pipeline_cfg.get("stabilization")
+    ).enabled
+
+
+def _is_supported_banner_surface(
+    prompt: ObjectPrompt,
+    *,
+    geometry_enabled: bool = False,
+) -> bool:
+    return court_geometry_mod.supports_surface_type(
+        _normalize_surface_type(prompt.surface_type),
+        geometry_enabled=geometry_enabled,
+    )
+
+
+def _preview_frame_idx_from_prompts(prompts: list[ObjectPrompt]) -> int:
+    if not prompts:
+        return 0
+    frame_indices = sorted({int(prompt.frame_idx) for prompt in prompts})
+    if len(frame_indices) != 1:
+        raise RuntimeError(
+            "SAM3 preview requires all prompts to target a single frame. "
+            f"Found frame_idx values: {frame_indices}."
+        )
+    return frame_indices[0]
+
+
 def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
     """Convert a list of prompt dicts from YAML to ObjectPrompt instances."""
     out = []
@@ -87,15 +268,61 @@ def _prompts_from_config(prompts_cfg: list[dict]) -> list[ObjectPrompt]:
         labels = np.ones(len(pts), dtype=np.int32)
         if "labels" in p:
             labels = np.array(p["labels"], dtype=np.int32)
+        if labels.shape != (len(pts),):
+            raise ValueError(
+                "Prompt labels must be a 1D array with the same length as the points list."
+            )
+        box = None
+        if "box" in p:
+            box = np.array(p["box"], dtype=np.float32)
+        placement_quad = None
+        if "placement_quad" in p:
+            placement_quad = np.array(p["placement_quad"], dtype=np.float32)
+        compositor_params = None
+        raw_comp = p.get("compositor_params")
+        if isinstance(raw_comp, dict):
+            compositor_params = dict(raw_comp)
+        court_plane_placement = None
+        raw_court_plane_placement = p.get("court_plane_placement")
+        if isinstance(raw_court_plane_placement, dict):
+            court_plane_placement = dict(raw_court_plane_placement)
         out.append(
             ObjectPrompt(
                 obj_id=p["obj_id"],
                 points=pts,
                 labels=labels,
                 frame_idx=p.get("frame_idx", 0),
+                surface_type=_normalize_surface_type(p.get("surface_type", "banner")),
+                geometry_model=_normalize_geometry_model(p.get("geometry_model")),
+                box=box,
+                placement_quad=placement_quad,
+                compositor_params=compositor_params,
+                court_plane_placement=court_plane_placement,
+                asset=p.get("asset"),
             )
         )
     return out
+
+
+def _prompt_to_config_entry(prompt: ObjectPrompt) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "obj_id": prompt.obj_id,
+        "points": prompt.points.tolist(),
+        "labels": prompt.labels.tolist(),
+    }
+    if prompt.frame_idx != 0:
+        entry["frame_idx"] = int(prompt.frame_idx)
+    if _normalize_surface_type(prompt.surface_type) != "banner":
+        entry["surface_type"] = _normalize_surface_type(prompt.surface_type)
+    if _normalize_geometry_model(prompt.geometry_model) is not None:
+        entry["geometry_model"] = _normalize_geometry_model(prompt.geometry_model)
+    if prompt.compositor_params:
+        entry["compositor_params"] = dict(prompt.compositor_params)
+    if prompt.court_plane_placement:
+        entry["court_plane_placement"] = dict(prompt.court_plane_placement)
+    if prompt.asset:
+        entry["asset"] = prompt.asset
+    return entry
 
 
 def _clicks_to_prompts(click_groups: list[list[tuple[int, int]]]) -> list[ObjectPrompt]:
@@ -115,20 +342,1141 @@ def _save_prompts_to_config(
     config_path: str,
 ) -> None:
     """Write collected prompts back into the config YAML for replay."""
-    prompts_list = []
-    for p in prompts:
-        entry: dict[str, Any] = {
-            "obj_id": p.obj_id,
-            "points": p.points.tolist(),
-        }
-        if p.frame_idx != 0:
-            entry["frame_idx"] = p.frame_idx
-        prompts_list.append(entry)
-
-    config["input"]["prompts"] = prompts_list
+    config["input"]["prompts"] = [_prompt_to_config_entry(prompt) for prompt in prompts]
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"  Prompts saved to: {config_path}")
+
+
+def _looks_like_legacy_sam2_outline_prompts(prompts: list[ObjectPrompt]) -> bool:
+    """Heuristic warning for SAM2-style outline prompts reused with SAM3."""
+    banner_prompts = [
+        prompt for prompt in prompts if _is_supported_banner_surface(prompt, geometry_enabled=True)
+    ]
+    if not banner_prompts:
+        return False
+    if not all(np.all(prompt.labels == 1) for prompt in banner_prompts):
+        return False
+    total_points = sum(len(prompt.points) for prompt in banner_prompts)
+    return any(len(prompt.points) >= 4 for prompt in banner_prompts) or total_points >= 3 * len(
+        banner_prompts
+    )
+
+
+def _warn_if_legacy_sam3_prompts(segmenter_type: str, prompts: list[ObjectPrompt]) -> None:
+    if segmenter_type != "sam3_video":
+        return
+    if not _looks_like_legacy_sam2_outline_prompts(prompts):
+        return
+    print(
+        "[SAM3Video] Warning: this config looks like a legacy SAM2 outline prompt set "
+        "(all-positive multi-point contours). SAM3 quality is usually better with 1-2 "
+        "positive clicks inside the banner plus negative clicks on nearby background.",
+        flush=True,
+    )
+
+
+def _sanitize_clean_video_player_residue(
+    clean_frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Remove player-shaped residue from a clean court plate.
+
+    DiffuEraser is strong at erasing MELBOURNE, but its temporal propagation can
+    leave wrong-pose player smears in the clean video. This opt-in sanitizer
+    detects local dark outliers inside the court quad and inpaints only those
+    pixels, so existing configs keep their exact behavior unless enabled.
+    """
+    if not bool(input_cfg.get("clean_video_residue_cleanup", False)):
+        return clean_frame_bgr
+
+    if clean_quad_mask is None:
+        return clean_frame_bgr
+
+    quad_pixels = clean_quad_mask > 0
+    if not np.any(quad_pixels):
+        return clean_frame_bgr
+
+    gray_frame = cv2.cvtColor(clean_frame_bgr, cv2.COLOR_BGR2GRAY)
+    local_blur_radius = int(input_cfg.get("clean_video_residue_blur_px", 35))
+    local_blur_kernel_size = max(3, local_blur_radius * 2 + 1)
+    if local_blur_kernel_size % 2 == 0:
+        local_blur_kernel_size += 1
+
+    local_background_gray = cv2.GaussianBlur(
+        gray_frame,
+        (local_blur_kernel_size, local_blur_kernel_size),
+        0,
+    )
+    dark_delta_threshold = int(input_cfg.get("clean_video_residue_dark_delta", 10))
+    dark_ceiling = int(input_cfg.get("clean_video_residue_dark_ceiling", 105))
+    residue_pixels = (
+        quad_pixels
+        & (gray_frame < dark_ceiling)
+        & (
+            local_background_gray.astype(np.int16) - gray_frame.astype(np.int16)
+            > dark_delta_threshold
+        )
+    )
+
+    residue_mask = residue_pixels.astype(np.uint8) * 255
+    close_radius = int(input_cfg.get("clean_video_residue_close_px", 3))
+    if close_radius > 0 and np.any(residue_mask > 0):
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_radius * 2 + 1, close_radius * 2 + 1),
+        )
+        residue_mask = cv2.morphologyEx(residue_mask, cv2.MORPH_CLOSE, close_kernel)
+
+    min_component_area = int(input_cfg.get("clean_video_residue_min_area", 25))
+    max_component_area = int(input_cfg.get("clean_video_residue_max_area", 50000))
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        residue_mask,
+        connectivity=8,
+    )
+    filtered_mask = np.zeros_like(residue_mask)
+    for component_index in range(1, component_count):
+        component_area = int(stats[component_index, cv2.CC_STAT_AREA])
+        if min_component_area <= component_area <= max_component_area:
+            filtered_mask[labels == component_index] = 255
+
+    if not np.any(filtered_mask > 0):
+        return clean_frame_bgr
+
+    inpaint_radius = int(input_cfg.get("clean_video_residue_inpaint_radius", 9))
+    return cv2.inpaint(
+        clean_frame_bgr,
+        filtered_mask,
+        inpaint_radius,
+        cv2.INPAINT_TELEA,
+    )
+
+
+def _build_scaled_box_mask(
+    frame_shape: tuple[int, int, int],
+    box_xyxy: list[float],
+    reference_size: tuple[float, float],
+) -> np.ndarray:
+    """Build a mask from a reference-space XYXY box, scaled to frame size."""
+    frame_height, frame_width = frame_shape[:2]
+    reference_width, reference_height = reference_size
+    scale_x = frame_width / max(reference_width, 1.0)
+    scale_y = frame_height / max(reference_height, 1.0)
+    x1, y1, x2, y2 = box_xyxy
+    sx1 = int(np.floor(x1 * scale_x))
+    sy1 = int(np.floor(y1 * scale_y))
+    sx2 = int(np.ceil(x2 * scale_x))
+    sy2 = int(np.ceil(y2 * scale_y))
+    sx1 = int(np.clip(sx1, 0, frame_width))
+    sx2 = int(np.clip(sx2, 0, frame_width))
+    sy1 = int(np.clip(sy1, 0, frame_height))
+    sy2 = int(np.clip(sy2, 0, frame_height))
+    mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+    if sx2 > sx1 and sy2 > sy1:
+        mask[sy1:sy2, sx1:sx2] = 255
+    return mask
+
+
+def _apply_text_focus_cleanup(
+    frame_bgr: np.ndarray,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Aggressively replace likely text-leak pixels in a configured focus zone."""
+    if not bool(input_cfg.get("clean_video_text_focus_cleanup", False)):
+        return frame_bgr
+    if clean_frame_bgr is None or clean_quad_mask is None or person_mask_raw is None:
+        return frame_bgr
+
+    focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return frame_bgr
+
+    reference_width = float(input_cfg.get("clean_video_text_focus_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_text_focus_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    if not np.any(focus_mask > 0):
+        return frame_bgr
+
+    focus_dilate_px = int(input_cfg.get("clean_video_text_focus_dilate_px", 0))
+    if focus_dilate_px > 0:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    focus_bright_threshold = int(input_cfg.get("clean_video_text_focus_threshold", 105))
+    focus_alpha_threshold = float(input_cfg.get("clean_video_text_focus_alpha_thresh", 0.9))
+    gray_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    focus_pixels = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (gray_frame > focus_bright_threshold)
+        & (person_mask_raw < focus_alpha_threshold)
+    )
+    if not np.any(focus_pixels):
+        return frame_bgr
+
+    replacement_alpha = float(input_cfg.get("clean_video_text_focus_replace_alpha", 1.0))
+    replacement_alpha = float(np.clip(replacement_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    if replacement_alpha >= 1.0:
+        output_frame[focus_pixels] = clean_frame_bgr[focus_pixels]
+    else:
+        blended_pixels = (
+            frame_bgr[focus_pixels].astype(np.float32) * (1.0 - replacement_alpha)
+            + clean_frame_bgr[focus_pixels].astype(np.float32) * replacement_alpha
+        )
+        output_frame[focus_pixels] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _build_underfoot_text_leak_mask(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray,
+    clean_frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray,
+    person_mask_raw: np.ndarray,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Find original-like text pixels surviving in the soft under-foot matte band."""
+    focus_box = input_cfg.get("clean_video_underfoot_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return np.zeros(clean_quad_mask.shape, dtype=bool)
+
+    reference_width = float(input_cfg.get("clean_video_underfoot_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_underfoot_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    focus_dilate_px = int(input_cfg.get("clean_video_underfoot_dilate_px", 0))
+    if focus_dilate_px > 0 and np.any(focus_mask > 0):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    original_clean_delta = np.mean(
+        np.abs(original_frame_bgr.astype(np.int16) - clean_frame_bgr.astype(np.int16)),
+        axis=2,
+    )
+    original_vector = original_frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    composite_vector = frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    survival_numerator = np.sum(original_vector * composite_vector, axis=2)
+    survival_denominator = np.sum(original_vector * original_vector, axis=2) + 1e-6
+    original_survival = np.clip(survival_numerator / survival_denominator, 0.0, 1.0)
+
+    original_gray = cv2.cvtColor(original_frame_bgr, cv2.COLOR_BGR2GRAY)
+    alpha_min = float(input_cfg.get("clean_video_underfoot_alpha_min", 0.03))
+    alpha_max = float(input_cfg.get("clean_video_underfoot_alpha_max", 0.72))
+    delta_threshold = float(input_cfg.get("clean_video_underfoot_delta_threshold", 22.0))
+    survival_threshold = float(input_cfg.get("clean_video_underfoot_survival_threshold", 0.55))
+    bright_threshold = int(input_cfg.get("clean_video_underfoot_bright_threshold", 118))
+
+    leak_mask = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (person_mask_raw >= alpha_min)
+        & (person_mask_raw < alpha_max)
+        & (original_clean_delta > delta_threshold)
+        & (original_survival > survival_threshold)
+        & (original_gray > bright_threshold)
+    )
+
+    close_px = int(input_cfg.get("clean_video_underfoot_close_px", 1))
+    if close_px > 0 and np.any(leak_mask):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_px * 2 + 1, close_px * 2 + 1),
+        )
+        leak_mask_uint8 = cv2.morphologyEx(
+            leak_mask.astype(np.uint8) * 255,
+            cv2.MORPH_CLOSE,
+            kernel,
+        )
+        leak_mask = leak_mask_uint8 > 0
+
+    return leak_mask
+
+
+def _apply_underfoot_text_decontamination(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Replace only original-like MELBOURNE pixels in the soft sole band."""
+    if not bool(input_cfg.get("clean_video_underfoot_decontaminate", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    leak_mask = _build_underfoot_text_leak_mask(
+        frame_bgr=frame_bgr,
+        original_frame_bgr=original_frame_bgr,
+        clean_frame_bgr=clean_frame_bgr,
+        clean_quad_mask=clean_quad_mask,
+        person_mask_raw=person_mask_raw,
+        input_cfg=input_cfg,
+    )
+    if not np.any(leak_mask):
+        return frame_bgr
+
+    replace_alpha = float(input_cfg.get("clean_video_underfoot_replace_alpha", 0.9))
+    replace_alpha = float(np.clip(replace_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[leak_mask].astype(np.float32) * (1.0 - replace_alpha)
+        + clean_frame_bgr[leak_mask].astype(np.float32) * replace_alpha
+    )
+    output_frame[leak_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _apply_soft_player_band_text_cleanup(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Remove MELBOURNE residue in semi-transparent matte around feet.
+
+    Outside the opaque player core, MatAnyone softness mixes original court (with
+    white lettering) back into the composite. The strict underfoot mask often
+    misses dimmer survivors because it requires high correspondence to the original
+    text vector. Here we widen criteria only inside a configurable partial-alpha band.
+    """
+    if not bool(input_cfg.get("clean_video_soft_band_cleanup", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    focus_box = input_cfg.get("clean_video_soft_band_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_underfoot_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        focus_box = input_cfg.get("clean_video_text_focus_box")
+    if not isinstance(focus_box, list) or len(focus_box) != 4:
+        return frame_bgr
+
+    reference_width = float(input_cfg.get("clean_video_soft_band_ref_width", 1912))
+    reference_height = float(input_cfg.get("clean_video_soft_band_ref_height", 1074))
+    focus_mask = _build_scaled_box_mask(
+        frame_bgr.shape,
+        [float(value) for value in focus_box],
+        (reference_width, reference_height),
+    )
+    focus_dilate_px = int(input_cfg.get("clean_video_soft_band_dilate_px", 2))
+    if focus_dilate_px > 0 and np.any(focus_mask > 0):
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (focus_dilate_px * 2 + 1, focus_dilate_px * 2 + 1),
+        )
+        focus_mask = cv2.dilate(focus_mask, kernel, iterations=1)
+
+    alpha_min_soft = float(input_cfg.get("clean_video_soft_band_alpha_min", 0.03))
+    alpha_max_soft = float(input_cfg.get("clean_video_soft_band_alpha_max", 0.94))
+    core_protect_alpha = float(input_cfg.get("clean_video_soft_band_core_protect_alpha", 0.92))
+
+    original_clean_delta = np.mean(
+        np.abs(original_frame_bgr.astype(np.int16) - clean_frame_bgr.astype(np.int16)),
+        axis=2,
+    )
+    original_vector = original_frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    composite_vector = frame_bgr.astype(np.float32) - clean_frame_bgr.astype(np.float32)
+    survival_numerator = np.sum(original_vector * composite_vector, axis=2)
+    survival_denominator = np.sum(original_vector * original_vector, axis=2) + 1e-6
+    survival = np.clip(survival_numerator / survival_denominator, 0.0, 1.0)
+
+    original_gray = cv2.cvtColor(original_frame_bgr, cv2.COLOR_BGR2GRAY)
+    gray_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+
+    relaxed_delta_threshold = float(input_cfg.get("clean_video_soft_band_delta_threshold", 14.0))
+    relaxed_survival_threshold = float(
+        input_cfg.get("clean_video_soft_band_survival_threshold", 0.32)
+    )
+    composite_bright_min = int(input_cfg.get("clean_video_soft_band_gray_min", 72))
+    original_bright_min = int(input_cfg.get("clean_video_soft_band_original_gray_min", 88))
+
+    person = person_mask_raw.astype(np.float32)
+    if person.max() > 1.0:
+        person = person / 255.0
+
+    soft_band = (
+        (focus_mask > 0)
+        & (clean_quad_mask > 0)
+        & (person > alpha_min_soft)
+        & (person < alpha_max_soft)
+        & (person < core_protect_alpha)
+    )
+
+    candidate_mask = (
+        soft_band
+        & (original_clean_delta >= relaxed_delta_threshold)
+        & (survival >= relaxed_survival_threshold)
+        & ((original_gray >= original_bright_min) | (gray_frame >= composite_bright_min))
+    )
+
+    close_px = int(input_cfg.get("clean_video_soft_band_close_px", 3))
+    if close_px > 0 and np.any(candidate_mask):
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_px * 2 + 1, close_px * 2 + 1),
+        )
+        candidate_uint8 = cv2.morphologyEx(
+            candidate_mask.astype(np.uint8) * 255,
+            cv2.MORPH_CLOSE,
+            close_kernel,
+        )
+        candidate_mask = candidate_uint8 > 0
+
+    if not np.any(candidate_mask):
+        return frame_bgr
+
+    replace_alpha = float(input_cfg.get("clean_video_soft_band_replace_alpha", 0.92))
+    replace_alpha = float(np.clip(replace_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[candidate_mask].astype(np.float32) * (1.0 - replace_alpha)
+        + clean_frame_bgr[candidate_mask].astype(np.float32) * replace_alpha
+    )
+    output_frame[candidate_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _apply_shoe_edge_color_extension(
+    *,
+    frame_bgr: np.ndarray,
+    original_frame_bgr: np.ndarray | None,
+    clean_frame_bgr: np.ndarray | None,
+    clean_quad_mask: np.ndarray | None,
+    person_mask_raw: np.ndarray | None,
+    input_cfg: dict[str, Any],
+) -> np.ndarray:
+    """Pull shoe-core color into contaminated soft edge pixels."""
+    if not bool(input_cfg.get("clean_video_shoe_edge_extend", False)):
+        return frame_bgr
+    if (
+        original_frame_bgr is None
+        or clean_frame_bgr is None
+        or clean_quad_mask is None
+        or person_mask_raw is None
+    ):
+        return frame_bgr
+
+    leak_mask = _build_underfoot_text_leak_mask(
+        frame_bgr=frame_bgr,
+        original_frame_bgr=original_frame_bgr,
+        clean_frame_bgr=clean_frame_bgr,
+        clean_quad_mask=clean_quad_mask,
+        person_mask_raw=person_mask_raw,
+        input_cfg=input_cfg,
+    )
+    if not np.any(leak_mask):
+        return frame_bgr
+
+    core_alpha = float(input_cfg.get("clean_video_shoe_edge_core_alpha", 0.86))
+    core_mask = person_mask_raw >= core_alpha
+    if not np.any(core_mask):
+        return frame_bgr
+
+    blur_px = int(input_cfg.get("clean_video_shoe_edge_extend_blur_px", 19))
+    kernel_size = max(3, blur_px * 2 + 1)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    core_weight = core_mask.astype(np.float32)
+    weighted_frame = frame_bgr.astype(np.float32) * core_weight[:, :, None]
+    blurred_weight = cv2.GaussianBlur(core_weight, (kernel_size, kernel_size), 0)
+    blurred_color = cv2.GaussianBlur(weighted_frame, (kernel_size, kernel_size), 0)
+    valid_extension = blurred_weight > float(
+        input_cfg.get("clean_video_shoe_edge_min_core_weight", 0.002)
+    )
+    target_mask = leak_mask & valid_extension
+    if not np.any(target_mask):
+        return frame_bgr
+
+    extended_color = blurred_color / np.maximum(blurred_weight[:, :, None], 1e-6)
+    extension_alpha = float(input_cfg.get("clean_video_shoe_edge_extend_alpha", 0.65))
+    extension_alpha = float(np.clip(extension_alpha, 0.0, 1.0))
+    output_frame = frame_bgr.copy()
+    blended_pixels = (
+        frame_bgr[target_mask].astype(np.float32) * (1.0 - extension_alpha)
+        + extended_color[target_mask].astype(np.float32) * extension_alpha
+    )
+    output_frame[target_mask] = np.clip(blended_pixels, 0.0, 255.0).astype(np.uint8)
+    return output_frame
+
+
+def _harmonize_quad_edge_tones(
+    frame_bgr: np.ndarray,
+    clean_quad_mask: np.ndarray | None,
+    input_cfg: dict[str, Any],
+    temporal_state: dict[str, np.ndarray] | None = None,
+) -> np.ndarray:
+    """Blend quad-edge tones toward surrounding court to hide rectangle seams."""
+    if not bool(input_cfg.get("clean_video_quad_harmonize", False)):
+        return frame_bgr
+    if clean_quad_mask is None:
+        return frame_bgr
+    if not np.any(clean_quad_mask > 0):
+        return frame_bgr
+
+    ring_width_px = int(input_cfg.get("clean_video_quad_harmonize_ring_px", 24))
+    harmonize_strength = float(input_cfg.get("clean_video_quad_harmonize_strength", 0.65))
+    max_channel_delta = float(input_cfg.get("clean_video_quad_harmonize_max_delta", 16.0))
+    if ring_width_px <= 0 or harmonize_strength <= 0.0:
+        return frame_bgr
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (ring_width_px * 2 + 1, ring_width_px * 2 + 1),
+    )
+    dilated_quad = cv2.dilate(clean_quad_mask, kernel, iterations=1)
+    outer_ring = (dilated_quad > 0) & (clean_quad_mask == 0)
+    if not np.any(outer_ring):
+        return frame_bgr
+
+    distance_inside = cv2.distanceTransform(clean_quad_mask, cv2.DIST_L2, 5)
+    inner_ring = (clean_quad_mask > 0) & (distance_inside <= float(ring_width_px))
+    if not np.any(inner_ring):
+        return frame_bgr
+
+    inner_mean_bgr = frame_bgr[inner_ring].astype(np.float32).mean(axis=0)
+    outer_mean_bgr = frame_bgr[outer_ring].astype(np.float32).mean(axis=0)
+    channel_delta = (outer_mean_bgr - inner_mean_bgr) * harmonize_strength
+    channel_delta = np.clip(channel_delta, -max_channel_delta, max_channel_delta)
+    temporal_alpha = float(input_cfg.get("clean_video_quad_harmonize_temporal_alpha", 1.0))
+    if temporal_state is not None and temporal_alpha < 1.0:
+        temporal_alpha = float(np.clip(temporal_alpha, 0.0, 1.0))
+        previous_channel_delta = temporal_state.get("quad_harmonize_channel_delta")
+        if previous_channel_delta is not None:
+            channel_delta = (
+                temporal_alpha * channel_delta + (1.0 - temporal_alpha) * previous_channel_delta
+            )
+        temporal_state["quad_harmonize_channel_delta"] = channel_delta.copy()
+
+    edge_weight = np.clip(
+        (float(ring_width_px) - distance_inside) / max(float(ring_width_px), 1.0),
+        0.0,
+        1.0,
+    ) * (clean_quad_mask > 0).astype(np.float32)
+    if not np.any(edge_weight > 0.0):
+        return frame_bgr
+
+    output_frame = frame_bgr.astype(np.float32)
+    output_frame += edge_weight[:, :, None] * channel_delta[None, None, :]
+    return np.clip(output_frame, 0.0, 255.0).astype(np.uint8)
+
+
+def _validate_prompt_points(segmenter_type: str, prompts: list[ObjectPrompt]) -> None:
+    if segmenter_type != "sam3_video":
+        return
+
+    for prompt in prompts:
+        if not _is_supported_banner_surface(prompt, geometry_enabled=True):
+            continue
+        points = np.asarray(prompt.points, dtype=np.float32)
+        labels = np.asarray(prompt.labels, dtype=np.int32)
+        ambiguous_foreground_background = False
+        for idx in range(len(points)):
+            for jdx in range(idx + 1, len(points)):
+                dist_px = float(np.linalg.norm(points[idx] - points[jdx]))
+                if dist_px <= 1.5:
+                    raise RuntimeError(
+                        "SAM3 prompt loading rejected duplicate clicks for "
+                        f"obj_id={prompt.obj_id} at frame={prompt.frame_idx}. "
+                        "Re-collect the prompt set without double-clicking the same location."
+                    )
+                if labels[idx] == labels[jdx] and dist_px < 4.0:
+                    raise RuntimeError(
+                        "SAM3 prompt loading rejected near-identical clicks for "
+                        f"obj_id={prompt.obj_id} at frame={prompt.frame_idx}. "
+                        "Spread repeated positive/negative clicks farther apart."
+                    )
+                if labels[idx] != labels[jdx] and dist_px <= 12.0:
+                    ambiguous_foreground_background = True
+        if ambiguous_foreground_background:
+            print(
+                "[SAM3Video] Warning: "
+                f"obj_id={prompt.obj_id} mixes positive/negative clicks very close together. "
+                "That usually means ambiguous foreground/background geometry and can hurt "
+                "tracking on thin or painted banners.",
+                flush=True,
+            )
+
+
+def _load_or_collect_prompts(
+    *,
+    config: dict,
+    config_path: str | None,
+    video_path: str,
+    segmenter_type: str,
+    log_prefix: str,
+    frame_idx: int = 0,
+) -> list[ObjectPrompt]:
+    prompts_cfg = config["input"].get("prompts")
+    if prompts_cfg:
+        prompts = _prompts_from_config(prompts_cfg)
+        print(f"{log_prefix} Loaded {len(prompts)} prompts from config")
+    else:
+        print(f"{log_prefix} Interactive mode — collecting clicks …")
+        frame = load_frame(video_path, frame_idx=frame_idx)
+        prompts = collect_clicks(frame, frame_idx=frame_idx)
+        if not prompts:
+            return []
+        if config_path:
+            _save_prompts_to_config(config, prompts, config_path)
+
+    _warn_if_legacy_sam3_prompts(segmenter_type, prompts)
+    _validate_prompt_points(segmenter_type, prompts)
+    return prompts
+
+
+def _fit_corners(
+    masks: dict[int, np.ndarray],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+) -> dict[int, np.ndarray]:
+    corners_map: dict[int, np.ndarray] = {}
+    for obj_id, mask in masks.items():
+        corners = fitter.fit(mask, **fitter_params)
+        if corners is not None:
+            corners_map[obj_id] = corners
+    return corners_map
+
+
+def _geometry_active_object_ids(
+    prompts: list[ObjectPrompt],
+    *,
+    geometry_enabled: bool,
+) -> list[int]:
+    if not geometry_enabled:
+        return []
+    active_obj_ids: list[int] = []
+    for prompt in prompts:
+        if not _is_supported_banner_surface(prompt, geometry_enabled=True):
+            continue
+        if court_geometry_mod.resolve_geometry_model(prompt) == "mask_free_quad":
+            continue
+        active_obj_ids.append(int(prompt.obj_id))
+    return sorted(set(active_obj_ids))
+
+
+def _init_runtime_feature_metrics(
+    metrics: dict[str, Any],
+    *,
+    pipeline_cfg: dict[str, Any],
+    prompts: list[ObjectPrompt],
+) -> None:
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    metrics["geometry_config_enabled"] = geometry_enabled
+    metrics["geometry_runtime_enabled"] = False
+    metrics["geometry_active_objects"] = _geometry_active_object_ids(
+        prompts,
+        geometry_enabled=geometry_enabled,
+    )
+    metrics["stabilization_config_enabled"] = _stabilization_enabled(pipeline_cfg)
+    metrics["stabilization_runtime_enabled"] = False
+
+
+def _require_runtime_feature_metrics(
+    *,
+    feature_name: str,
+    metrics: dict[str, Any],
+    config_enabled: bool,
+    runtime_enabled: bool,
+    required_keys: list[str],
+) -> None:
+    if not config_enabled:
+        return
+    if not runtime_enabled:
+        raise RuntimeError(
+            f"{feature_name} was enabled in the config, but the runtime path did not execute."
+        )
+    missing_keys = [key for key in required_keys if key not in metrics]
+    if missing_keys:
+        raise RuntimeError(
+            f"{feature_name} was enabled in the config, but runtime metrics were missing: "
+            f"{missing_keys}."
+        )
+
+
+def _load_overlay(logo_path: str | None) -> np.ndarray | None:
+    if not logo_path:
+        return None
+    overlay = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+    if overlay is None:
+        raise RuntimeError(f"Could not read logo: {logo_path}")
+    return overlay
+
+
+def _composite_preview_frame(
+    frame: np.ndarray,
+    corners_map: dict[int, np.ndarray],
+    overlay: np.ndarray | None,
+    compositor_cfg: dict,
+    masks: dict[int, np.ndarray],
+    focal_length: float | None,
+) -> tuple[np.ndarray, float | None]:
+    if overlay is None or not corners_map:
+        return frame.copy(), None
+
+    overlay_img = overlay
+    compositor = build_compositor(compositor_cfg)
+    compositor_params = compositor_cfg.get("params", {})
+    preview = frame.copy()
+    t0 = time.perf_counter()
+    K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
+    for obj_id in sorted(corners_map):
+        extra_kw = dict(compositor_params)
+        if compositor.name == "alpha":
+            extra_kw["homo"] = compute_oriented_homography(corners_map[obj_id], K)
+        preview = compositor.composite(
+            preview,
+            corners_map[obj_id],
+            overlay_img,
+            mask=masks.get(obj_id),
+            **extra_kw,
+        )
+    return preview, time.perf_counter() - t0
+
+
+def _annotate_preview_frame(
+    frame: np.ndarray,
+    masks: dict[int, np.ndarray],
+    corners_map: dict[int, np.ndarray],
+) -> np.ndarray:
+    preview = frame.copy()
+    mask_overlay = frame.copy()
+    alpha = 0.32
+
+    for idx, obj_id in enumerate(sorted(masks)):
+        color = OBJ_COLORS_UI[idx % len(OBJ_COLORS_UI)]
+        mask = np.asarray(masks[obj_id]).squeeze()
+        if mask.ndim != 2 or not mask.any():
+            continue
+        mask_bool = mask.astype(bool)
+        mask_overlay[mask_bool] = color
+
+    preview = cv2.addWeighted(mask_overlay, alpha, preview, 1.0 - alpha, 0.0)
+
+    for idx, obj_id in enumerate(sorted(corners_map)):
+        color = OBJ_COLORS_UI[idx % len(OBJ_COLORS_UI)]
+        corners = np.asarray(corners_map[obj_id], dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(preview, [corners], True, color, 2, cv2.LINE_AA)
+        anchor = tuple(corners[0, 0])
+        cv2.putText(
+            preview,
+            f"obj {obj_id}",
+            (int(anchor[0]) + 8, int(anchor[1]) - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    return preview
+
+
+def _annotate_prompt_markers(
+    frame: np.ndarray,
+    prompts: list[ObjectPrompt],
+) -> np.ndarray:
+    preview = frame.copy()
+    for idx, prompt in enumerate(prompts):
+        color = OBJ_COLORS_UI[idx % len(OBJ_COLORS_UI)]
+        for point_idx, (point, label) in enumerate(
+            zip(prompt.points, prompt.labels, strict=True),
+            start=1,
+        ):
+            x = int(round(float(point[0])))
+            y = int(round(float(point[1])))
+            marker = cv2.MARKER_STAR if int(label) == 1 else cv2.MARKER_TILTED_CROSS
+            suffix = "+" if int(label) == 1 else "-"
+            cv2.drawMarker(preview, (x, y), color, marker, 18, 2)
+            cv2.putText(
+                preview,
+                f"{prompt.obj_id}.{point_idx}{suffix}",
+                (x + 10, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+    return preview
+
+
+def _mask_area_and_bbox(mask: np.ndarray | None) -> tuple[int, list[int] | None]:
+    return quality_mod.mask_area_and_bbox(mask)
+
+
+def _bbox_dims(mask_bbox: list[int] | None) -> tuple[int, int]:
+    return quality_mod.bbox_dims(mask_bbox)
+
+
+def _polygon_area(corners: np.ndarray) -> float:
+    return quality_mod.polygon_area(corners)
+
+
+def _quad_edge_lengths(corners: np.ndarray) -> np.ndarray:
+    return quality_mod.quad_edge_lengths(corners)
+
+
+def _quad_mask_overlap(mask: np.ndarray, corners: np.ndarray) -> dict[str, float]:
+    return quality_mod.quad_mask_overlap(mask, corners)
+
+
+def _preview_geometry_flags(
+    mask: np.ndarray,
+    corners: np.ndarray,
+    frame_shape: tuple[int, int],
+) -> tuple[list[str], dict[str, float]]:
+    return quality_mod.geometry_flags(mask, corners, frame_shape)
+
+
+def _fit_min_area_rect_quad(mask: np.ndarray) -> np.ndarray | None:
+    return quality_mod.fit_min_area_rect_quad(mask)
+
+
+def _fit_preview_corners(
+    *,
+    mask: np.ndarray,
+    mask_area_px: int,
+    mask_bbox: list[int] | None,
+    frame_shape: tuple[int, int],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+) -> tuple[np.ndarray | None, str, str | None]:
+    return quality_mod.fit_corners_with_fallback(
+        mask=mask,
+        mask_area_px=mask_area_px,
+        mask_bbox=mask_bbox,
+        frame_shape=frame_shape,
+        fit_primary=lambda current_mask: fitter.fit(current_mask, **fitter_params),
+    )
+
+
+def _composite_preview_with_diagnostics(
+    *,
+    frame: np.ndarray,
+    overlay: np.ndarray | None,
+    compositor_cfg: dict,
+    masks: dict[int, np.ndarray],
+    corners_map: dict[int, np.ndarray],
+    preview_object_diagnostics: dict[str, dict[str, Any]],
+    focal_length: float | None,
+    prompts: list[ObjectPrompt] | None = None,
+) -> tuple[np.ndarray, float | None, list[str]]:
+    preview = frame.copy()
+    if overlay is None:
+        for diag in preview_object_diagnostics.values():
+            diag["composite_status"] = "skipped"
+            diag["composite_failure_reason"] = "no_logo_configured"
+        return preview, None, []
+
+    compositor = build_compositor(compositor_cfg)
+    compositor_params = compositor_cfg.get("params", {})
+    K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
+    t0 = time.perf_counter()
+    failures: list[str] = []
+    prompt_by_id = {int(p.obj_id): p for p in prompts} if prompts else {}
+    surface_overrides_cfg = compositor_cfg.get("surface_overrides", {})
+
+    for obj_id_text, diag in preview_object_diagnostics.items():
+        obj_id = int(obj_id_text)
+        diag.setdefault("background_fill_color_bgr", None)
+        diag.setdefault("background_fill_spread_bgr", None)
+        if obj_id not in corners_map:
+            if diag.get("failure_stage") == "surface":
+                diag.setdefault("composite_status", "skipped")
+                diag.setdefault("composite_failure_reason", diag.get("skip_reason"))
+            else:
+                diag["composite_status"] = "skipped"
+                diag["composite_failure_reason"] = "fit_unavailable"
+            continue
+
+        prompt = prompt_by_id.get(obj_id)
+        extra_kw = _merged_compositor_kwargs(
+            base_params=compositor_params,
+            surface_overrides=surface_overrides_cfg,
+            surface_type=_normalize_surface_type(prompt.surface_type) if prompt else "banner",
+            prompt=prompt,
+        )
+        debug_info: dict[str, object] = {}
+
+        try:
+            if compositor.name == "alpha":
+                extra_kw["homo"] = compute_oriented_homography(corners_map[obj_id], K)
+                extra_kw["debug_info"] = debug_info
+            preview = compositor.composite(
+                preview,
+                corners_map[obj_id],
+                overlay,
+                mask=masks.get(obj_id),
+                **extra_kw,
+            )
+        except Exception as exc:
+            diag["composite_status"] = "failed"
+            diag["composite_failure_reason"] = f"{type(exc).__name__}: {exc}"
+            diag["failure_stage"] = "composite"
+            failures.append(f"obj {obj_id}: composite failure ({diag['composite_failure_reason']})")
+            continue
+
+        diag["background_fill_color_bgr"] = debug_info.get("fill_color_bgr")
+        diag["background_fill_spread_bgr"] = debug_info.get("fill_spread_bgr")
+        if debug_info.get("fill_unstable"):
+            diag["composite_status"] = "warning"
+            diag["composite_failure_reason"] = str(debug_info.get("fill_warning_reason"))
+            diag["failure_stage"] = "composite"
+            failures.append(f"obj {obj_id}: composite failure ({diag['composite_failure_reason']})")
+        else:
+            diag["composite_status"] = "ok"
+            diag["composite_failure_reason"] = None
+
+    return preview, time.perf_counter() - t0, failures
+
+
+def _build_preview_diagnostics(
+    *,
+    frame: np.ndarray,
+    prompts: list[ObjectPrompt],
+    masks: dict[int, np.ndarray],
+    prompt_diagnostics: dict[int, dict[str, object]],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+    geometry_engine: court_geometry_mod.GeometryFittingEngine | None = None,
+) -> tuple[dict[int, np.ndarray], dict[str, dict[str, Any]], list[str]]:
+    diagnostics: dict[str, dict[str, Any]] = {}
+    valid_corners_map: dict[int, np.ndarray] = {}
+    invalid_objects: list[str] = []
+    frame_shape = frame.shape[:2]
+    geometry_corners_map: dict[int, np.ndarray] = {}
+    geometry_rejections: dict[int, list[str]] = {}
+    if geometry_engine is not None:
+        geometry_corners_map, geometry_rejections = geometry_engine.fit_frame(
+            frame_idx=0,
+            frame_bgr=frame,
+            masks_by_obj={
+                int(obj_id): np.asarray(mask).squeeze() for obj_id, mask in masks.items()
+            },
+            frame_shape=frame_shape,
+        )
+
+    for prompt in prompts:
+        obj_id = int(prompt.obj_id)
+        surface_type = _normalize_surface_type(prompt.surface_type)
+        geometry_model = court_geometry_mod.resolve_geometry_model(prompt)
+        mask = masks.get(obj_id)
+        corners: np.ndarray | None = None
+        fit_method = "not_run"
+        fit_failure_flag: str | None = None
+        mask_area_px, mask_bbox = _mask_area_and_bbox(mask)
+        base_diag = dict(prompt_diagnostics.get(obj_id, {}))
+        base_diag.update(
+            {
+                "mask_area_px": mask_area_px,
+                "mask_bbox": mask_bbox,
+                "surface_type": surface_type,
+                "geometry_model": geometry_model,
+                "fit_status": "not_run",
+                "fit_method": "not_run",
+                "fit_held": False,
+                "fit_used_fallback": False,
+                "fit_geometry_flags": [],
+                "seed_ok": False,
+                "failure_stage": "mask",
+                "composite_status": "not_run",
+                "composite_failure_reason": None,
+                "background_fill_color_bgr": None,
+                "background_fill_spread_bgr": None,
+            }
+        )
+        if geometry_engine is not None and obj_id in geometry_engine.details:
+            base_diag["fit_method"] = geometry_engine.details[obj_id].fit_method
+            base_diag["fit_held"] = geometry_engine.details[obj_id].held
+            base_diag["fit_used_fallback"] = geometry_engine.details[obj_id].used_fallback
+
+        if geometry_engine is None and surface_type not in SUPPORTED_BANNER_SURFACE_TYPES:
+            skip_reason = _surface_skip_reason(surface_type)
+            base_diag["fit_status"] = "skipped"
+            base_diag["failure_stage"] = "surface"
+            base_diag["skip_reason"] = skip_reason
+            base_diag["composite_status"] = "skipped"
+            base_diag["composite_failure_reason"] = skip_reason
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        if mask_area_px == 0:
+            retry_exhausted = bool(base_diag.get("seed_retry_exhausted"))
+            base_diag["fit_geometry_flags"] = (
+                ["seed_retry_exhausted"] if retry_exhausted else ["empty_mask"]
+            )
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        assert mask is not None
+        if geometry_engine is not None:
+            corners = geometry_corners_map.get(obj_id)
+            fit_failure_reasons = geometry_rejections.get(obj_id, [])
+            fit_failure_flag = fit_failure_reasons[0] if fit_failure_reasons else "fit_failed"
+        else:
+            corners, fit_method, fit_failure_flag = _fit_preview_corners(
+                mask=mask,
+                mask_area_px=mask_area_px,
+                mask_bbox=mask_bbox,
+                frame_shape=frame_shape,
+                fitter=fitter,
+                fitter_params=fitter_params,
+            )
+            base_diag["fit_method"] = fit_method
+        if corners is None:
+            if fit_failure_flag is not None and fit_failure_flag.startswith(
+                "unsupported_surface_type:"
+            ):
+                base_diag["fit_status"] = "skipped"
+                base_diag["failure_stage"] = "surface"
+                base_diag["skip_reason"] = fit_failure_flag
+                base_diag["composite_status"] = "skipped"
+                base_diag["composite_failure_reason"] = fit_failure_flag
+                diagnostics[str(obj_id)] = base_diag
+                invalid_objects.append(str(obj_id))
+                continue
+            base_diag["fit_status"] = "failed"
+            base_diag["failure_stage"] = "fit"
+            base_diag["fit_geometry_flags"] = [fit_failure_flag or "fit_failed"]
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        flags, geometry_stats = _preview_geometry_flags(mask, corners, frame_shape)
+        base_diag["fit_status"] = "ok" if not flags else "rejected"
+        base_diag["failure_stage"] = None if not flags else "fit"
+        base_diag["fit_geometry_flags"] = flags
+        base_diag.update(geometry_stats)
+        if flags:
+            diagnostics[str(obj_id)] = base_diag
+            invalid_objects.append(str(obj_id))
+            continue
+
+        base_diag["seed_ok"] = True
+        diagnostics[str(obj_id)] = base_diag
+        valid_corners_map[obj_id] = corners
+
+    return valid_corners_map, diagnostics, invalid_objects
+
+
+def _summarize_preview_failures(
+    diagnostics: dict[str, dict[str, Any]],
+    invalid_objects: list[str],
+) -> list[str]:
+    failures: list[str] = []
+    for obj_id in invalid_objects:
+        diag = diagnostics[obj_id]
+        flags = diag.get("fit_geometry_flags", [])
+        if diag.get("failure_stage") == "surface":
+            failures.append(f"obj {obj_id}: skipped ({diag.get('skip_reason')})")
+        elif diag.get("failure_stage") == "mask":
+            failures.append(f"obj {obj_id}: mask failure ({', '.join(flags)})")
+        elif diag.get("failure_stage") == "composite":
+            reason = diag.get("composite_failure_reason") or "unknown_composite_failure"
+            failures.append(f"obj {obj_id}: composite failure ({reason})")
+        else:
+            failures.append(f"obj {obj_id}: fit failure ({', '.join(flags)})")
+    return failures
+
+
+def _fit_and_validate_video_objects(
+    *,
+    prompts: list[ObjectPrompt],
+    masks_by_obj: dict[int, np.ndarray],
+    frame_shape: tuple[int, int],
+    fitter: QuadFitter,
+    fitter_params: dict[str, Any],
+    geometry_engine: court_geometry_mod.GeometryFittingEngine | None = None,
+    frame_idx: int = 0,
+    frame_bgr: np.ndarray | None = None,
+) -> tuple[dict[int, np.ndarray], dict[int, list[str]]]:
+    if geometry_engine is not None:
+        if frame_bgr is None:
+            raise ValueError("frame_bgr is required when geometry_engine is provided")
+        return geometry_engine.fit_frame(
+            frame_idx=frame_idx,
+            frame_bgr=frame_bgr,
+            masks_by_obj=masks_by_obj,
+            frame_shape=frame_shape,
+        )
+
+    valid_corners_map: dict[int, np.ndarray] = {}
+    rejection_reasons: dict[int, list[str]] = {}
+
+    for prompt in prompts:
+        obj_id = int(prompt.obj_id)
+        surface_type = _normalize_surface_type(prompt.surface_type)
+        if surface_type not in SUPPORTED_BANNER_SURFACE_TYPES:
+            rejection_reasons[obj_id] = [_surface_skip_reason(surface_type)]
+            continue
+
+        mask = masks_by_obj.get(obj_id)
+        mask_area_px, mask_bbox = _mask_area_and_bbox(mask)
+        if mask_area_px == 0 or mask is None:
+            rejection_reasons[obj_id] = ["empty_mask"]
+            continue
+
+        corners, _fit_method, fit_failure_flag = _fit_preview_corners(
+            mask=mask,
+            mask_area_px=mask_area_px,
+            mask_bbox=mask_bbox,
+            frame_shape=frame_shape,
+            fitter=fitter,
+            fitter_params=fitter_params,
+        )
+        if corners is None:
+            rejection_reasons[obj_id] = [fit_failure_flag or "fit_failed"]
+            continue
+
+        flags, _geometry_stats = _preview_geometry_flags(mask, corners, frame_shape)
+        if flags:
+            rejection_reasons[obj_id] = flags
+            continue
+
+        valid_corners_map[obj_id] = corners
+
+    return valid_corners_map, rejection_reasons
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +1501,10 @@ def run_pipeline(
     -------
     dict with keys: frame, masks, corners_map, composited, metrics
     """
+    segmenter_type = config["pipeline"]["segmenter"]["type"]
+    if segmenter_type == "sam3_video":
+        return _run_sam3_image_preview(config, config_path=config_path)
+
     metrics: dict[str, Any] = {}
     pipeline_cfg = config["pipeline"]
     input_cfg = config["input"]
@@ -164,26 +1516,23 @@ def run_pipeline(
     print(f"[pipeline] Frame: {frame.shape[1]}x{frame.shape[0]}")
 
     # --- Get prompts (interactive or from config) ---
-    prompts_cfg = input_cfg.get("prompts")
-    if prompts_cfg:
-        prompts = _prompts_from_config(prompts_cfg)
-        print(f"[pipeline] Loaded {len(prompts)} prompts from config")
-    else:
-        print("[pipeline] Interactive mode — collecting clicks …")
-        click_groups = collect_clicks(frame)
-        if not click_groups:
-            print("[pipeline] No clicks — exiting.")
-            return {
-                "frame": frame,
-                "masks": {},
-                "corners_map": {},
-                "composited": None,
-                "metrics": metrics,
-            }
-        prompts = _clicks_to_prompts(click_groups)
-        # Save prompts back to config for replay.
-        if config_path:
-            _save_prompts_to_config(config, prompts, config_path)
+    prompts = _load_or_collect_prompts(
+        config=config,
+        config_path=config_path,
+        video_path=input_cfg["video"],
+        segmenter_type=segmenter_type,
+        log_prefix="[pipeline]",
+        frame_idx=0,
+    )
+    if not prompts:
+        print("[pipeline] No clicks — exiting.")
+        return {
+            "frame": frame,
+            "masks": {},
+            "corners_map": {},
+            "composited": None,
+            "metrics": metrics,
+        }
 
     metrics["num_prompts"] = len(prompts)
     metrics["num_prompt_points"] = sum(len(p.points) for p in prompts)
@@ -192,6 +1541,7 @@ def run_pipeline(
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
 
     # --- Segment ---
     t0 = time.perf_counter()
@@ -204,21 +1554,84 @@ def run_pipeline(
     t0 = time.perf_counter()
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
-    corners_map: dict[int, np.ndarray] = {}
-    for obj_id, mask in masks.items():
-        corners = fitter.fit(mask, **fitter_params)
-        if corners is not None:
-            corners_map[obj_id] = corners
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if _geometry_enabled(pipeline_cfg):
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
+        corners_map, _rejection_reasons = geometry_engine.fit_frame(
+            frame_idx=0,
+            frame_bgr=frame,
+            masks_by_obj={
+                int(obj_id): np.asarray(mask).squeeze() for obj_id, mask in masks.items()
+            },
+            frame_shape=frame.shape[:2],
+        )
+    else:
+        corners_map = _fit_corners(masks, fitter, fitter_params)
+
+    # Enlarge tiny fitted quads to cover the prompt point bounding box.
+    # Same logic as video_hybrid mode — the hull fitter often produces
+    # quads much smaller than the panel because SAM masks are partial.
+    prompt_bboxes: dict[int, np.ndarray] = {}
+    for prompt in prompts:
+        pts = prompt.points
+        x0p, y0p = pts.min(axis=0)
+        x1p, y1p = pts.max(axis=0)
+        prompt_bboxes[prompt.obj_id] = np.array(
+            [[x0p, y0p], [x1p, y0p], [x1p, y1p], [x0p, y1p]], dtype=np.float32
+        )
+    if prompt_bboxes:
+        bbox_heights = {oid: float(b[2, 1] - b[0, 1]) for oid, b in prompt_bboxes.items()}
+        ref_height = float(np.median(list(bbox_heights.values())))
+        for oid in prompt_bboxes:
+            bbox = prompt_bboxes[oid]
+            h = bbox_heights[oid]
+            if h > 0 and abs(h - ref_height) > 2:
+                cy = (bbox[0, 1] + bbox[2, 1]) / 2
+                bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
+                bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
+                prompt_bboxes[oid] = bbox
+    for obj_id in list(corners_map.keys()):
+        if obj_id in prompt_bboxes:
+            fitted = corners_map[obj_id]
+            bbox = prompt_bboxes[obj_id]
+            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+            bbox_area = cv2.contourArea(bbox)
+            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                corners_map[obj_id] = bbox
+                print(f"[pipeline] obj {obj_id}: enlarged {fitted_area:.0f}→{bbox_area:.0f}px²")
+
     metrics["fit_s"] = time.perf_counter() - t0
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
+        metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+        ],
+    )
     print(f"[pipeline] Fitted {len(corners_map)} quads in {metrics['fit_s']:.2f}s")
 
     # --- Composite ---
     composited = None
     logo_path = input_cfg.get("logo")
     if logo_path and corners_map:
-        overlay = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
-        if overlay is None:
-            raise RuntimeError(f"Could not read logo: {logo_path}")
+        overlay = _load_overlay(logo_path)
+        assert overlay is not None
+        overlay_img = overlay
 
         t0 = time.perf_counter()
         compositor = build_compositor(pipeline_cfg["compositor"])
@@ -229,15 +1642,28 @@ def run_pipeline(
         focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
         K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
 
+        prompt_by_id = {int(p.obj_id): p for p in prompts}
+        surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
         for obj_id in sorted(corners_map):
-            extra_kw = dict(compositor_params)
+            prompt_for_object: ObjectPrompt | None = prompt_by_id.get(obj_id)
+            st = (
+                _normalize_surface_type(prompt_for_object.surface_type)
+                if prompt_for_object is not None
+                else "banner"
+            )
+            extra_kw = _merged_compositor_kwargs(
+                base_params=compositor_params,
+                surface_overrides=surface_overrides_cfg,
+                surface_type=st,
+                prompt=prompt_for_object,
+            )
             if compositor.name == "alpha":
                 homo = compute_oriented_homography(corners_map[obj_id], K)
                 extra_kw["homo"] = homo
             composited = compositor.composite(
                 composited,
                 corners_map[obj_id],
-                overlay,
+                overlay_img,
                 mask=masks.get(obj_id),
                 **extra_kw,
             )
@@ -254,12 +1680,177 @@ def run_pipeline(
     }
 
 
+def _run_sam3_image_preview(
+    config: dict,
+    config_path: str | None = None,
+) -> dict:
+    """Preview SAM3 prompt-stage masks on a single frame."""
+    metrics: dict[str, Any] = {}
+    pipeline_cfg = config["pipeline"]
+    input_cfg = config["input"]
+    video_path = input_cfg["video"]
+
+    prompts = _load_or_collect_prompts(
+        config=config,
+        config_path=config_path,
+        video_path=video_path,
+        segmenter_type="sam3_video",
+        log_prefix="[pipeline]",
+        frame_idx=0,
+    )
+    if not prompts:
+        print("[pipeline] No clicks — exiting.")
+        return {
+            "frame": None,
+            "masks": {},
+            "corners_map": {},
+            "composited": None,
+            "metrics": metrics,
+        }
+
+    t0 = time.perf_counter()
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    active_prompts = [
+        prompt
+        for prompt in prompts
+        if _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
+    ]
+    if active_prompts:
+        video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
+        if not hasattr(video_segmenter, "preview_frame"):
+            raise RuntimeError("SAM3 image preview requires the sam3_video segmenter.")
+        frame, masks, preview_frame_idx, prompt_diagnostics = video_segmenter.preview_frame(
+            video_path,
+            active_prompts,
+        )
+    else:
+        preview_frame_idx = _preview_frame_idx_from_prompts(prompts)
+        frame = load_frame(video_path, frame_idx=preview_frame_idx)
+        masks = {}
+        prompt_diagnostics = {}
+    metrics["segment_s"] = time.perf_counter() - t0
+    metrics["num_prompts"] = len(prompts)
+    metrics["num_prompt_points"] = sum(len(prompt.points) for prompt in prompts)
+    metrics["video_path"] = video_path
+    metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
+    metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
+    metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
+    metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
+    metrics["preview_frame_idx"] = preview_frame_idx
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+
+    fitter = build_fitter(pipeline_cfg["fitter"])
+    fitter_params = pipeline_cfg["fitter"].get("params", {})
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if geometry_enabled:
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
+    t0 = time.perf_counter()
+    corners_map, preview_object_diagnostics, invalid_objects = _build_preview_diagnostics(
+        frame=frame,
+        prompts=prompts,
+        masks=masks,
+        prompt_diagnostics=prompt_diagnostics,
+        fitter=fitter,
+        fitter_params=fitter_params,
+        geometry_engine=geometry_engine,
+    )
+    metrics["fit_s"] = time.perf_counter() - t0
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(metrics["fit_s"], 4)
+        metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+            "geometry_fit_method_counts",
+        ],
+    )
+    metrics["preview_objects_with_masks"] = sum(
+        1 for diag in preview_object_diagnostics.values() if int(diag.get("mask_area_px", 0)) > 0
+    )
+    metrics["preview_objects_with_quads"] = len(corners_map)
+
+    overlay = _load_overlay(input_cfg.get("logo"))
+    composited, composite_s, composite_failures = _composite_preview_with_diagnostics(
+        frame=frame,
+        overlay=overlay,
+        compositor_cfg=pipeline_cfg["compositor"],
+        masks=masks,
+        corners_map=corners_map,
+        preview_object_diagnostics=preview_object_diagnostics,
+        focal_length=pipeline_cfg.get("camera", {}).get("focal_length"),
+        prompts=prompts,
+    )
+    composited = _annotate_preview_frame(composited, masks, corners_map)
+    preview_failure_reasons = _summarize_preview_failures(
+        preview_object_diagnostics,
+        invalid_objects,
+    )
+    preview_failure_reasons.extend(composite_failures)
+    metrics["preview_object_diagnostics"] = preview_object_diagnostics
+    metrics["preview_ok"] = len(preview_failure_reasons) == 0 and len(corners_map) > 0
+    metrics["preview_failure_reasons"] = preview_failure_reasons
+
+    preview_artifacts = {
+        "preview_prompts": _annotate_prompt_markers(frame, prompts),
+        "preview_masks": _annotate_preview_frame(frame, masks, {}),
+        "composited": composited,
+    }
+    if geometry_engine is not None and hasattr(geometry_engine, "render_debug_overlay"):
+        preview_artifacts["preview_geometry"] = geometry_engine.render_debug_overlay(frame)
+    if composite_s is not None:
+        metrics["composite_s"] = composite_s
+
+    metrics["total_s"] = sum(v for k, v in metrics.items() if k.endswith("_s"))
+    print(
+        f"[pipeline] Previewed frame {preview_frame_idx}: "
+        f"{metrics['preview_objects_with_masks']} object mask(s), "
+        f"{metrics['preview_objects_with_quads']} fitted quad(s)"
+    )
+    if metrics["preview_failure_reasons"]:
+        print(
+            "[pipeline] Preview failures: " + "; ".join(metrics["preview_failure_reasons"]),
+            flush=True,
+        )
+
+    return {
+        "frame": frame,
+        "masks": masks,
+        "corners_map": corners_map,
+        "composited": composited,
+        "preview_artifacts": preview_artifacts,
+        "metrics": metrics,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Video pipeline
 # ---------------------------------------------------------------------------
 
 
-def build_video_segmenter(cfg: dict) -> SAM2VideoSegmenter:
+def build_video_segmenter(cfg: dict) -> SAM2VideoSegmenter | SAM3VideoSegmenter:
+    segmenter_type = cfg.get("type", "sam2_video")
+    if segmenter_type == "sam3_video":
+        kwargs: dict = {}
+        if "checkpoint" in cfg:
+            kwargs["checkpoint"] = cfg["checkpoint"]
+        if "device" in cfg:
+            kwargs["device"] = cfg["device"]
+        return SAM3VideoSegmenter(**kwargs)
+    # Default: SAM2
     kwargs = {}
     if "checkpoint" in cfg:
         kwargs["checkpoint"] = cfg["checkpoint"]
@@ -268,6 +1859,138 @@ def build_video_segmenter(cfg: dict) -> SAM2VideoSegmenter:
     if "device" in cfg:
         kwargs["device"] = cfg["device"]
     return SAM2VideoSegmenter(**kwargs)
+
+
+def _count_nonempty_frame_masks(
+    video_segments: dict[int, dict[int, np.ndarray]],
+    num_frames: int,
+) -> tuple[int, int]:
+    """Return ``(frames_with_masks, object_masks_total)`` for a tracked video."""
+    frames_with_masks = 0
+    object_masks_total = 0
+
+    for frame_idx in range(num_frames):
+        nonempty_masks = 0
+        for mask in video_segments.get(frame_idx, {}).values():
+            mask_2d = np.asarray(mask).squeeze()
+            if mask_2d.size and mask_2d.any():
+                nonempty_masks += 1
+        if nonempty_masks:
+            frames_with_masks += 1
+            object_masks_total += nonempty_masks
+
+    return frames_with_masks, object_masks_total
+
+
+def _summarize_video_coverage(
+    video_segments: dict[int, dict[int, np.ndarray]],
+    num_frames: int,
+    tracked_obj_ids: list[int],
+) -> dict[str, Any]:
+    frames_with_masks, object_masks_total = _count_nonempty_frame_masks(video_segments, num_frames)
+    first_frame_with_mask: int | None = None
+    last_frame_with_mask: int | None = None
+    max_gap = 0
+    current_gap = 0
+    object_frame_coverage = {
+        str(obj_id): {"frames_with_masks": 0, "coverage_ratio": 0.0} for obj_id in tracked_obj_ids
+    }
+
+    for frame_idx in range(num_frames):
+        masks_by_obj = video_segments.get(frame_idx, {})
+        frame_has_mask = False
+        for obj_id in tracked_obj_ids:
+            mask = masks_by_obj.get(obj_id)
+            mask_2d = np.asarray(mask).squeeze() if mask is not None else np.array([])
+            if mask_2d.size and mask_2d.any():
+                frame_has_mask = True
+                object_frame_coverage[str(obj_id)]["frames_with_masks"] = (
+                    int(object_frame_coverage[str(obj_id)]["frames_with_masks"]) + 1
+                )
+
+        if frame_has_mask:
+            if first_frame_with_mask is None:
+                first_frame_with_mask = frame_idx
+            last_frame_with_mask = frame_idx
+            current_gap = 0
+        else:
+            current_gap += 1
+            max_gap = max(max_gap, current_gap)
+
+    for obj_id in tracked_obj_ids:
+        frames = int(object_frame_coverage[str(obj_id)]["frames_with_masks"])
+        object_frame_coverage[str(obj_id)]["coverage_ratio"] = round(frames / max(num_frames, 1), 4)
+
+    return {
+        "frames_with_masks": frames_with_masks,
+        "object_masks_total": object_masks_total,
+        "first_frame_with_mask": first_frame_with_mask,
+        "last_frame_with_mask": last_frame_with_mask,
+        "max_consecutive_mask_gap": max_gap,
+        "object_frame_coverage": object_frame_coverage,
+    }
+
+
+def _init_validity_metrics(
+    prompts: list[ObjectPrompt],
+) -> tuple[dict[str, int], dict[str, int], dict[str, dict[str, int]]]:
+    obj_ids = [str(int(prompt.obj_id)) for prompt in prompts]
+    return (
+        {obj_id: 0 for obj_id in obj_ids},
+        {obj_id: 0 for obj_id in obj_ids},
+        {obj_id: {} for obj_id in obj_ids},
+    )
+
+
+def _record_frame_rejections(
+    rejection_reasons: dict[int, list[str]],
+    object_rejection_counts: dict[str, int],
+    object_rejection_reasons: dict[str, dict[str, int]],
+) -> None:
+    for obj_id, reasons in rejection_reasons.items():
+        key = str(obj_id)
+        object_rejection_counts[key] = object_rejection_counts.get(key, 0) + 1
+        reason_counts = object_rejection_reasons.setdefault(key, {})
+        for reason in reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+
+def _finalize_valid_frame_coverage(
+    valid_frame_counts: dict[str, int],
+    object_rejection_counts: dict[str, int],
+    object_rejection_reasons: dict[str, dict[str, int]],
+    *,
+    num_frames: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, int], dict[str, dict[str, int]]]:
+    object_valid_frame_coverage = {
+        obj_id: {
+            "frames_valid": frames_valid,
+            "coverage_ratio": round(frames_valid / max(num_frames, 1), 4),
+        }
+        for obj_id, frames_valid in valid_frame_counts.items()
+    }
+    return object_valid_frame_coverage, object_rejection_counts, object_rejection_reasons
+
+
+def _raise_video_coverage_error(
+    reason: str,
+    *,
+    num_prompts: int,
+    frames_with_masks: int,
+    frames_with_valid_objects: int,
+    frames_with_quads: int,
+    frames_composited: int,
+    object_masks_total: int,
+) -> None:
+    raise RuntimeError(
+        f"{reason} Coverage: "
+        f"num_prompts={num_prompts}, "
+        f"frames_with_masks={frames_with_masks}, "
+        f"frames_with_valid_objects={frames_with_valid_objects}, "
+        f"frames_with_quads={frames_with_quads}, "
+        f"frames_composited={frames_composited}, "
+        f"object_masks_total={object_masks_total}."
+    )
 
 
 def run_pipeline_video(
@@ -291,22 +2014,27 @@ def run_pipeline_video(
     pipeline_cfg = config["pipeline"]
     input_cfg = config["input"]
     video_path = input_cfg["video"]
+    segmenter_type = pipeline_cfg["segmenter"]["type"]
 
     # --- Get prompts ---
-    prompts_cfg = input_cfg.get("prompts")
-    if prompts_cfg:
-        prompts = _prompts_from_config(prompts_cfg)
-        print(f"[video] Loaded {len(prompts)} prompts from config")
-    else:
-        print("[video] Interactive mode — collecting clicks …")
-        frame = load_frame(video_path)
-        click_groups = collect_clicks(frame)
-        if not click_groups:
-            print("[video] No clicks — exiting.")
-            return {"output_path": None, "metrics": metrics}
-        prompts = _clicks_to_prompts(click_groups)
-        if config_path:
-            _save_prompts_to_config(config, prompts, config_path)
+    prompts = _load_or_collect_prompts(
+        config=config,
+        config_path=config_path,
+        video_path=video_path,
+        segmenter_type=segmenter_type,
+        log_prefix="[video]",
+        frame_idx=0,
+    )
+    if not prompts:
+        print("[video] No clicks — exiting.")
+        return {"output_path": None, "metrics": metrics}
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    active_prompts = [
+        prompt
+        for prompt in prompts
+        if segmenter_type != "sam3_video"
+        or _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
+    ]
 
     # --- Input video info ---
     input_fps = get_video_fps(video_path)
@@ -317,44 +2045,142 @@ def run_pipeline_video(
     metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
 
     # Read frame size from the first frame.
     first_frame = load_frame(video_path, frame_idx=0)
     metrics["frame_height"], metrics["frame_width"] = first_frame.shape[:2]
+    if segmenter_type == "sam3_video" and not active_prompts:
+        raise RuntimeError(
+            "No supported banner prompts remain after filtering unsupported surface types. "
+            f"Prompt obj_ids={[int(prompt.obj_id) for prompt in prompts]}."
+        )
 
     # --- Segment + track across all frames ---
     t0 = time.perf_counter()
     video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
     video_segments, frame_dir, frame_names = video_segmenter.segment_video(
         video_path,
-        prompts,
+        active_prompts,
     )
+    stabilization_metrics: dict[str, Any] = {}
+    stabilization_cfg = pipeline_cfg.get("stabilization")
+    if stabilization_cfg:
+        video_segments, stabilization_metrics = stabilization_mod.stabilize_video_segments(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            video_segments=video_segments,
+            tracked_obj_ids=sorted({int(prompt.obj_id) for prompt in active_prompts}),
+            config=stabilization_cfg,
+        )
     metrics["segment_total_s"] = time.perf_counter() - t0
     metrics["num_frames"] = len(frame_names)
     metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
+    metrics.update(stabilization_metrics)
+    if stabilization_metrics:
+        metrics["stabilization_runtime_enabled"] = True
+    _require_runtime_feature_metrics(
+        feature_name="stabilization",
+        metrics=metrics,
+        config_enabled=bool(metrics["stabilization_config_enabled"]),
+        runtime_enabled=bool(metrics["stabilization_runtime_enabled"]),
+        required_keys=[
+            "stabilization_total_s",
+            "stabilization_static_frame_ratio",
+            "stabilization_object_stats",
+        ],
+    )
     print(
         f"[video] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s",
     )
 
+    coverage = _summarize_video_coverage(
+        video_segments,
+        len(frame_names),
+        tracked_obj_ids=sorted({int(prompt.obj_id) for prompt in prompts}),
+    )
+    tracker_stats = getattr(video_segmenter, "last_tracking_stats", {})
+    if isinstance(tracker_stats, dict):
+        coverage.update({key: value for key, value in tracker_stats.items() if key not in coverage})
+
+    frames_with_masks = int(coverage["frames_with_masks"])
+    object_masks_total = int(coverage["object_masks_total"])
+    frames_with_valid_objects = 0
+    frames_with_quads = 0
+    frames_composited = 0
+    metrics["frames_with_masks"] = frames_with_masks
+    metrics["frames_with_valid_objects"] = frames_with_valid_objects
+    metrics["frames_with_quads"] = frames_with_quads
+    metrics["frames_composited"] = frames_composited
+    metrics["object_masks_total"] = object_masks_total
+    metrics["first_frame_with_mask"] = coverage["first_frame_with_mask"]
+    metrics["last_frame_with_mask"] = coverage["last_frame_with_mask"]
+    metrics["max_consecutive_mask_gap"] = coverage["max_consecutive_mask_gap"]
+    metrics["object_frame_coverage"] = coverage["object_frame_coverage"]
+    if "sam3_reanchor_events" in coverage:
+        metrics["sam3_reanchor_events"] = coverage["sam3_reanchor_events"]
+
+    if prompts and frames_with_masks == 0:
+        _raise_video_coverage_error(
+            "No usable propagated masks were produced for this video run.",
+            num_prompts=len(prompts),
+            frames_with_masks=frames_with_masks,
+            frames_with_valid_objects=frames_with_valid_objects,
+            frames_with_quads=frames_with_quads,
+            frames_composited=frames_composited,
+            object_masks_total=object_masks_total,
+        )
+
     # --- Per-frame: fit + composite ---
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
+    geometry_engine = None
+    geometry_cfg = pipeline_cfg.get("geometry")
+    if geometry_enabled:
+        geometry_engine = court_geometry_mod.GeometryFittingEngine(
+            config=geometry_cfg,
+            prompts=prompts,
+            fallback_fitter=fitter,
+            fitter_params=fitter_params,
+        )
 
     overlay = None
     logo_path = input_cfg.get("logo")
     if logo_path:
-        overlay = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
-        if overlay is None:
-            raise RuntimeError(f"Could not read logo: {logo_path}")
+        overlay = _load_overlay(logo_path)
+
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = _load_overlay(_p.asset)
+                if _ovr is not None:
+                    per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
 
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
 
+    prompt_by_id = {int(p.obj_id): p for p in prompts}
+    surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
+
     fit_times: list[float] = []
     composite_times: list[float] = []
     write_video_s = 0.0  # accumulated time spent piping frames to ffmpeg
     num_written = 0
+    # EMA smoothing of fitted corners to eliminate per-frame jitter from
+    # slightly-different SAM2 masks. Alpha=0.3 matches Raghav's CornerTracker.
+    ema_alpha = pipeline_cfg.get("tracking", {}).get("ema_alpha", 0.3)
+    smoothed_corners: dict[int, np.ndarray] = {}
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
+    valid_frame_counts, object_rejection_counts, object_rejection_reasons = _init_validity_metrics(
+        prompts
+    )
 
     # Reset perf counters before the per-frame loop. PERF_ENABLED is False
     # by default, so the Timer blocks in compositors are no-ops unless the
@@ -375,9 +2201,10 @@ def run_pipeline_video(
             if frame_idx == 0:
                 frame_bgr = first_bgr
             else:
-                frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
-                if frame_bgr is None:
+                next_frame = cv2.imread(os.path.join(frame_dir, fname))
+                if next_frame is None:
                     raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+                frame_bgr = next_frame
 
             masks_for_frame = video_segments.get(frame_idx, {})
 
@@ -386,32 +2213,72 @@ def run_pipeline_video(
                 obj_id: mask.squeeze() for obj_id, mask in masks_for_frame.items()
             }
 
-            # Fit quads for this frame.
+            # Fit and validate quads for this frame.
             t_fit = time.perf_counter()
-            corners_map: dict[int, np.ndarray] = {}
-            for obj_id, mask_2d in masks_2d.items():
-                corners = fitter.fit(mask_2d, **fitter_params)
-                if corners is not None:
-                    corners_map[obj_id] = corners
+            corners_map, rejection_reasons = _fit_and_validate_video_objects(
+                prompts=prompts,
+                masks_by_obj=masks_2d,
+                frame_shape=frame_bgr.shape[:2],
+                fitter=fitter,
+                fitter_params=fitter_params,
+                geometry_engine=geometry_engine,
+                frame_idx=frame_idx,
+                frame_bgr=frame_bgr,
+            )
             fit_times.append(time.perf_counter() - t_fit)
+            _record_frame_rejections(
+                rejection_reasons,
+                object_rejection_counts,
+                object_rejection_reasons,
+            )
+            if corners_map:
+                frames_with_valid_objects += 1
+                frames_with_quads += 1
+                for obj_id in corners_map:
+                    valid_frame_counts[str(obj_id)] = valid_frame_counts.get(str(obj_id), 0) + 1
+
+            # EMA-smooth corners to eliminate per-frame jitter.
+            for obj_id, corners in corners_map.items():
+                if obj_id in smoothed_corners:
+                    smoothed = ema_alpha * corners + (1 - ema_alpha) * smoothed_corners[obj_id]
+                    corners_map[obj_id] = smoothed
+                    smoothed_corners[obj_id] = smoothed
+                else:
+                    smoothed_corners[obj_id] = corners.copy()
+
+            snapshot = _snapshot_corners(corners_map)
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
 
             # Composite for this frame.
             if overlay is not None and compositor is not None and corners_map:
                 t_comp = time.perf_counter()
                 K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
                 for obj_id in sorted(corners_map):
-                    extra_kw = dict(compositor_params)
+                    prompt = prompt_by_id.get(obj_id)
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides_cfg,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
                     if compositor.name == "alpha":
                         homo = compute_oriented_homography(corners_map[obj_id], K)
                         extra_kw["homo"] = homo
                     frame_bgr = compositor.composite(
                         frame_bgr,
                         corners_map[obj_id],
-                        overlay,
+                        per_obj_overlay.get(obj_id, overlay),
                         mask=masks_2d.get(obj_id),
                         **extra_kw,
                     )
                 composite_times.append(time.perf_counter() - t_comp)
+                frames_composited += 1
 
             # Stream this frame to ffmpeg immediately (no in-memory buffer).
             t_write = time.perf_counter()
@@ -426,8 +2293,62 @@ def run_pipeline_video(
         video_writer.close()
         shutil.rmtree(frame_dir, ignore_errors=True)
 
+    _write_per_frame_state(per_frame_state, output_path)
+
+    metrics["frames_with_valid_objects"] = frames_with_valid_objects
+    metrics["frames_with_quads"] = frames_with_quads
+    metrics["frames_composited"] = frames_composited
+    if geometry_engine is not None:
+        geometry_metrics = geometry_engine.finalize_metrics()
+        geometry_metrics["geometry_total_s"] = round(sum(fit_times), 4)
+        metrics.update(geometry_metrics)
+        metrics["geometry_runtime_enabled"] = bool(metrics.get("geometry_runtime_enabled"))
+    _require_runtime_feature_metrics(
+        feature_name="geometry",
+        metrics=metrics,
+        config_enabled=bool(metrics["geometry_config_enabled"]),
+        runtime_enabled=bool(metrics["geometry_runtime_enabled"]),
+        required_keys=[
+            "geometry_total_s",
+            "geometry_active_objects",
+            "object_geometry_model",
+            "geometry_fit_method_counts",
+        ],
+    )
+    (
+        metrics["object_valid_frame_coverage"],
+        metrics["object_rejection_counts"],
+        metrics["object_rejection_reasons"],
+    ) = _finalize_valid_frame_coverage(
+        valid_frame_counts,
+        object_rejection_counts,
+        object_rejection_reasons,
+        num_frames=len(frame_names),
+    )
     metrics["write_video_s"] = round(write_video_s, 4)
     print(f"[video] Wrote {num_written} frames → {output_path}")
+
+    if prompts and frames_with_valid_objects == 0:
+        _raise_video_coverage_error(
+            "No semantically valid tracked banner objects were produced for this video run.",
+            num_prompts=len(prompts),
+            frames_with_masks=frames_with_masks,
+            frames_with_valid_objects=frames_with_valid_objects,
+            frames_with_quads=frames_with_quads,
+            frames_composited=frames_composited,
+            object_masks_total=object_masks_total,
+        )
+
+    if overlay is not None and frames_composited == 0:
+        _raise_video_coverage_error(
+            "No frames were composited despite propagated masks and a configured logo.",
+            num_prompts=len(prompts),
+            frames_with_masks=frames_with_masks,
+            frames_with_valid_objects=frames_with_valid_objects,
+            frames_with_quads=frames_with_quads,
+            frames_composited=frames_composited,
+            object_masks_total=object_masks_total,
+        )
 
     # --- Aggregate metrics ---
     fit_arr = np.array(fit_times) * 1000  # ms
@@ -446,7 +2367,9 @@ def run_pipeline_video(
         + metrics["write_video_s"],
         4,
     )
-    metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+    metrics["output_fps"] = (
+        round(len(frame_names) / metrics["total_s"], 2) if metrics["total_s"] > 0 else 0.0
+    )
 
     # Per-stage breakdown from _perf timers (empty dict if profiling disabled).
     if _perf.PERF_ENABLED:
@@ -459,8 +2382,1414 @@ def run_pipeline_video(
 
 
 # ---------------------------------------------------------------------------
+# Tracking-based video pipeline (SAM2 image on frame 0 + optical flow)
+# ---------------------------------------------------------------------------
+
+
+def run_pipeline_video_tracking(
+    config: dict,
+    output_path: str = "output.mp4",
+    config_path: str | None = None,
+) -> dict:
+    """Video pipeline using corner tracking instead of per-frame segmentation.
+
+    1. SAM2 image predictor segments frame 0 only.
+    2. PCA fitter extracts initial quad corners from frame 0's masks.
+    3. CornerTracker propagates corners via Lucas-Kanade optical flow + EMA.
+    4. Compositor runs per frame with tracked corners.
+
+    This is faster and produces more temporally stable output than
+    ``run_pipeline_video`` (which re-segments and re-fits every frame).
+    """
+    import os
+
+    metrics: dict[str, Any] = {}
+    pipeline_cfg = config["pipeline"]
+    input_cfg = config["input"]
+    video_path = input_cfg["video"]
+
+    # --- Get prompts ---
+    prompts_cfg = input_cfg.get("prompts")
+    if prompts_cfg:
+        prompts = _prompts_from_config(prompts_cfg)
+    else:
+        frame0 = load_frame(video_path)
+        prompts = collect_clicks(frame0)
+        if not prompts:
+            return {"output_path": None, "metrics": metrics}
+        if config_path:
+            _save_prompts_to_config(config, prompts, config_path)
+
+    input_fps = get_video_fps(video_path)
+    metrics["input_fps"] = input_fps
+    metrics["num_prompts"] = len(prompts)
+    metrics["num_prompt_points"] = sum(len(p.points) for p in prompts)
+    metrics["video_path"] = video_path
+    metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
+    metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
+    metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
+    metrics["tracking_mode"] = True
+
+    # --- Step 1: Segment frame 0 with SAM2 image predictor ---
+    t0 = time.perf_counter()
+    frame0 = load_frame(video_path, frame_idx=0)
+    metrics["frame_height"], metrics["frame_width"] = frame0.shape[:2]
+    segmenter = build_segmenter(pipeline_cfg["segmenter"])
+    masks_frame0 = segmenter.segment(frame0, prompts)
+    metrics["segment_total_s"] = time.perf_counter() - t0
+    n_obj = len(masks_frame0)
+    seg_t = metrics["segment_total_s"]
+    print(f"[tracking] Segmented frame 0: {n_obj} objects in {seg_t:.2f}s")
+
+    # --- Step 2: Fit quads on frame 0 ---
+    fitter = build_fitter(pipeline_cfg["fitter"])
+    fitter_params = pipeline_cfg["fitter"].get("params", {})
+    corners_map: dict[int, np.ndarray] = {}
+    for obj_id, mask in masks_frame0.items():
+        mask_2d = mask.squeeze()
+        corners = fitter.fit(mask_2d, **fitter_params)
+        if corners is not None:
+            corners_map[obj_id] = corners
+
+    if not corners_map:
+        print("[tracking] No quads fitted on frame 0")
+        return {"output_path": None, "metrics": metrics}
+
+    # --- Step 3: Initialize CornerTracker ---
+    _tracking_cfg = pipeline_cfg.get("tracking", {})
+    ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
+    fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
+    lk_win = _tracking_cfg.get("lk_win_size", 21)
+    tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold, lk_win_size=lk_win)
+    gray0 = cv2.cvtColor(frame0, cv2.COLOR_BGR2GRAY)
+    for obj_id, corners in corners_map.items():
+        tracker.init(obj_id, corners, gray0)
+
+    # --- Step 4: Extract frames and process with tracking ---
+    import shutil
+    import tempfile
+
+    from banner_pipeline.io import extract_all_frames
+
+    frame_dir = tempfile.mkdtemp(prefix="tracking_frames_")
+    frame_names = extract_all_frames(video_path, frame_dir)
+    metrics["num_frames"] = len(frame_names)
+    metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
+    print(f"[tracking] {len(frame_names)} frames extracted")
+
+    overlay = None
+    logo_path = input_cfg.get("logo")
+    if logo_path:
+        overlay = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+        if overlay is None:
+            raise RuntimeError(f"Could not read logo: {logo_path}")
+
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = cv2.imread(_p.asset, cv2.IMREAD_UNCHANGED)
+                if _ovr is None:
+                    raise RuntimeError(f"Could not read asset: {_p.asset}")
+                per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
+
+    compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
+    compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
+    focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
+
+    prompt_by_id = {int(p.obj_id): p for p in prompts}
+    surface_overrides_cfg = pipeline_cfg["compositor"].get("surface_overrides", {})
+
+    composite_times: list[float] = []
+    tracking_times: list[float] = []
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
+
+    _perf.reset()
+
+    fh, fw = frame0.shape[:2]
+    video_writer = StreamingVideoWriter(output_path, fw, fh, fps=input_fps)
+    write_video_s = 0.0
+    num_written = 0
+
+    try:
+        for frame_idx, fname in enumerate(frame_names):
+            frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
+            if frame_bgr is None:
+                raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+
+            # Track corners (frame 0 uses initial corners, 1+ uses flow).
+            t_track = time.perf_counter()
+            if frame_idx == 0:
+                current_corners = corners_map
+            else:
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                current_corners = tracker.update(gray)
+            tracking_times.append(time.perf_counter() - t_track)
+
+            snapshot = _snapshot_corners(current_corners)
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
+
+            # Composite.
+            if overlay is not None and compositor is not None and current_corners:
+                t_comp = time.perf_counter()
+                K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
+                for obj_id in sorted(current_corners):
+                    prompt = prompt_by_id.get(obj_id)
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides_cfg,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
+                    if compositor.name == "alpha":
+                        homo = compute_oriented_homography(current_corners[obj_id], K)
+                        extra_kw["homo"] = homo
+                    # Reuse frame 0's mask for all frames. The mask shape is
+                    # stable across frames (banners don't move much), and the
+                    # compositor needs it to inpaint the old logo away.
+                    frame_mask = masks_frame0.get(obj_id)
+                    if frame_mask is not None:
+                        frame_mask = frame_mask.squeeze()
+                    frame_bgr = compositor.composite(
+                        frame_bgr,
+                        current_corners[obj_id],
+                        per_obj_overlay.get(obj_id, overlay),
+                        mask=frame_mask,
+                        **extra_kw,
+                    )
+                composite_times.append(time.perf_counter() - t_comp)
+
+            t_write = time.perf_counter()
+            video_writer.write(frame_bgr)
+            num_written += 1
+            write_video_s += time.perf_counter() - t_write
+
+            if (frame_idx + 1) % 50 == 0 or frame_idx == len(frame_names) - 1:
+                print(f"[tracking] Processed frame {frame_idx + 1}/{len(frame_names)}")
+
+    finally:
+        video_writer.close()
+        shutil.rmtree(frame_dir, ignore_errors=True)
+
+    _write_per_frame_state(per_frame_state, output_path)
+
+    metrics["write_video_s"] = round(write_video_s, 4)
+    print(f"[tracking] Wrote {num_written} frames -> {output_path}")
+
+    # Aggregate metrics.
+    if tracking_times:
+        track_arr = np.array(tracking_times) * 1000
+        metrics["tracking_mean_ms"] = round(float(track_arr.mean()), 2)
+    if composite_times:
+        comp_arr = np.array(composite_times) * 1000
+        metrics["composite_mean_ms"] = round(float(comp_arr.mean()), 2)
+
+    metrics["total_s"] = round(
+        metrics["segment_total_s"] + sum(tracking_times) + sum(composite_times) + write_video_s,
+        4,
+    )
+    metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+
+    if _perf.PERF_ENABLED:
+        metrics["composite_breakdown_ms"] = _perf.snapshot_ms(divisor=len(frame_names))
+
+    return {"output_path": output_path, "metrics": metrics}
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
+
+
+def run_pipeline_video_hybrid(
+    config: dict,
+    output_path: str = "output.mp4",
+    config_path: str | None = None,
+) -> dict:
+    """Hybrid video pipeline: SAM masks for inpainting + CornerTracker for placement.
+
+    Combines the best of both approaches:
+    - SAM2/SAM3 video propagation for per-frame masks (correct inpainting, no drift)
+    - CornerTracker optical flow for smooth logo placement (no jitter)
+
+    Flow:
+    1. SAM2/SAM3 video propagation produces per-frame masks
+    2. PCA fitter runs on frame 0 to get initial corners
+    3. CornerTracker propagates corners via optical flow + EMA
+    4. Per frame: use SAM mask for inpainting, use tracked corners for logo warp
+    """
+    import os
+    import shutil
+
+    metrics: dict[str, Any] = {}
+    pipeline_cfg = config["pipeline"]
+    input_cfg = config["input"]
+    video_path = input_cfg["video"]
+    segmenter_type = pipeline_cfg["segmenter"]["type"]
+
+    # --- Get prompts ---
+    prompts = _load_or_collect_prompts(
+        config=config,
+        config_path=config_path,
+        video_path=video_path,
+        segmenter_type=segmenter_type,
+        log_prefix="[hybrid]",
+        frame_idx=0,
+    )
+    if not prompts:
+        return {"output_path": None, "metrics": metrics}
+
+    geometry_enabled = _geometry_enabled(pipeline_cfg)
+    active_prompts = [
+        prompt
+        for prompt in prompts
+        if segmenter_type != "sam3_video"
+        or _is_supported_banner_surface(prompt, geometry_enabled=geometry_enabled)
+    ]
+
+    input_fps = get_video_fps(video_path)
+    metrics["input_fps"] = input_fps
+    metrics["num_prompts"] = len(prompts)
+    metrics["video_path"] = video_path
+    metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
+    metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
+    metrics["mode"] = "video_hybrid"
+    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+
+    first_frame = load_frame(video_path, frame_idx=0)
+    metrics["frame_height"], metrics["frame_width"] = first_frame.shape[:2]
+
+    # --- Step 1: SAM video propagation for per-frame masks ---
+    t0 = time.perf_counter()
+    video_segmenter = build_video_segmenter(pipeline_cfg["segmenter"])
+    video_segments, frame_dir, frame_names = video_segmenter.segment_video(
+        video_path,
+        active_prompts,
+    )
+
+    # Optional stabilization
+    stabilization_metrics: dict[str, Any] = {}
+    stabilization_cfg = pipeline_cfg.get("stabilization")
+    if stabilization_cfg:
+        video_segments, stabilization_metrics = stabilization_mod.stabilize_video_segments(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            video_segments=video_segments,
+            tracked_obj_ids=sorted({int(p.obj_id) for p in active_prompts}),
+            config=stabilization_cfg,
+        )
+
+    metrics["segment_total_s"] = time.perf_counter() - t0
+    metrics["num_frames"] = len(frame_names)
+    metrics["duration_s"] = round(len(frame_names) / input_fps, 2)
+    metrics.update(stabilization_metrics)
+    print(f"[hybrid] Tracked {len(frame_names)} frames in {metrics['segment_total_s']:.2f}s")
+
+    # --- Step 2: Fit quads on frame 0 + init CornerTracker ---
+    fitter = build_fitter(pipeline_cfg["fitter"])
+    fitter_params = pipeline_cfg["fitter"].get("params", {})
+
+    frame0_bgr = cv2.imread(os.path.join(frame_dir, frame_names[0]))
+    if frame0_bgr is None:
+        raise RuntimeError(f"Could not read frame 0: {frame_names[0]}")
+
+    masks_frame0 = video_segments.get(0, {})
+    masks_2d_frame0 = {oid: m.squeeze() for oid, m in masks_frame0.items()}
+    corners_frame0: dict[int, np.ndarray] = {}
+    for obj_id, mask_2d in masks_2d_frame0.items():
+        corners = fitter.fit(mask_2d, **fitter_params)
+        if corners is not None:
+            corners_frame0[obj_id] = corners
+
+    # Enlarge fitted corners to cover the prompt point bounding box.
+    # The hull fitter often produces quads much smaller than the actual
+    # banner panel because the SAM mask only covers part of the content.
+    prompt_by_id: dict[int, ObjectPrompt] = {p.obj_id: p for p in prompts}
+    prompt_bboxes: dict[int, np.ndarray] = {}
+    for prompt in prompts:
+        if prompt.placement_quad is not None:
+            # Explicit placement quad.
+            prompt_bboxes[prompt.obj_id] = prompt.placement_quad.copy()
+        elif prompt.box is not None:
+            # Derive from SAM box parameter [x0, y0, x1, y1].
+            b = prompt.box
+            prompt_bboxes[prompt.obj_id] = np.array(
+                [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]],
+                dtype=np.float32,
+            )
+        else:
+            # Derive from click points: axis-aligned bounding box.
+            pts = prompt.points
+            x0, y0 = pts.min(axis=0)
+            x1, y1 = pts.max(axis=0)
+            prompt_bboxes[prompt.obj_id] = np.array(
+                [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32
+            )
+    # Normalize bbox heights for banner surfaces only.
+    banner_ids = {
+        oid
+        for oid, p in prompt_by_id.items()
+        if _normalize_surface_type(p.surface_type) == "banner" and p.placement_quad is None
+    }
+    if banner_ids:
+        banner_heights = {
+            oid: float(prompt_bboxes[oid][2, 1] - prompt_bboxes[oid][0, 1])
+            for oid in banner_ids
+            if oid in prompt_bboxes
+        }
+        if banner_heights:
+            ref_height = float(np.median(list(banner_heights.values())))
+            for oid in banner_ids:
+                if oid not in prompt_bboxes:
+                    continue
+                bbox = prompt_bboxes[oid]
+                h = banner_heights.get(oid, 0.0)
+                if h > 0 and abs(h - ref_height) > 2:
+                    cy = (bbox[0, 1] + bbox[2, 1]) / 2
+                    bbox[0, 1] = bbox[1, 1] = cy - ref_height / 2
+                    bbox[2, 1] = bbox[3, 1] = cy + ref_height / 2
+                    prompt_bboxes[oid] = bbox
+
+    for obj_id in list(corners_frame0.keys()):
+        if obj_id in prompt_bboxes:
+            fitted = corners_frame0[obj_id]
+            bbox = prompt_bboxes[obj_id]
+            # Use the prompt bbox if the fitted quad is much smaller
+            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+            bbox_area = cv2.contourArea(bbox)
+            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                corners_frame0[obj_id] = bbox
+                print(f"[hybrid] obj {obj_id}: enlarged {fitted_area:.0f}→{bbox_area:.0f}px²")
+
+    _tracking_cfg = pipeline_cfg.get("tracking", {})
+    ema_alpha = _tracking_cfg.get("ema_alpha", 0.3)
+    corner_source = _tracking_cfg.get("corner_source", "bbox")
+
+    if corner_source in ("bbox", "mask_offset", "homography_offset"):
+        # Use prompt bboxes for sizing. "bbox" keeps them static;
+        # "mask_offset" shifts via SAM mask centroids;
+        # "homography_offset" warps via accumulated frame-to-frame homography.
+        tracker = None
+        static_corners = {oid: bbox.copy() for oid, bbox in prompt_bboxes.items()}
+        for oid, c in corners_frame0.items():
+            if oid not in static_corners:
+                static_corners[oid] = c.astype(np.float32).copy()
+        if corner_source == "homography_offset":
+            _homo_prev_gray = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+            _homo_accum = np.eye(3, dtype=np.float64)
+            _homo_ema: np.ndarray | None = None
+            _homo_base_pts = {
+                oid: c.reshape(-1, 1, 2).astype(np.float64) for oid, c in static_corners.items()
+            }
+            _cut_thresh = _tracking_cfg.get("cut_threshold", 30.0)
+            n_obj = len(static_corners)
+            print(f"[hybrid] homography_offset {n_obj} objects, ema={ema_alpha}")
+        elif corner_source == "mask_offset":
+            # Compute frame-0 mask bboxes as reference for tracking
+            # both translation and scale (handles camera zoom).
+            _mask_ref: dict[int, tuple[float, float, float, float]] = {}
+            for oid, mask_2d in masks_2d_frame0.items():
+                ys, xs = np.where(mask_2d > 0)
+                if len(xs) > 10:
+                    _mask_ref[oid] = (
+                        float(xs.mean()),
+                        float(ys.mean()),
+                        float(xs.max() - xs.min()),
+                        float(ys.max() - ys.min()),
+                    )
+            # Frame center for zoom scaling.
+            _frame_cx = frame0_bgr.shape[1] / 2.0
+            _frame_cy = frame0_bgr.shape[0] / 2.0
+            n_obj = len(static_corners)
+            print(f"[hybrid] mask_offset {n_obj} objects, ema={ema_alpha}")
+        else:
+            print(f"[hybrid] Using static bbox corners for {len(static_corners)} objects")
+    elif corner_source == "mask_refit":
+        # Re-fit from per-frame SAM masks + bbox fallback + EMA.
+        tracker = None
+        static_corners = None
+        smoothed_corners: dict[int, np.ndarray] = {
+            oid: c.astype(np.float32).copy() for oid, c in corners_frame0.items()
+        }
+        print(
+            f"[hybrid] Using mask_refit corners with {len(corners_frame0)} objects, ema={ema_alpha}"
+        )
+    elif corner_source == "optical_flow":
+        # Legacy optical flow tracking (can drift on textureless surfaces).
+        static_corners = None
+        fb_threshold = _tracking_cfg.get("fb_threshold", 2.0)
+        lk_win = _tracking_cfg.get("lk_win_size", 21)
+        tracker = CornerTracker(ema_alpha=ema_alpha, fb_threshold=fb_threshold, lk_win_size=lk_win)
+        gray0 = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+        for obj_id, corners in corners_frame0.items():
+            tracker.init(obj_id, corners, gray0)
+        n_obj = len(corners_frame0)
+        print(f"[hybrid] CornerTracker (optical_flow) {n_obj} objects, ema={ema_alpha}")
+    else:
+        raise ValueError(f"Unknown corner_source: {corner_source!r}")
+
+    # --- Step 2b: Initialize person masker for occlusion ---
+    _person_masker: Any = None
+    _occlusion_cfg = pipeline_cfg.get("occlusion_masker", {})
+    _occ_type = _occlusion_cfg.get("type", "")
+    if _occ_type == "sam2_video":
+        # SAM2 video propagation for player segmentation — best quality.
+        # Pre-computes all player masks at init; per-frame lookup is O(1).
+        # Needs frame_dir from text segmentation (already available).
+        from banner_pipeline.masking import SAM2VideoPersonMasker
+
+        # Free the text segmenter's SAM2 model to make room.
+        del video_segmenter
+
+        _person_masker = SAM2VideoPersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            checkpoint=_occlusion_cfg.get("checkpoint", "sam2/checkpoints/sam2.1_hiera_tiny.pt"),
+            model_cfg=_occlusion_cfg.get("model_cfg", "configs/sam2.1/sam2.1_hiera_t.yaml"),
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] SAM2VideoPersonMasker enabled — pre-computed player masks")
+    elif _occ_type == "sam3_video":
+        # SAM3.1 video propagation — 848M params, potentially better
+        # foot segmentation than SAM2 large (224M). Requires FlashAttention.
+        from banner_pipeline.masking import SAM3VideoPersonMasker
+
+        del video_segmenter
+
+        _person_masker = SAM3VideoPersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            checkpoint=_occlusion_cfg.get("checkpoint", "sam3/checkpoints/sam3.1_multiplex.pt"),
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] SAM3VideoPersonMasker enabled — pre-computed player masks")
+    elif _occ_type == "matanyone":
+        from banner_pipeline.masking import MatAnyonePersonMasker
+
+        _person_masker = MatAnyonePersonMasker(
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            n_warmup=_occlusion_cfg.get("n_warmup", 5),
+            box_padding=_occlusion_cfg.get("box_padding", 10),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] MatAnyonePersonMasker enabled — continuous alpha matting")
+    elif _occ_type == "matanyone2":
+        # CVPR 2026 — same author, learned Quality Evaluator, better fine
+        # boundary detail under fast motion. Pre-computes alpha for all
+        # frames at init via process_video.
+        from banner_pipeline.masking import MatAnyone2PersonMasker
+
+        del video_segmenter
+
+        _person_masker = MatAnyone2PersonMasker(
+            frame_dir=frame_dir,
+            frame_names=frame_names,
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            box_padding=_occlusion_cfg.get("box_padding", 10),
+            prompt_frame_idx=_occlusion_cfg.get("prompt_frame_idx", 0),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] MatAnyone2PersonMasker enabled — CVPR 2026 alpha matting")
+    elif _occ_type == "rvm":
+        from banner_pipeline.masking import RVMMasker
+
+        _person_masker = RVMMasker(
+            backbone=_occlusion_cfg.get("backbone", "mobilenetv3"),
+            downsample_ratio=_occlusion_cfg.get("downsample_ratio", 0.25),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] RVMMasker (RobustVideoMatting) enabled — continuous alpha")
+    elif _occ_type == "person":
+        from banner_pipeline.masking import PersonMasker
+
+        _person_masker = PersonMasker(
+            confidence_threshold=_occlusion_cfg.get("confidence_threshold", 0.5),
+            device=_occlusion_cfg.get("device"),
+        )
+        print("[hybrid] PersonMasker (Mask R-CNN) enabled for occlusion")
+
+    # --- Step 2c: Initialize mask smoother (tennis-virtual-ads approach) ---
+    _mask_smoother = None
+    if _person_masker is not None and _occlusion_cfg.get("mask_smooth", False):
+        from banner_pipeline.masking import MaskSmoother
+
+        _close_px = int(_occlusion_cfg.get("mask_close_px", 7))
+        _mask_smoother = MaskSmoother(close_px=_close_px)
+        print(f"[hybrid] MaskSmoother enabled (close_px={_close_px})")
+
+    # --- Step 2d: Build clean plates for court_floor objects (once) ---
+    # Un-warp the court region from frame 0, remove text via inpainting,
+    # and store as a reusable plate. This eliminates MELBOURNE text from
+    # the canvas so nothing can leak through the mask boundary.
+    _clean_plates: dict[int, np.ndarray] = {}
+    surface_overrides = pipeline_cfg["compositor"].get("surface_overrides", {})
+    court_overrides = surface_overrides.get("court_floor", {})
+    if court_overrides.get("use_clean_plate", False):
+        for obj_id, corners_arr in (static_corners or corners_frame0).items():
+            prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
+            if prompt is None or _normalize_surface_type(prompt.surface_type) != "court_floor":
+                continue
+            # Expand corners for clean plate
+            _qep = int(court_overrides.get("quad_expand_px", 0))
+            if _qep > 0:
+                _center = np.mean(corners_arr, axis=0)
+                _expanded = corners_arr.copy()
+                for _ci in range(4):
+                    _dir = corners_arr[_ci] - _center
+                    _dlen = max(float(np.linalg.norm(_dir)), 1.0)
+                    _expanded[_ci] = corners_arr[_ci] + (_dir / _dlen) * _qep
+                plate_corners = _expanded
+            else:
+                plate_corners = corners_arr
+            # Un-warp from frame 0
+            _w_top = float(np.linalg.norm(plate_corners[1] - plate_corners[0]))
+            _w_bot = float(np.linalg.norm(plate_corners[2] - plate_corners[3]))
+            _h_left = float(np.linalg.norm(plate_corners[3] - plate_corners[0]))
+            _h_right = float(np.linalg.norm(plate_corners[2] - plate_corners[1]))
+            _pw = max(int((_w_top + _w_bot) / 2), 1)
+            _ph = max(int((_h_left + _h_right) / 2), 1)
+            _src = np.array(
+                [[0, 0], [_pw - 1, 0], [_pw - 1, _ph - 1], [0, _ph - 1]], dtype=np.float32
+            )
+            _M_inv = cv2.getPerspectiveTransform(plate_corners.astype(np.float32), _src)
+            _plate = cv2.warpPerspective(
+                frame0_bgr,
+                _M_inv,
+                (_pw, _ph),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+            # Remove text: pre-fill bright pixels + heavy blur
+            _g = cv2.cvtColor(_plate, cv2.COLOR_BGR2GRAY)
+            _tp = _g > 180
+            if np.any(_tp):
+                _nt = _plate[~_tp]
+                if len(_nt) > 0:
+                    _med = np.median(_nt.reshape(-1, 3), axis=0).astype(np.uint8)
+                    _plate[_tp] = _med
+            _plate = cv2.GaussianBlur(_plate, (101, 101), 0)
+            _clean_plates[obj_id] = _plate
+            print(f"[hybrid] Clean plate built for obj {obj_id}: {_pw}x{_ph}")
+
+    # --- Step 3: Per-frame composite with SAM masks + tracked corners ---
+    overlay = None
+    logo_path = input_cfg.get("logo")
+    compositor_params = pipeline_cfg["compositor"].get("params", {})
+    _erase_only = compositor_params.get("erase_only", False)
+    if logo_path:
+        overlay = _load_overlay(logo_path)
+    elif _erase_only:
+        overlay = np.zeros((1, 1, 4), dtype=np.uint8)  # dummy BGRA for erase-only
+
+    # Build per-object overlay map: each prompt with `asset` gets its own image.
+    per_obj_overlay: dict[int, np.ndarray] = {}
+    for _p in prompts:
+        if getattr(_p, "asset", None):
+            try:
+                _ovr = _load_overlay(_p.asset)
+                if _ovr is not None:
+                    per_obj_overlay[int(_p.obj_id)] = _ovr
+            except Exception as _e:
+                print(
+                    f"[pipeline] warning: failed to load per-object asset for obj_id={_p.obj_id}: {_e}"
+                )
+
+    compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
+    _surface_compositors: dict[str, Any] = {}  # per-surface instances
+    if compositor is not None and not compositor_params:
+        compositor_params = pipeline_cfg["compositor"].get("params", {})
+    focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
+
+    court_plane_projection_prompts = _court_plane_placement_prompts(prompts)
+    court_plane_projection_estimator = None
+    court_plane_projection_projected_frames = 0
+    court_plane_projection_fallback_frames = 0
+    metrics["court_plane_placement_enabled"] = bool(court_plane_projection_prompts)
+    if court_plane_projection_prompts:
+        if not _geometry_enabled(pipeline_cfg):
+            raise RuntimeError("court_plane_placement requires pipeline.geometry.enabled: true.")
+        court_plane_projection_estimator = court_geometry_mod.CourtGeometryEstimator(
+            court_geometry_mod.GeometryConfig.from_dict(pipeline_cfg.get("geometry"))
+        )
+        metrics["court_plane_placement_objects"] = [
+            int(prompt.obj_id) for prompt in court_plane_projection_prompts
+        ]
+
+    # --- Hybrid lock-with-tolerance (Phase 2 axis, additive, flag-gated) ---
+    # When pipeline.geometry.hybrid_lock.enabled is true AND we have court-plane
+    # placement prompts, build a per-object HybridLockState seeded with frame-0
+    # placement_quad clicks. State is stepped per frame inside the projection
+    # loop below. When the flag is false (default), this dict stays empty and
+    # no new code path runs (preserves v68 backward-compat).
+    hybrid_lock_cfg = (pipeline_cfg.get("geometry") or {}).get("hybrid_lock") or {}
+    hybrid_lock_enabled = bool(hybrid_lock_cfg.get("enabled", False))
+    hybrid_lock_states: dict[int, court_geometry_mod.HybridLockState] = {}
+    hybrid_lock_active = False
+    if hybrid_lock_enabled and court_plane_projection_prompts:
+        tolerance_px = float(hybrid_lock_cfg.get("tolerance_px", 6.0))
+        ramp_min_frames = int(hybrid_lock_cfg.get("ramp_min_frames", 3))
+        ramp_motion_px = float(hybrid_lock_cfg.get("ramp_motion_px_per_frame", 2.0))
+        for prompt in court_plane_projection_prompts:
+            seed = prompt.placement_quad
+            if seed is None:
+                # No clicked seed for this prompt → first per-frame estimate
+                # will seed lazily (handled in the per-frame loop).
+                continue
+            seed_arr = np.asarray(seed, dtype=np.float32)
+            if seed_arr.shape != (4, 2):
+                continue
+            hybrid_lock_states[int(prompt.obj_id)] = court_geometry_mod.HybridLockState(
+                seed_corners=seed_arr,
+                tolerance_px=tolerance_px,
+                ramp_min_frames=ramp_min_frames,
+                ramp_motion_px_per_frame=ramp_motion_px,
+            )
+        hybrid_lock_active = bool(hybrid_lock_states)
+    metrics["hybrid_lock_enabled"] = bool(hybrid_lock_active)
+    hybrid_lock_locked_frames = 0
+    hybrid_lock_ramp_frames = 0
+    hybrid_lock_estimate_frames = 0
+
+    composite_times: list[float] = []
+    tracking_times: list[float] = []
+    write_video_s = 0.0
+    num_written = 0
+    per_frame_state: dict[int, dict[int, dict[str, Any]]] = {}
+
+    _perf.reset()
+
+    fh, fw = frame0_bgr.shape[:2]
+    video_writer = StreamingVideoWriter(output_path, fw, fh, fps=input_fps)
+    clean_video_temporal_state: dict[str, np.ndarray] = {}
+
+    # --- Clean video source (for inpaint-first pipeline) ---
+    # If input.clean_video is set, replace the MELBOURNE court region of each
+    # frame with the corresponding clean (inpainted) frame BEFORE compositing.
+    # This eliminates text leak-through at SAM mask boundaries by construction.
+    _clean_video_cap = None
+    _clean_quad_mask = None
+    _clean_video_path = input_cfg.get("clean_video")
+    if _clean_video_path and os.path.exists(_clean_video_path):
+        _clean_video_cap = cv2.VideoCapture(_clean_video_path)
+        if not _clean_video_cap.isOpened():
+            print(f"[hybrid] WARNING: could not open clean video {_clean_video_path}")
+            _clean_video_cap = None
+        else:
+            # Build inpaint quad mask (hardcoded to match scripts/video_inpaint.py)
+            _inpaint_quad_cfg = input_cfg.get(
+                "clean_video_quad", [[649, 840], [1268, 840], [1268, 1038], [649, 1038]]
+            )
+            _inpaint_dilate_px = int(input_cfg.get("clean_video_dilate_px", 25))
+            _quad = np.array(_inpaint_quad_cfg, dtype=np.int32)
+            _clean_quad_mask = np.zeros((fh, fw), dtype=np.uint8)
+            cv2.fillPoly(_clean_quad_mask, [_quad], 255)
+            if _inpaint_dilate_px > 0:
+                _kern = cv2.getStructuringElement(
+                    cv2.MORPH_RECT, (_inpaint_dilate_px, _inpaint_dilate_px)
+                )
+                _clean_quad_mask = cv2.dilate(_clean_quad_mask, _kern, iterations=1)
+            assert _clean_quad_mask is not None
+            print(
+                f"[hybrid] Clean video opened: {_clean_video_path} "
+                f"(quad area {int(np.sum(_clean_quad_mask > 0))} px)"
+            )
+
+    try:
+        for frame_idx, fname in enumerate(frame_names):
+            if frame_idx == 0:
+                frame_bgr = frame0_bgr
+            else:
+                frame_bgr = cv2.imread(os.path.join(frame_dir, fname))
+                if frame_bgr is None:
+                    raise RuntimeError(f"Could not read frame {frame_idx}: {fname}")
+            original_frame_bgr = frame_bgr.copy()
+
+            # Read corresponding clean frame (sequential, aligned by index)
+            _clean_frame_resized = None
+            if _clean_video_cap is not None:
+                _ret_c, _clean_frame = _clean_video_cap.read()
+                if _ret_c:
+                    if _clean_frame.shape[:2] != (fh, fw):
+                        _clean_frame_resized = cv2.resize(
+                            _clean_frame, (fw, fh), interpolation=cv2.INTER_CUBIC
+                        )
+                    else:
+                        _clean_frame_resized = _clean_frame
+                    _clean_frame_resized = _sanitize_clean_video_player_residue(
+                        _clean_frame_resized,
+                        _clean_quad_mask,
+                        input_cfg,
+                    )
+                    # --- Luminance matching (v12) ---
+                    # The inpaint model removes the player's natural shadow on
+                    # the court along with the MELBOURNE text → clean court is
+                    # uniformly bright while original has natural shadow gradient.
+                    # Compute low-frequency luminance ratio (orig/clean) and
+                    # apply to clean inside the inpaint zone, restoring the
+                    # natural lighting/shadow.
+                    if (
+                        bool(input_cfg.get("clean_video_lumin_match", False))
+                        and _clean_quad_mask is not None
+                    ):
+                        _lumin_blur = int(input_cfg.get("clean_video_lumin_blur_px", 51))
+                        _yuv_orig = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YUV).astype(np.float32)
+                        _yuv_clean = cv2.cvtColor(_clean_frame_resized, cv2.COLOR_BGR2YUV).astype(
+                            np.float32
+                        )
+                        # Suppress BOTH MELBOURNE white text AND dark player
+                        # pixels in original Y so the blur reflects only the
+                        # COURT brightness gradient. Without this, the player
+                        # creates a dark blob in blurred Y → ratio darkens
+                        # clean court → "ghost legs" appear on court.
+                        _y_o = _yuv_orig[:, :, 0]
+                        _text_pix = _y_o > 200
+                        _player_pix = _y_o < 80  # player legs/shorts are darker
+                        _outlier_pix = _text_pix | _player_pix
+                        _y_o_clean = _y_o.copy()
+                        if np.any(_outlier_pix) and np.any(~_outlier_pix):
+                            _y_o_clean[_outlier_pix] = float(np.median(_y_o[~_outlier_pix]))
+                        _kk = _lumin_blur * 2 + 1
+                        _y_o_blur = cv2.GaussianBlur(_y_o_clean, (_kk, _kk), 0)
+                        _y_c_blur = cv2.GaussianBlur(_yuv_clean[:, :, 0], (_kk, _kk), 0)
+                        _ratio = np.clip(_y_o_blur / np.maximum(_y_c_blur, 1.0), 0.7, 1.3)
+                        # Apply only within the inpaint quad
+                        _ratio_in_quad = np.where(_clean_quad_mask > 0, _ratio, 1.0)
+                        _yuv_clean[:, :, 0] = np.clip(_yuv_clean[:, :, 0] * _ratio_in_quad, 0, 255)
+                        _clean_frame_resized = cv2.cvtColor(
+                            _yuv_clean.astype(np.uint8), cv2.COLOR_YUV2BGR
+                        )
+                    # --- Outlier cleanup of clean video ---
+                    # Clean BOTH bright (MELBOURNE residue, hallucinations) AND
+                    # dark (DiffuEraser's player-position smearing) outliers.
+                    # DE sometimes renders the player at a different pose in
+                    # clean → dark "ghost legs" in the inpaint zone. Replace
+                    # anything outside [dark_thresh, bright_thresh] with court.
+                    if (
+                        bool(input_cfg.get("clean_video_text_cleanup", False))
+                        and _clean_quad_mask is not None
+                        and _clean_frame_resized is not None
+                    ):
+                        _bright_thresh = int(input_cfg.get("clean_video_text_threshold", 150))
+                        _dark_thresh = int(input_cfg.get("clean_video_dark_threshold", 60))
+                        _gray_c = cv2.cvtColor(_clean_frame_resized, cv2.COLOR_BGR2GRAY)
+                        _outlier_c = (
+                            ((_gray_c > _bright_thresh) | (_gray_c < _dark_thresh))
+                            & (_clean_quad_mask > 0)
+                        ).astype(np.uint8) * 255
+                        if np.any(_outlier_c > 0):
+                            _clean_frame_resized = cv2.inpaint(
+                                _clean_frame_resized,
+                                _outlier_c,
+                                9,
+                                cv2.INPAINT_TELEA,
+                            )
+
+            # Get SAM masks for this frame (for inpainting).
+            masks_for_frame = video_segments.get(frame_idx, {})
+            masks_2d = {oid: m.squeeze() for oid, m in masks_for_frame.items()}
+
+            # Get corners for this frame (for logo placement).
+            t_track = time.perf_counter()
+            if corner_source == "homography_offset":
+                if frame_idx == 0:
+                    current_corners = static_corners
+                else:
+                    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    diff = cv2.absdiff(_homo_prev_gray, gray)
+                    if float(diff.mean()) > _cut_thresh:
+                        _homo_accum = np.eye(3, dtype=np.float64)
+                        _homo_ema = None
+                    else:
+                        H_pair, _, ok = stabilization_mod._estimate_pair_homography(
+                            _homo_prev_gray, gray, (fh, fw)
+                        )
+                        if ok:
+                            H = H_pair.astype(np.float64)
+                            if abs(H[2, 2]) > 1e-9:
+                                H /= H[2, 2]
+                            _homo_accum = H @ _homo_accum
+                        if _homo_ema is None:
+                            _homo_ema = _homo_accum.copy()
+                        else:
+                            blended = ema_alpha * _homo_accum + (1 - ema_alpha) * _homo_ema
+                            if abs(blended[2, 2]) > 1e-9:
+                                blended = blended / blended[2, 2]
+                            _homo_ema = blended
+                    _homo_prev_gray = gray
+                    H_use = _homo_ema if _homo_ema is not None else _homo_accum
+                    current_corners = {}
+                    for oid, base_pts in _homo_base_pts.items():
+                        warped = cv2.perspectiveTransform(base_pts, H_use)
+                        current_corners[oid] = warped.reshape(4, 2).astype(np.float32)
+            elif corner_source == "mask_offset":
+                # Shift + scale static bboxes using SAM mask bbox changes.
+                assert static_corners is not None
+                if frame_idx == 0:
+                    current_corners = static_corners
+                else:
+                    dxs: list[float] = []
+                    dys: list[float] = []
+                    sxs: list[float] = []
+                    for oid in static_corners:
+                        if oid not in _mask_ref or oid not in masks_2d:
+                            continue
+                        m = masks_2d[oid]
+                        ys, xs = np.where(m > 0)
+                        if len(xs) < 10:
+                            continue
+                        ref_cx, ref_cy, ref_w, ref_h = _mask_ref[oid]
+                        cur_cx = float(xs.mean())
+                        cur_cy = float(ys.mean())
+                        cur_w = float(xs.max() - xs.min())
+                        dxs.append(cur_cx - ref_cx)
+                        dys.append(cur_cy - ref_cy)
+                        if ref_w > 5:
+                            sxs.append(cur_w / ref_w)
+                    if dxs:
+                        med_dx = float(np.median(dxs))
+                        med_dy = float(np.median(dys))
+                        med_sx = float(np.median(sxs)) if sxs else 1.0
+                        current_corners = {}
+                        for oid, base in static_corners.items():
+                            # Scale around frame center, then translate.
+                            scaled = (base - [_frame_cx, _frame_cy]) * med_sx
+                            shifted = scaled + [_frame_cx + med_dx, _frame_cy + med_dy]
+                            current_corners[oid] = shifted.astype(np.float32)
+                    else:
+                        current_corners = static_corners
+            elif static_corners is not None:
+                # bbox mode: same corners every frame.
+                current_corners = static_corners
+            elif tracker is not None:
+                # optical_flow mode.
+                if frame_idx == 0:
+                    current_corners = corners_frame0
+                else:
+                    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    current_corners = tracker.update(gray)
+            else:
+                # mask_refit mode.
+                if frame_idx == 0:
+                    current_corners = corners_frame0
+                else:
+                    raw_corners: dict[int, np.ndarray] = {}
+                    for obj_id, mask_2d_frame in masks_2d.items():
+                        refit = fitter.fit(mask_2d_frame, **fitter_params)
+                        if refit is not None:
+                            raw_corners[obj_id] = refit
+
+                    for obj_id in list(raw_corners.keys()):
+                        if obj_id in prompt_bboxes:
+                            fitted = raw_corners[obj_id]
+                            bbox = prompt_bboxes[obj_id]
+                            fitted_area = cv2.contourArea(fitted.astype(np.float32))
+                            bbox_area = cv2.contourArea(bbox)
+                            if bbox_area > 0 and fitted_area < bbox_area * 0.5:
+                                raw_corners[obj_id] = bbox.copy()
+
+                    for obj_id in smoothed_corners:
+                        if obj_id not in raw_corners and obj_id in prompt_bboxes:
+                            raw_corners[obj_id] = prompt_bboxes[obj_id].copy()
+
+                    for obj_id, rc in raw_corners.items():
+                        rc_f = rc.astype(np.float32)
+                        if obj_id in smoothed_corners:
+                            smoothed_corners[obj_id] = (
+                                ema_alpha * rc_f + (1 - ema_alpha) * smoothed_corners[obj_id]
+                            )
+                        else:
+                            smoothed_corners[obj_id] = rc_f
+                    current_corners = {oid: c.copy() for oid, c in smoothed_corners.items()}
+
+            per_frame_compositor_overrides: dict[int, dict[str, Any]] = {}
+            hybrid_lock_extras: dict[int, dict[str, Any]] = {}
+            if court_plane_projection_estimator is not None:
+                court_plane_estimate = court_plane_projection_estimator.estimate(original_frame_bgr)
+                homography_available = court_plane_estimate.court_homography is not None
+                if not homography_available:
+                    court_plane_projection_fallback_frames += 1
+                projected_this_frame = False
+                for prompt in court_plane_projection_prompts:
+                    placement_cfg = prompt.court_plane_placement or {}
+                    court_rectangle = placement_cfg.get("court_rect")
+                    court_quad_cfg = placement_cfg.get("court_quad")
+                    if court_rectangle is None and court_quad_cfg is None:
+                        raise ValueError(
+                            "court_plane_placement requires a court_rect or court_quad value."
+                        )
+                    projected_corners: np.ndarray | None = None
+                    if homography_available:
+                        if court_quad_cfg is not None:
+                            projected_corners = _project_court_plane_quad(
+                                court_plane_estimate.court_homography,
+                                court_quad_cfg,
+                            )
+                        else:
+                            projected_corners = _project_court_plane_rectangle(
+                                court_plane_estimate.court_homography,
+                                court_rectangle,
+                            )
+                    target = str(placement_cfg.get("target", "corners"))
+                    obj_id_int = int(prompt.obj_id)
+
+                    # --- Hybrid lock-with-tolerance path (additive) ---
+                    if hybrid_lock_active and obj_id_int in hybrid_lock_states:
+                        state = hybrid_lock_states[obj_id_int]
+                        seed_arr = state.seed_corners
+                        committed_corners, decision, displacement = state.step(
+                            projected_corners
+                        )
+                        if decision == "locked":
+                            hybrid_lock_locked_frames += 1
+                        elif decision == "ramp":
+                            hybrid_lock_ramp_frames += 1
+                        else:
+                            hybrid_lock_estimate_frames += 1
+                        hybrid_lock_extras[obj_id_int] = {
+                            "seed_corners": seed_arr.astype(float).tolist(),
+                            "estimated_corners": (
+                                projected_corners.astype(float).tolist()
+                                if projected_corners is not None
+                                else None
+                            ),
+                            "decision": decision,
+                            "displacement_px": float(displacement),
+                        }
+                        if target == "corners":
+                            if current_corners is None:
+                                current_corners = {}
+                            current_corners[obj_id_int] = committed_corners
+                        elif target == "logo_placement_quad":
+                            per_frame_compositor_overrides.setdefault(
+                                obj_id_int,
+                                {},
+                            )["logo_placement_quad"] = committed_corners.tolist()
+                        else:
+                            raise ValueError(
+                                f"Unsupported court_plane_placement target: {target!r}"
+                            )
+                        if projected_corners is not None:
+                            projected_this_frame = True
+                        continue
+
+                    # --- Existing (unchanged) path: skip when no estimate ---
+                    if projected_corners is None:
+                        continue
+                    if target == "corners":
+                        if current_corners is None:
+                            current_corners = {}
+                        current_corners[obj_id_int] = projected_corners
+                    elif target == "logo_placement_quad":
+                        per_frame_compositor_overrides.setdefault(
+                            obj_id_int,
+                            {},
+                        )["logo_placement_quad"] = projected_corners.tolist()
+                    else:
+                        raise ValueError(
+                            f"Unsupported court_plane_placement target: {target!r}"
+                        )
+                    projected_this_frame = True
+                if projected_this_frame:
+                    court_plane_projection_projected_frames += 1
+            tracking_times.append(time.perf_counter() - t_track)
+
+            # Detect person occlusion mask (once per frame).
+            # Follows tennis-virtual-ads flow: detect → smooth → dilate.
+            person_mask: np.ndarray | None = None
+            person_mask_raw: np.ndarray | None = None
+            if _person_masker is not None:
+                if _occ_type in ("sam2_video", "sam3_video", "matanyone2"):
+                    person_mask_raw = _person_masker.mask(frame_idx)
+                else:
+                    person_mask_raw = _person_masker.mask(frame_bgr)
+
+                # MaskSmoother: morph close + temporal dropout protection.
+                if _mask_smoother is not None and person_mask_raw is not None:
+                    person_mask_raw = _mask_smoother.update(person_mask_raw)
+
+                person_mask = person_mask_raw.copy()  # type: ignore[union-attr]
+                # Dilation to cover racket/limb edges the model misses.
+                occ_dilate = int(_occlusion_cfg.get("mask_dilate_px", 3))
+                if occ_dilate > 0 and np.any(person_mask > 0):
+                    kern = cv2.getStructuringElement(
+                        cv2.MORPH_ELLIPSE,
+                        (2 * occ_dilate + 1, 2 * occ_dilate + 1),
+                    )
+                    person_mask = cv2.dilate(person_mask, kern, iterations=1)
+
+            # --- Original-frame bright-pixel cleanup ---
+            # Remove MELBOURNE residue from motion-blur halo around the player
+            # in the ORIGINAL frame, before the composite blend uses it. This
+            # prevents the white halo at player edges that comes from the
+            # feather zone blending original (with MELBOURNE residue) with clean.
+            if (
+                bool(input_cfg.get("clean_video_text_cleanup", False))
+                and _clean_quad_mask is not None
+                and person_mask_raw is not None
+            ):
+                _bright_thresh_o = int(input_cfg.get("clean_video_text_threshold", 150))
+                _gray_o = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                # MatAnyone returns continuous alpha [0,1]. Aggressive cleanup:
+                # use threshold 0.5 to catch motion-blur halo (alpha 0.3-0.5).
+                # Replace bright outliers with the dark-pixel median (court color)
+                # instead of cv2.inpaint to be more decisive.
+                _alpha_thresh = float(input_cfg.get("clean_video_text_alpha_thresh", 0.5))
+                _bright_in_quad_o = (
+                    (_gray_o > _bright_thresh_o)
+                    & (_clean_quad_mask > 0)
+                    & (person_mask_raw < _alpha_thresh)
+                )
+                if np.any(_bright_in_quad_o) and _clean_frame_resized is not None:
+                    # Replace bright original pixels with the corresponding
+                    # clean video pixel (same location).
+                    frame_bgr = frame_bgr.copy()
+                    frame_bgr[_bright_in_quad_o] = _clean_frame_resized[_bright_in_quad_o]
+                frame_bgr = _apply_text_focus_cleanup(
+                    frame_bgr=frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                # NEW: cv2.inpaint the entire halo zone of original frame —
+                # forcefully erase ALL pixels (bright OR dim) outside the
+                # player core in the inpaint quad. Replaces with surrounding
+                # court color. Most aggressive cleanup possible.
+                if (
+                    bool(input_cfg.get("clean_video_full_inpaint", False))
+                    and _clean_quad_mask is not None
+                    and person_mask_raw is not None
+                ):
+                    _full_alpha = float(input_cfg.get("clean_video_full_inpaint_alpha", 0.4))
+                    _full_radius = int(input_cfg.get("clean_video_full_inpaint_radius", 11))
+                    _full_zone = ((_clean_quad_mask > 0) & (person_mask_raw < _full_alpha)).astype(
+                        np.uint8
+                    ) * 255
+                    if np.any(_full_zone > 0):
+                        frame_bgr = cv2.inpaint(
+                            frame_bgr, _full_zone, _full_radius, cv2.INPAINT_TELEA
+                        )
+                # Optional: blend original toward clean in the entire halo
+                # zone (alpha 0.0-0.5) within the inpaint quad. This smooths
+                # out any residual pixel-level anomalies that threshold-based
+                # cleanup misses.
+                if (
+                    bool(input_cfg.get("clean_video_halo_smooth", False))
+                    and _clean_quad_mask is not None
+                    and person_mask_raw is not None
+                    and _clean_frame_resized is not None
+                ):
+                    _halo_alpha = float(input_cfg.get("clean_video_halo_alpha", 0.5))
+                    _halo_zone = (_clean_quad_mask > 0) & (person_mask_raw < _halo_alpha)
+                    if np.any(_halo_zone):
+                        frame_bgr = frame_bgr.copy()
+                        frame_bgr[_halo_zone] = _clean_frame_resized[_halo_zone]
+
+            # --- Inpaint-first frame replacement (feathered blend) ---
+            # Smoothly blend original frame and clean (inpainted) frame.
+            # Combined alpha = player_alpha * quad_alpha:
+            #   player_alpha: 0 inside player core, 0→1 ramp over feather_px,
+            #                 1 outside (preserves player solidity)
+            #   quad_alpha:   1 in quad center, 1→0 ramp over quad_feather_px
+            #                 inward from boundary (eliminates visible rectangle)
+            # Player core is a TEMPORAL UNION over [N-K, N+K] frames, so
+            # ProPainter/DiffuEraser ghost-leg artifacts (caused by inpaint
+            # model trying to erase the player) get covered by original.
+            if _clean_frame_resized is not None and _clean_quad_mask is not None:
+                _core_dilate = int(input_cfg.get("clean_video_core_dilate_px", 3))
+                _feather_px = int(input_cfg.get("clean_video_feather_px", 20))
+                _quad_feather_px = int(input_cfg.get("clean_video_quad_feather_px", 40))
+                _temporal_window = int(input_cfg.get("clean_video_temporal_window", 8))
+
+                # Build temporal union of player masks: [N-K, N+K]
+                _temporal_player = None
+                if (
+                    person_mask_raw is not None
+                    and _person_masker is not None
+                    and _occ_type in ("sam2_video", "sam3_video")
+                ):
+                    _temporal_player_mask = np.zeros((fh, fw), dtype=np.uint8)
+                    for _dk in range(-_temporal_window, _temporal_window + 1):
+                        _fi = frame_idx + _dk
+                        if _fi < 0 or _fi >= len(frame_names):
+                            continue
+                        _m = _person_masker.mask(_fi)
+                        if _m.shape != (fh, fw):
+                            continue
+                        _bm = (_m > 0.5).astype(np.uint8) * 255
+                        _temporal_player_mask = np.maximum(_temporal_player_mask, _bm)
+                    _temporal_player = _temporal_player_mask
+                else:
+                    _temporal_player = person_mask_raw
+
+                # Player edge feather (from temporal union core)
+                if _temporal_player is not None and np.any(_temporal_player > 0):
+                    if _core_dilate > 0:
+                        _kern_c = cv2.getStructuringElement(
+                            cv2.MORPH_ELLIPSE,
+                            (2 * _core_dilate + 1, 2 * _core_dilate + 1),
+                        )
+                        _core_mask = cv2.dilate(_temporal_player, _kern_c, iterations=1)
+                    else:
+                        _core_mask = _temporal_player
+                    _outside_core = (_core_mask == 0).astype(np.uint8)
+                    _dist_p = cv2.distanceTransform(_outside_core, cv2.DIST_L2, 5)
+                    _player_alpha = np.clip(_dist_p / max(_feather_px, 1), 0.0, 1.0)
+                else:
+                    _player_alpha = np.ones((fh, fw), dtype=np.float32)
+
+                # Quad boundary feather (distance INSIDE quad from edge)
+                if _quad_feather_px > 0:
+                    _dist_q = cv2.distanceTransform(_clean_quad_mask, cv2.DIST_L2, 5)
+                    _quad_alpha = np.clip(_dist_q / max(_quad_feather_px, 1), 0.0, 1.0)
+                else:
+                    _quad_alpha = (_clean_quad_mask > 0).astype(np.float32)
+
+                _alpha = _player_alpha * _quad_alpha
+
+                if np.any(_alpha > 0):
+                    _alpha_3 = _alpha[:, :, None]
+                    frame_bgr = (
+                        frame_bgr.astype(np.float32) * (1.0 - _alpha_3)
+                        + _clean_frame_resized.astype(np.float32) * _alpha_3
+                    ).astype(np.uint8)
+
+                # --- Post-blend cleanup + smoothing ---
+                # Replace bright outliers with clean video pixel, AND apply
+                # Gaussian blur to the entire halo zone (alpha < 0.3) to
+                # smooth out any subtle discontinuities.
+                if (
+                    bool(input_cfg.get("clean_video_post_blend_cleanup", False))
+                    and _clean_frame_resized is not None
+                    and person_mask_raw is not None
+                ):
+                    _post_thresh = int(input_cfg.get("clean_video_post_blend_threshold", 130))
+                    _post_alpha = float(input_cfg.get("clean_video_post_blend_alpha", 0.3))
+                    _gray_p = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                    _bright_post = (
+                        (_gray_p > _post_thresh)
+                        & (_clean_quad_mask > 0)
+                        & (person_mask_raw < _post_alpha)
+                    )
+                    if np.any(_bright_post):
+                        frame_bgr = frame_bgr.copy()
+                        frame_bgr[_bright_post] = _clean_frame_resized[_bright_post]
+                    # Gaussian blur the halo zone for smoothness
+                    _blur_px = int(input_cfg.get("clean_video_post_blend_blur_px", 0))
+                    if _blur_px > 0:
+                        _kk = _blur_px * 2 + 1
+                        _blurred = cv2.GaussianBlur(frame_bgr, (_kk, _kk), 0)
+                        _halo_zone = (_clean_quad_mask > 0) & (person_mask_raw < _post_alpha)
+                        if np.any(_halo_zone):
+                            frame_bgr = frame_bgr.copy()
+                            frame_bgr[_halo_zone] = _blurred[_halo_zone]
+                frame_bgr = _apply_underfoot_text_decontamination(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                frame_bgr = _apply_soft_player_band_text_cleanup(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                frame_bgr = _apply_shoe_edge_color_extension(
+                    frame_bgr=frame_bgr,
+                    original_frame_bgr=original_frame_bgr,
+                    clean_frame_bgr=_clean_frame_resized,
+                    clean_quad_mask=_clean_quad_mask,
+                    person_mask_raw=person_mask_raw,
+                    input_cfg=input_cfg,
+                )
+                frame_bgr = _harmonize_quad_edge_tones(
+                    frame_bgr=frame_bgr,
+                    clean_quad_mask=_clean_quad_mask,
+                    input_cfg=input_cfg,
+                    temporal_state=clean_video_temporal_state,
+                )
+
+            snapshot = _snapshot_corners(
+                current_corners,
+                hybrid_lock_extras=hybrid_lock_extras if hybrid_lock_active else None,
+            )
+            if snapshot:
+                per_frame_state[frame_idx] = snapshot
+
+            # Composite: SAM mask for inpaint, tracked corners for logo warp.
+            if overlay is not None and compositor is not None and current_corners:
+                t_comp = time.perf_counter()
+                K = estimate_camera_matrix(frame_bgr.shape, focal_length=focal_length)
+                surface_overrides = pipeline_cfg["compositor"].get("surface_overrides", {})
+                for obj_id in sorted(current_corners):
+                    prompt = prompt_by_id.get(obj_id)  # type: ignore[assignment]
+                    st = (
+                        _normalize_surface_type(prompt.surface_type)
+                        if prompt is not None
+                        else "banner"
+                    )
+
+                    # Court floor: two-phase approach.
+                    # Phase 1: Erase original text via inpainting.
+                    # Phase 2: Overlay new logo with shade map + occlusion.
+                    # Uses RAW person mask — painted.py handles its own
+                    # dilation + feathering for better foot coverage.
+                    if st == "court_floor":
+                        from banner_pipeline.composite.painted import (
+                            painted_court_composite,
+                        )
+
+                        court_overrides = _merged_compositor_kwargs(
+                            base_params={},
+                            surface_overrides=surface_overrides,
+                            surface_type=st,
+                            prompt=prompt,
+                        )
+                        painted_court_composite(
+                            frame_bgr,
+                            current_corners[obj_id],
+                            per_obj_overlay.get(obj_id, overlay),
+                            sam_mask=masks_2d.get(obj_id),
+                            occlusion_mask=person_mask_raw,
+                            alpha_scale=float(court_overrides.get("alpha_scale", 0.95)),
+                            alpha_feather_px=int(court_overrides.get("alpha_feather_px", 3)),
+                            erase_text=court_overrides.get("erase_text", True),
+                            erase_dilate_px=int(court_overrides.get("erase_dilate_px", 12)),
+                            erase_feather_px=int(court_overrides.get("erase_feather_px", 20)),
+                            erase_inpaint_radius=int(
+                                court_overrides.get("erase_inpaint_radius", 7)
+                            ),
+                            shade_strength=float(court_overrides.get("shade_strength", 1.0)),
+                            occlusion_dilate_px=int(court_overrides.get("occlusion_dilate_px", 10)),
+                            occlusion_feather_ksize=int(
+                                court_overrides.get("occlusion_feather_ksize", 21)
+                            ),
+                            occlusion_feather_sigma=float(
+                                court_overrides.get("occlusion_feather_sigma", 4.0)
+                            ),
+                            quad_expand_px=int(court_overrides.get("quad_expand_px", 0)),
+                            erase_only=bool(court_overrides.get("erase_only", _erase_only)),
+                            clean_plate=_clean_plates.get(obj_id),
+                            clean_frame=_clean_frame_resized,
+                            fill_canvas_background=bool(
+                                court_overrides.get("fill_canvas_background", True)
+                            ),
+                            clean_underlay_alpha=float(
+                                court_overrides.get("clean_underlay_alpha", 0.0)
+                            ),
+                            clean_underlay_feather_px=int(
+                                court_overrides.get("clean_underlay_feather_px", 3)
+                            ),
+                            clean_underlay_dilate_px=int(
+                                court_overrides.get("clean_underlay_dilate_px", 0)
+                            ),
+                            clean_underlay_mask_mode=str(
+                                court_overrides.get("clean_underlay_mask_mode", "quad")
+                            ),
+                            logo_blur_px=int(court_overrides.get("logo_blur_px", 0)),
+                            shadow_strength=float(
+                                court_overrides.get("shadow_strength", 0.0)
+                            ),
+                            shadow_radius_px=int(
+                                court_overrides.get("shadow_radius_px", 15)
+                            ),
+                            shadow_blur_px=float(
+                                court_overrides.get("shadow_blur_px", 10.0)
+                            ),
+                        )
+                        continue
+
+                    extra_kw = _merged_compositor_kwargs(
+                        base_params=compositor_params,
+                        surface_overrides=surface_overrides,
+                        surface_type=st,
+                        prompt=prompt,
+                    )
+                    extra_kw.update(per_frame_compositor_overrides.get(obj_id, {}))
+                    # Pass person occlusion mask for side panel objects.
+                    if person_mask is not None and st == "side_panel":
+                        extra_kw["occlusion_mask"] = person_mask
+                    # Use per-surface compositor to isolate caches.
+                    comp = compositor
+                    if st != "banner":
+                        if st not in _surface_compositors:
+                            _surface_compositors[st] = build_compositor(pipeline_cfg["compositor"])
+                        comp = _surface_compositors[st]
+                    if comp.name == "alpha":
+                        homo = compute_oriented_homography(current_corners[obj_id], K)
+                        extra_kw["homo"] = homo
+                    frame_bgr = comp.composite(
+                        frame_bgr,
+                        current_corners[obj_id],
+                        per_obj_overlay.get(obj_id, overlay),
+                        mask=masks_2d.get(obj_id),
+                        **extra_kw,
+                    )
+                composite_times.append(time.perf_counter() - t_comp)
+
+            t_write = time.perf_counter()
+            video_writer.write(frame_bgr)
+            num_written += 1
+            write_video_s += time.perf_counter() - t_write
+
+            if (frame_idx + 1) % 50 == 0 or frame_idx == len(frame_names) - 1:
+                print(f"[hybrid] Processed frame {frame_idx + 1}/{len(frame_names)}")
+
+    finally:
+        video_writer.close()
+        shutil.rmtree(frame_dir, ignore_errors=True)
+        if _clean_video_cap is not None:
+            _clean_video_cap.release()
+
+    _write_per_frame_state(per_frame_state, output_path)
+
+    metrics["write_video_s"] = round(write_video_s, 4)
+    if court_plane_projection_prompts:
+        metrics["court_plane_placement_projected_frames"] = court_plane_projection_projected_frames
+        metrics["court_plane_placement_fallback_frames"] = court_plane_projection_fallback_frames
+    if hybrid_lock_active:
+        metrics["hybrid_lock_locked_frames"] = hybrid_lock_locked_frames
+        metrics["hybrid_lock_ramp_frames"] = hybrid_lock_ramp_frames
+        metrics["hybrid_lock_estimate_frames"] = hybrid_lock_estimate_frames
+    print(f"[hybrid] Wrote {num_written} frames -> {output_path}")
+
+    if tracking_times:
+        track_arr = np.array(tracking_times) * 1000
+        metrics["tracking_mean_ms"] = round(float(track_arr.mean()), 2)
+    if composite_times:
+        comp_arr = np.array(composite_times) * 1000
+        metrics["composite_mean_ms"] = round(float(comp_arr.mean()), 2)
+
+    metrics["total_s"] = round(
+        metrics["segment_total_s"] + sum(tracking_times) + sum(composite_times) + write_video_s,
+        4,
+    )
+    metrics["output_fps"] = round(len(frame_names) / metrics["total_s"], 2)
+
+    if _perf.PERF_ENABLED:
+        metrics["composite_breakdown_ms"] = _perf.snapshot_ms(divisor=len(frame_names))
+
+    return {"output_path": output_path, "metrics": metrics}
 
 
 def run(
@@ -468,8 +3797,20 @@ def run(
     config_path: str | None = None,
     output_path: str = "output.mp4",
 ) -> dict:
-    """Dispatch to single-frame or video pipeline based on config ``mode``."""
+    """Dispatch to single-frame, video, tracking, or hybrid pipeline."""
     mode = config.get("pipeline", {}).get("mode", "image")
+    if mode == "video_hybrid":
+        return run_pipeline_video_hybrid(
+            config,
+            output_path=output_path,
+            config_path=config_path,
+        )
+    if mode == "video_tracking":
+        return run_pipeline_video_tracking(
+            config,
+            output_path=output_path,
+            config_path=config_path,
+        )
     if mode == "video":
         return run_pipeline_video(config, output_path=output_path, config_path=config_path)
     return run_pipeline(config, config_path=config_path)

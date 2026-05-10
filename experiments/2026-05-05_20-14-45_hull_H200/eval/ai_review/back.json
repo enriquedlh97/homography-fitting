@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner shows the swapped Red Bull mark over the Kia original. shade_strength on floor does not affect the back banner; this region is unchanged from the P3-A5 baseline. No perimeter rectangle, no halo glow at any scrub position, no letter-edge reflex. Color sits a hair cooler/darker than the surrounding banner fabric (delta_E 10.6 — same as baseline) but reads as plausible printed signage rather than pasted-on. Stable across early/mid/late motion strips.",
+  "min_score": 4
+}

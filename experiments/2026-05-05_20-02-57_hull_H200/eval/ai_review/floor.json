@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 3,
+    "edge_seam_visibility": 4,
+    "texture_match": 3,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "erase_text=true visibly cleans the surrounding court — the underlying MELBOURNE letters that bled through faintly in P3-A5 are gone; the surface around the Red Bull mark reads as a uniform painted blue. Trade-off: the inpainted area is now slightly smoother / more uniform than the matte-paint texture of the surrounding court paint, so texture_match drops to 3 (the inpaint hasn't reproduced the natural micro-grain of the court surface) and painted_on_vs_pasted_on slips to 3 because the patch reads as a slightly cleaner-than-court rectangle on close inspection. No halo, no edge reflex, no jitter. This is exactly where the metric regression (floor SSIM 0.975 -> 0.899) is coming from: the metric is comparing to the textured original-with-MELBOURNE while the visual is improved.",
+  "min_score": 3
+}

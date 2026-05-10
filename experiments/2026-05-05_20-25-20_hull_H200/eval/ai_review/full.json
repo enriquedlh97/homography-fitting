@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full-frame composite (5 thumbnails). At full-frame zoom the three Red Bull placements (back banner, left side panel, floor) all sit in the broadcast composition without obvious seams, halos or jitter. The court geometry is consistent across thumbnails with no perspective wobble. Texture 4 because the floor patch reads marginally smoother than surrounding court paint at this distance, but that is below most viewers' detection threshold at broadcast scale. No further full-region artifacts (full does not score halo / reflex / temporal per the rubric).",
+  "min_score": 4
+}

@@ -1,0 +1,373 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.1
+      lum_strength: 0.0
+      shade_blend: false
+      inpaint_method: median_fill
+      mask_dilate_px: 8
+      alpha_feather_px: 1
+      quad_pad_px: 20
+      local_color_match: true
+      blend_mode: led
+      erase_only: false
+    surface_overrides:
+      court_floor:
+        padding: 0.0
+        alpha_scale: 1.0
+        alpha_feather_px: 8
+        erase_text: false
+        erase_only: false
+        shade_strength: 0.0
+        quad_expand_px: 80
+        occlusion_dilate_px: 2
+  occlusion_masker:
+    type: matanyone2
+    confidence_threshold: 0.5
+    mask_smooth: true
+    mask_close_px: 5
+    mask_dilate_px: 2
+  tracking:
+    corner_source: bbox
+  camera:
+    focal_length: null
+  geometry:
+    enabled: true
+    court_backend: ball_tracker_net_v1
+    vp_smoothing_alpha: 0.5
+    hybrid_lock:
+      enabled: true
+      tolerance_px: 30.0
+      ramp_min_frames: 3
+      ramp_motion_px_per_frame: 2.0
+input:
+  video: data/melbourne-walking-over-logo.mov
+  clean_video: data/clean_court_de_35px_temporal_median_quad.mp4
+  clean_video_quad:
+  - - 649
+    - 840
+  - - 1268
+    - 840
+  - - 1268
+    - 1038
+  - - 649
+    - 1038
+  clean_video_dilate_px: 25
+  clean_video_core_dilate_px: 3
+  clean_video_feather_px: 20
+  clean_video_quad_feather_px: 60
+  clean_video_temporal_window: 0
+  clean_video_lumin_match: true
+  clean_video_lumin_blur_px: 51
+  clean_video_text_cleanup: true
+  clean_video_text_threshold: 130
+  clean_video_text_alpha_thresh: 0.7
+  clean_video_text_focus_cleanup: true
+  clean_video_text_focus_box:
+  - 760
+  - 880
+  - 1180
+  - 985
+  clean_video_text_focus_ref_width: 1912
+  clean_video_text_focus_ref_height: 1074
+  clean_video_text_focus_threshold: 122
+  clean_video_text_focus_alpha_thresh: 0.62
+  clean_video_text_focus_dilate_px: 2
+  clean_video_text_focus_replace_alpha: 0.85
+  clean_video_underfoot_decontaminate: true
+  clean_video_underfoot_box:
+  - 600
+  - 780
+  - 1160
+  - 1020
+  clean_video_underfoot_ref_width: 1912
+  clean_video_underfoot_ref_height: 1074
+  clean_video_underfoot_alpha_min: 0.03
+  clean_video_underfoot_alpha_max: 0.72
+  clean_video_underfoot_delta_threshold: 22.0
+  clean_video_underfoot_survival_threshold: 0.55
+  clean_video_underfoot_bright_threshold: 118
+  clean_video_underfoot_dilate_px: 1
+  clean_video_underfoot_close_px: 1
+  clean_video_underfoot_replace_alpha: 0.88
+  clean_video_residue_cleanup: false
+  clean_video_post_blend_cleanup: true
+  clean_video_post_blend_threshold: 130
+  clean_video_post_blend_alpha: 0.3
+  clean_video_post_blend_blur_px: 5
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 3
+    surface_type: court_floor
+    points:
+    - - 758
+      - 939
+    - - 957
+      - 939
+    - - 1117
+      - 939
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 729
+    - 920
+    - 1188
+    - 958
+    placement_quad:
+    - - 846
+      - 929
+    - - 1066
+      - 929
+    - - 1069
+      - 964
+    - - 843
+      - 964
+    court_plane_placement:
+      target: corners
+      court_quad:
+      - [0.3833, 0.9923]
+      - [0.5967, 0.9988]
+      - [0.5962, 1.0121]
+      - [0.3831, 1.0056]
+  - obj_id: 4
+    surface_type: banner
+    compositor_params:
+      erase_only: false
+      padding: 0.035
+      lum_strength: 0.0
+      inpaint_method: median_fill
+      mask_dilate_px: 18
+      alpha_feather_px: 3
+      inpaint_feather_px: 14
+      inpaint_noise: 0.12
+      local_color_match: false
+      poly_mask_fallback: true
+      logo_placement_quad:
+      - - 105
+        - 589
+      - - 437
+        - 589
+      - - 408
+        - 640
+      - - 57
+        - 640
+    points:
+    - - 198
+      - 611
+    - - 285
+      - 611
+    - - 324
+      - 611
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 180
+    - 598
+    - 346
+    - 625
+    placement_quad:
+    - - 125
+      - 590
+    - - 372
+      - 590
+    - - 372
+      - 635
+    - - 125
+      - 635
+  - obj_id: 1
+    compositor_params:
+      inpaint_feather_px: 12
+      inpaint_noise: 0.22
+    points:
+    - - 658
+      - 71
+    - - 657
+      - 88
+    - - 657
+      - 111
+    - - 676
+      - 111
+    - - 695
+      - 114
+    - - 753
+      - 115
+    - - 790
+      - 112
+    - - 821
+      - 113
+    - - 824
+      - 90
+    - - 824
+      - 74
+    - - 799
+      - 73
+    - - 775
+      - 74
+    - - 751
+      - 74
+    - - 735
+      - 72
+    - - 696
+      - 71
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 650
+    - 64
+    - 832
+    - 122
+    placement_quad:
+    - - 628
+      - 64
+    - - 832
+      - 64
+    - - 832
+      - 122
+    - - 628
+      - 122
+  - obj_id: 2
+    points:
+    - - 863
+      - 112
+    - - 863
+      - 94
+    - - 862
+      - 73
+    - - 895
+      - 72
+    - - 928
+      - 73
+    - - 968
+      - 71
+    - - 999
+      - 70
+    - - 1029
+      - 72
+    - - 1030
+      - 90
+    - - 1029
+      - 108
+    - - 1010
+      - 112
+    - - 978
+      - 115
+    - - 951
+      - 113
+    - - 916
+      - 112
+    - - 889
+      - 113
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 854
+    - 63
+    - 1038
+    - 123
+    placement_quad:
+    - - 854
+      - 63
+    - - 1038
+      - 63
+    - - 1038
+      - 123
+    - - 854
+      - 123
+  - obj_id: 5
+    points:
+    - - 1070
+      - 71
+    - - 1070
+      - 93
+    - - 1071
+      - 115
+    - - 1105
+      - 112
+    - - 1137
+      - 111
+    - - 1172
+      - 111
+    - - 1219
+      - 112
+    - - 1239
+      - 113
+    - - 1237
+      - 85
+    - - 1237
+      - 69
+    - - 1207
+      - 69
+    - - 1170
+      - 72
+    - - 1124
+      - 71
+    labels:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    box:
+    - 1062
+    - 61
+    - 1247
+    - 123
+    placement_quad:
+    - - 1062
+      - 61
+    - - 1247
+      - 61
+    - - 1247
+      - 123
+    - - 1062
+      - 123
+output:
+  dir: experiments/

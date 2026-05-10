@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Wide-shot crops show the full court with both the back banner Red Bull and the floor Red Bull replacements visible together at five timestamps. At normal viewing distance and resolution the composite reads as a legitimate broadcast frame — the back banner sits naturally on the dark navy, the floor wordmark sits naturally inside the court rectangle, and there is no rectangular boundary seam visible at either patch. The court paint around the floor mark is uniform after erase_text=true, with no MELBOURNE ghost bleeding around the wordmark. The inpaint-too-smooth artifact only becomes visible at close inspection of the floor patch.",
+  "min_score": 4
+}

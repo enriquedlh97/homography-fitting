@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "This is the synthesis-test region. The crisp rectangular seam P3-A4/a2 introduced (alpha_feather=8 with line-based jittery H) is GONE. The BTN backend's stable per-frame H means the patch boundary stops walking, and the feather=8 falloff blends seamlessly into the surrounding court paint across early/mid/late motion strips. No halo glow around 'RedBull'; no perimeter rectangle visible at any scrub position. Color sits about a half-stop bluer than the surrounding court but reads as legitimate paint. Player contact shadow is the only weak dimension — the mark is fully opaque under feet rather than darkened under contact — a separate axis from this experiment.",
+  "min_score": 3
+}

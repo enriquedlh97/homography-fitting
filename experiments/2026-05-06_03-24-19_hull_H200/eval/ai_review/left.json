@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Left side banner is unchanged from P3-A33/a2 — the only config delta in this run is back.inpaint_noise (0.22 -> 0.0). Color/hue/saturation continue to match the blue diagonal banner exactly. Comparing top-row YoPRO baseline vs bottom-row Red Bull composite across early/mid/late strips: letter edges and bull rings show only a thin residual softness, no ghost-band reflex. Not as crisp as the baked-in YoPRO so not a 5, but no regression vs P3-A33/a2's feather=8 result. No halo, geometry rides the diagonal plane stably, size plausible.",
+  "min_score": 4
+}

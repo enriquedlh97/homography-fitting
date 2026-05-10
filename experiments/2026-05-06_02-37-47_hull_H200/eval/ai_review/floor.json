@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 3,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Court-floor Red Bull replacing MELBOURNE. With inpaint_method=ns and feather=8, the inpainted patch tone matches surrounding court paint as well as the Telea baseline — tonal seam is not more visible than baseline (so this does NOT regress like feather=4). Halo around the lockup on the matte court remains the canonical Red Bull-on-Melbourne case (3) — NS does not eliminate it because the artifact is from compositing the lockup against court paint, not from the inpaint algorithm. Letter-edge reflex contained. Geometry, jitter and occlusion stable.",
+  "min_score": 3
+}

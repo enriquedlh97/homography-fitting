@@ -1,0 +1,3 @@
+# full — what would a viewer notice?
+
+At full-frame scale the composite reads as a coherent broadcast scene. Back banner, side banner, and floor mark all sit naturally; no region pops. Court geometry is locked across the five sampled timestamps. The side-banner Red Bull is visibly cleaner than P3-A5 at this scale (less letter-edge softness on the rings). The back-banner residual rectangular footprint that is faintly visible at crop scale is essentially invisible at full-frame size, but on a careful side-by-side I'd put edge_seam_visibility at 4 rather than 5 because of it. Floor mark is fractionally cooler than the surrounding court, within real painted-court variance. No jitter or warping across timestamps.

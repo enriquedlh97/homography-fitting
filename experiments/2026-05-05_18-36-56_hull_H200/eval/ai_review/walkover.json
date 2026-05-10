@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 2,
+    "edge_seam_visibility": 2,
+    "texture_match": 3,
+    "halo_presence": 4,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 4,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 2,
+    "jitter_visible": 2,
+    "player_contact_shadow": 2
+  },
+  "notes": "Walkover frames 685-723. Halo glow on the floor logo is reduced versus baseline (the feather=8 change did its job). However, the patch now has a more rectangular crisp seam that is visible in entry/contact/post-contact forensic sheets — the suspected-leak overlay shows the patch outline more linearly than before. Player feet do not produce a convincing contact shadow on the logo; occlusion of the wordmark by the player legs is acceptable but the shadow under the feet does not darken the logo as it does on the surrounding court. Frame-to-frame the patch corners shimmer noticeably (matches +67% jitter regression). The original Melbourne wordmark above is rock-stable and naturally weathered; ours is crisper and visibly synthetic.",
+  "min_score": 2
+}

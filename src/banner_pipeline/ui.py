@@ -5,6 +5,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from banner_pipeline.segment.base import ObjectPrompt
+
 OBJ_COLORS_UI = [
     (0, 255, 0),
     (0, 100, 255),
@@ -15,54 +17,81 @@ OBJ_COLORS_UI = [
 ]
 
 
-def collect_clicks(frame: np.ndarray) -> list[list[tuple[int, int]]]:
+def collect_clicks(frame: np.ndarray, frame_idx: int = 0) -> list[ObjectPrompt]:
     """Show *frame* in an OpenCV window and collect grouped seed clicks.
 
     Controls
     --------
-    - Left-click : add point to current object
+    - Left-click : add positive point to current object
+    - Right-click: add negative point to current object
+    - U          : undo last point in current object
     - N          : finish current object, start a new one
     - Enter/Space: finish all
     - Escape     : cancel (returns empty list)
 
-    Returns a list of groups, e.g. ``[[(x1,y1),(x2,y2)], [(x3,y3)], ...]``.
+    Returns a list of ``ObjectPrompt`` instances with explicit labels and
+    the selected ``frame_idx``.
     """
-    groups: list[list[tuple[int, int]]] = [[]]
-    display = frame.copy()
-    win = "Click regions (N=next object, Enter=done, Esc=cancel)"
+    groups: list[list[tuple[int, int, int]]] = [[]]
+    win = "Click prompts (LMB=+, RMB=-, U=undo, N=next, Enter=done)"
 
     def _current_color():
         return OBJ_COLORS_UI[(len(groups) - 1) % len(OBJ_COLORS_UI)]
 
-    def _redraw_status():
+    def _redraw():
+        display = frame.copy()
+        for obj_idx, group in enumerate(groups, start=1):
+            color = OBJ_COLORS_UI[(obj_idx - 1) % len(OBJ_COLORS_UI)]
+            for pt_idx, (x, y, label) in enumerate(group, start=1):
+                marker = cv2.MARKER_STAR if label == 1 else cv2.MARKER_TILTED_CROSS
+                suffix = "+" if label == 1 else "-"
+                cv2.drawMarker(display, (x, y), color, marker, 20, 2)
+                cv2.putText(
+                    display,
+                    f"{obj_idx}.{pt_idx}{suffix}",
+                    (x + 12, y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+
         obj_idx = len(groups)
-        n_pts = len(groups[-1])
-        label = f"Object {obj_idx}  ({n_pts} pts)  |  N=next  Enter=done"
+        current = groups[-1]
+        n_pos = sum(label == 1 for *_xy, label in current)
+        n_neg = sum(label == 0 for *_xy, label in current)
+        label = (
+            f"Object {obj_idx}  ({n_pos}+/{n_neg}-)  |  LMB+=  RMB-=  U=undo  N=next  Enter=done"
+        )
         cv2.rectangle(display, (0, 0), (frame.shape[1], 30), (30, 30, 30), -1)
         cv2.putText(
-            display, label, (8, 22),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA,
+            display,
+            label,
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
         )
         cv2.imshow(win, display)
 
     def _on_mouse(event, x, y, flags, _):
         if event == cv2.EVENT_LBUTTONDOWN:
-            groups[-1].append((x, y))
-            col = _current_color()
-            pt_idx = len(groups[-1])
-            cv2.drawMarker(display, (x, y), col, cv2.MARKER_STAR, 20, 2)
-            cv2.putText(
-                display, f"{len(groups)}.{pt_idx}", (x + 12, y - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, col, 2, cv2.LINE_AA,
-            )
-            _redraw_status()
+            groups[-1].append((x, y, 1))
+            _redraw()
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            groups[-1].append((x, y, 0))
+            _redraw()
 
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, min(frame.shape[1], 1400), min(frame.shape[0], 900))
     cv2.setMouseCallback(win, _on_mouse)
-    _redraw_status()
+    _redraw()
 
-    print("[UI] Left-click to add points. N = next object. Enter/Space = done. Esc = cancel.")
+    print("[UI] Left-click = positive point, right-click = negative point.")
+    print("     U = undo last point | N = next object | Enter/Space = done | Esc = cancel")
     while True:
         key = cv2.waitKey(0) & 0xFF
         if key in (13, 32):  # Enter / Space
@@ -70,17 +99,31 @@ def collect_clicks(frame: np.ndarray) -> list[list[tuple[int, int]]]:
         if key == 27:  # Escape
             groups.clear()
             break
-        if key in (ord("n"), ord("N")):
-            if groups[-1]:
-                print(
-                    f"  Object {len(groups)} done ({len(groups[-1])} pts). "
-                    f"Starting object {len(groups) + 1}…"
-                )
-                groups.append([])
-                _redraw_status()
+        if key in (ord("u"), ord("U")) and groups[-1]:
+            groups[-1].pop()
+            _redraw()
+        if key in (ord("n"), ord("N")) and groups[-1]:
+            print(
+                f"  Object {len(groups)} done ({len(groups[-1])} pts). "
+                f"Starting object {len(groups) + 1}…"
+            )
+            groups.append([])
+            _redraw()
 
     cv2.destroyAllWindows()
-    return [g for g in groups if g]
+    prompts: list[ObjectPrompt] = []
+    for obj_id, group in enumerate((g for g in groups if g), start=1):
+        points = np.array([[x, y] for x, y, _label in group], dtype=np.float32)
+        labels = np.array([label for _x, _y, label in group], dtype=np.int32)
+        prompts.append(
+            ObjectPrompt(
+                obj_id=obj_id,
+                points=points,
+                labels=labels,
+                frame_idx=frame_idx,
+            )
+        )
+    return prompts
 
 
 def select_polygon(frame: np.ndarray) -> np.ndarray | None:
@@ -105,8 +148,13 @@ def select_polygon(frame: np.ndarray) -> np.ndarray | None:
             if len(pts) > 1:
                 cv2.line(display, pts[-2], pts[-1], (0, 255, 0), 1, cv2.LINE_AA)
             cv2.putText(
-                display, str(len(pts)), (x + 8, y - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
+                display,
+                str(len(pts)),
+                (x + 8, y - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
             )
             cv2.imshow(win, display)
         elif event == cv2.EVENT_RBUTTONDOWN and len(pts) >= 3:

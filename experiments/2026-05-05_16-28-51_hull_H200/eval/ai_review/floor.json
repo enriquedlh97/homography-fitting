@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
+  "temporal":{"occlusion_realism": 5, "jitter_visible": 5, "player_contact_shadow": 5},
+  "notes": "Floor logo replacement (Melbourne wordmark -> Red Bull) sits on the court surface with correct ground-plane perspective. Across early/mid/late strips the logo holds rock-still relative to court lines — no jitter, no breathing, no edge bleed onto adjacent court paint. Background blue floor hue and the white Red Bull mark brightness match the original wordmark's tone. No shadow inconsistencies in the non-contact frames included here. Pixel-equivalent to gold.",
+  "min_score": 5
+}

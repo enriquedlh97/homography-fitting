@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 3,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Frames 685-723: player walks across the floor Red Bull. Consecutive_frames strip shows clean leg/foot occlusion of the bulls and wordmark — hull mask still holds. Forensic sheets at f0685/f0694/f0704/f0713/f0723: clean plate, composite, original-clean delta, original survival, suspected leak overlay. Same residual MELBOURNE letterforms remain in the leak overlay at entry (f0685) and exit (f0723) as in the P3-A33/a2 baseline — floor obj unchanged. Player contact shadow at f0704 (shadow_strength=0.7, radius=10, blur=6): denser and more concentrated than a2 (0.6/15/10). The dark patch hugs the contact foot more tightly and reads more like a real cast shadow than the broader, softer puddle of a2 — but the increased strength makes it slightly more visible. It does not tip into painted-blob territory at this strength; if strength were pushed further (0.8+) at this radius/blur it would. f0713 post-contact still shows correct motion-blur smear without double-exposure. Soft halo around bulls persists on matte court paint (calibrated as 3, not 5).",
+  "min_score": 3
+}

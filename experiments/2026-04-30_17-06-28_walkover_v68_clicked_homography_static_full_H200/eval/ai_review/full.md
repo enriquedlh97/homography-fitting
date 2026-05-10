@@ -1,0 +1,3 @@
+# full — viewer notes
+
+At full-frame zoom the composite reads as a normal broadcast. A viewer scrubbing this strip would not be drawn to either insertion as "wrong" — the rear-court Red Bull banner sits inside the signage band at the right scale, and the on-court Red Bull floor logo lies flat on the playing surface where the Melbourne wordmark was in the original. Across the five sampled frames there is no visible jitter, no edge halo, no obvious texture mismatch. The floor logo is the slightly weaker insertion at this zoom because it is a hair cleaner than the surrounding court paint, but at broadcast playback speed the eye lets it pass. Overall the full-frame view is the right kind of "boring" — nothing jumps out as composited.

@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
+  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
+  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
+  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 3},
+  "notes": "Floor s=0.6 r=10 b=8: tighter / smaller shadow footprint. Concentrated under feet but with less surrounding falloff, which makes the shadow read a touch more pasted-on / discrete rather than a soft contact shadow. Logo otherwise stable. Slight regression on player_contact_shadow vs baseline.",
+  "min_score": 3
+}

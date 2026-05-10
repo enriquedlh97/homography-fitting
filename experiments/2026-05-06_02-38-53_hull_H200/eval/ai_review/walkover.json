@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 3,
+    "texture_match": 4,
+    "halo_presence": 3,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Frames 685-723 walkover with feather=4. Player traverses the Red Bull floor band; legs/feet correctly cover the bulls and wordmark across consecutive_frames. Forensic 'suspected leak overlay' panels at f0685 (entry) and f0723 (exit) still show residual MELBOURNE pixels around the right side of the lockup — same residual leak as baseline; floor obj_4 inpaint feather change does not address this artifact. Halo around the lockup on the matte court remains visible — 3, not improved. f0704 contact and f0713 post-contact composite tracks the player's foot/shadow stably with no jitter. Color, geometry, temporal stability all good.",
+  "min_score": 3
+}

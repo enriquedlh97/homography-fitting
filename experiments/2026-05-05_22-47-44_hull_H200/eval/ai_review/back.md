@@ -1,0 +1,1 @@
+Back banner Red Bull replaces the Kia/YoPRO surfaces. The composite reads as natural at viewing distance — fabric texture and crowd occlusions track. Shadow_strength is irrelevant here because no player traverses this region. No halo or letter-edge reflex is detectable on the dark banner row at this scale.

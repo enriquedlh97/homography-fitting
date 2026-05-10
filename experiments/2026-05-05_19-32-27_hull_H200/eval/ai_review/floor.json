@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "This 'floor' region in the run is actually the back-court banner band carrying the Melbourne wordmark, not the matte court paint, so the canonical Red Bull halo case does not apply — the underlying surface is the vivid blue banner, not court hardcourt. Composite Red Bull on blue reads cleanly with hue near-perfect and no visible halo. Edge reflex is faint at most. Player walkover (visible in motion strips) is occluded plausibly with feet/legs reading in front of the wordmark; no shadow is being added under the player so contact-shadow realism takes a hit. Temporally very stable across early/mid/late — no jitter or scale drift.",
+  "min_score": 3
+}

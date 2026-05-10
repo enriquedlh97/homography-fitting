@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color": {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry": {"perspective_plausibility": 5, "size_plausibility": 5},
+  "notes": "Excellent substitution. The Red Bull wordmark sits on the same blue panel with the same diagonal pinstripes carrying through behind/under the logo, exactly as the YoPRO original does. The diagonal seam between the two blue panels is preserved on the composite, which is the single strongest cue that the placement is geometrically correct and that the underlying surface texture is being respected rather than overwritten. Brightness, hue and saturation track the original almost identically across all four strips. No visible flicker or seam. Composite is essentially indistinguishable from a real painted-on sponsor panel.",
+  "min_score": 5
+}

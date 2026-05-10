@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Left side banner: YoPRO original (top) vs Red Bull composite (bottom) on the same diagonal-striped blue side panel. Hue match on the blue field is essentially perfect. The white wordmark and bull silhouettes look crisp; on close inspection of the motion strips a very faint reflex/ghost is visible along the top and bottom edges of letters — softer than the canonical Red Bull side-banner reflex case but not pristine. No bright halo around the marks. Perspective and size land well in the slanted band. Across early/mid/late strips the wordmark is temporally stable, no shimmer or scale wobble.",
+  "min_score": 3
+}

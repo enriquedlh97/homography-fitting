@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full-court wide shots read coherently across the strip — back banners, side banner, and floor logo all hold their positions through the camera pan with no obvious flicker or pop. At wide-shot scale the artifacts that show up at zoomed crops (floor halo, residual letter softness on left) are not individually distracting. Overall composition reads broadcast-grade.",
+  "min_score": 4
+}

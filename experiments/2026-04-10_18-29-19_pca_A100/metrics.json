@@ -1,0 +1,68 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_memory_gb": 79.3,
+  "mode": "video",
+  "num_prompts": 4,
+  "num_prompt_points": 12,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpt9dkjlza/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "alpha",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "object_frame_coverage": {
+    "1": {
+      "frames_with_masks": 201,
+      "coverage_ratio": 0.995
+    },
+    "2": {
+      "frames_with_masks": 201,
+      "coverage_ratio": 0.995
+    },
+    "3": {
+      "frames_with_masks": 1,
+      "coverage_ratio": 0.005
+    },
+    "4": {
+      "frames_with_masks": 201,
+      "coverage_ratio": 0.995
+    }
+  },
+  "sam3_reanchor_events": [
+    {
+      "obj_id": 1,
+      "frame_idx": 2,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 2,
+      "frame_idx": 2,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 4,
+      "frame_idx": 2,
+      "refresh_count": 1
+    }
+  ],
+  "segment_total_s": 162.147576516,
+  "fit_mean_ms": 19.89,
+  "fit_std_ms": 3.83,
+  "composite_mean_ms": 136.74,
+  "composite_std_ms": 9.28,
+  "write_video_s": 0.9504,
+  "total_s": 194.601,
+  "run_total_s": 197.368725311,
+  "output_fps": 1.04,
+  "frames_with_masks": 201,
+  "frames_with_quads": 201,
+  "frames_composited": 201,
+  "object_masks_total": 604,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 201,
+  "max_consecutive_mask_gap": 1
+}

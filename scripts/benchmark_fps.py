@@ -3,7 +3,7 @@
 
 Usage
 -----
-    python scripts/benchmark_fps.py --config configs/default.yaml --runs 5
+    uv run python scripts/benchmark_fps.py --config configs/default.yaml --runs 5
 """
 
 from __future__ import annotations
@@ -75,8 +75,10 @@ def main():
     total_times = [m.get("run_total_s", 0) for m in all_metrics]
     if total_times:
         fps_values = [1.0 / t for t in total_times if t > 0]
-        print(f"\n  FPS (single frame): mean={np.mean(fps_values):.2f}  "
-              f"min={np.min(fps_values):.2f}  max={np.max(fps_values):.2f}")
+        print(
+            f"\n  FPS (single frame): mean={np.mean(fps_values):.2f}  "
+            f"min={np.min(fps_values):.2f}  max={np.max(fps_values):.2f}"
+        )
         report["fps"] = {
             "mean": float(np.mean(fps_values)),
             "min": float(np.min(fps_values)),

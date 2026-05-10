@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Full-frame strip shows the wide-shot composite from the broadcast camera. Side banners, back curtain, and floor lockup all read as plausible at the full-frame zoom level — the eye does not catch obvious paste-ons. Color, brightness and saturation match the original arena look. Geometry consistent across the strip. The dimension where this run was attempting improvement (left.edge_reflex) is not separable at full-frame zoom from baseline.",
+  "min_score": 4
+}

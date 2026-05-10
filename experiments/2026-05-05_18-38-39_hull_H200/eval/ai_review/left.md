@@ -1,0 +1,3 @@
+# left
+
+The left side banner swaps YoPRO for Red Bull on the same blue diagonal panel. Color, brightness and saturation of the underlying fabric are preserved, and the perspective and size of the substituted logo are plausible across the early, mid and late motion strips. Looking carefully against the original YoPRO baseline (which is crisp, high-contrast white type), the Red Bull letters carry a slight edge softness and the bull rings show a faint reflex/ghost around their horns, especially at mid-strip frames. It is not heavy smearing but it is detectable when paired with the original — so this dimension scores 3, not 5. No glow or luminance halo around the logo is visible. Frame-to-frame stability is solid; the banner does not jitter through the clip.

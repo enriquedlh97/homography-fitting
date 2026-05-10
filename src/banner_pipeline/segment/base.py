@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -18,14 +19,28 @@ class ObjectPrompt:
     points:    (N, 2) float32 array of (x, y) click coordinates.
     labels:    (N,) int32 array; 1 = positive, 0 = negative click.
     frame_idx: Frame index these prompts apply to (default 0).
+    surface_type: Semantic surface type for downstream routing.
+    geometry_model: Optional geometry override for downstream quad construction.
     box:       Optional (4,) float32 ``[x0, y0, x1, y1]`` bounding box.
+    placement_quad: Optional (4, 2) float32 quad corners for logo placement.
+                    When set, used instead of points for building prompt_bboxes.
+    compositor_params: Optional dict of compositor kwargs merged for this object only
+                    (after global and surface_overrides), e.g. ``inpaint_feather_px``.
+    court_plane_placement: Optional court-space projection config for this object.
+    asset: Optional path to an overlay image to use for this object instead of the global input.logo.
     """
 
     obj_id: int
     points: np.ndarray
     labels: np.ndarray
     frame_idx: int = 0
+    surface_type: str = "banner"
+    geometry_model: str | None = None
     box: np.ndarray | None = None
+    placement_quad: np.ndarray | None = None
+    compositor_params: dict[str, Any] | None = None
+    court_plane_placement: dict[str, Any] | None = None
+    asset: str | None = None
 
 
 class SegmentationModel(ABC):

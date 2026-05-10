@@ -1,0 +1,116 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      inpaint_method: median_fill
+      padding: 0.0
+      lum_strength: 0.0
+      shade_blend: false
+      mask_dilate_px: 20
+      alpha_feather_px: 3
+      quad_pad_px: 20
+      white_tint:
+      - 230
+      - 220
+      - 225
+  tracking:
+    ema_alpha: 0.001
+input:
+  video: data/tennis-clip.mp4
+  logo: data/logos/ferrari_white.png
+  prompts:
+  - obj_id: 1
+    points:
+    - - 680
+      - 34
+    - - 683
+      - 66
+    - - 832
+      - 66
+    - - 831
+      - 35
+  - obj_id: 2
+    points:
+    - - 868
+      - 37
+    - - 870
+      - 66
+    - - 1024
+      - 66
+    - - 1025
+      - 34
+  - obj_id: 3
+    points:
+    - - 1070
+      - 38
+    - - 1069
+      - 63
+    - - 1225
+      - 66
+    - - 1225
+      - 38
+  - obj_id: 4
+    points:
+    - - 1269
+      - 54
+    - - 1271
+      - 35
+    - - 1415
+      - 38
+    - - 1414
+      - 56
+  - obj_id: 5
+    points:
+    - - 1444
+      - 36
+    - - 1441
+      - 53
+    - - 1587
+      - 61
+    - - 1586
+      - 41
+    - - 1517
+      - 36
+    - - 1516
+      - 56
+    - - 1553
+      - 59
+  - obj_id: 6
+    points:
+    - - 498
+      - 35
+    - - 498
+      - 61
+    - - 555
+      - 64
+    - - 627
+      - 65
+    - - 629
+      - 32
+    - - 569
+      - 32
+  - obj_id: 7
+    points:
+    - - 331
+      - 34
+    - - 333
+      - 64
+    - - 388
+      - 69
+    - - 445
+      - 65
+    - - 463
+      - 65
+    - - 461
+      - 34
+    - - 401
+      - 31
+output:
+  dir: experiments/

@@ -12,6 +12,41 @@ import numpy as np
 from banner_pipeline.composite.base import Compositor
 
 
+def estimate_rectified_border_fill(
+    rectified_bgr: np.ndarray,
+    *,
+    band_fraction: float = 0.12,
+) -> dict[str, object]:
+    """Estimate a stable banner background color from a rectified border band."""
+    height, width = rectified_bgr.shape[:2]
+    band_px = max(2, int(round(min(height, width) * band_fraction)))
+    band_px = min(band_px, max(2, min(height, width) // 4))
+
+    border_mask = np.zeros((height, width), dtype=bool)
+    border_mask[:band_px, :] = True
+    border_mask[-band_px:, :] = True
+    border_mask[:, :band_px] = True
+    border_mask[:, -band_px:] = True
+
+    border_pixels = rectified_bgr[border_mask].reshape(-1, 3).astype(np.float32)
+    if border_pixels.size == 0:
+        border_pixels = rectified_bgr.reshape(-1, 3).astype(np.float32)
+
+    median = np.median(border_pixels, axis=0)
+    spread = np.median(np.abs(border_pixels - median), axis=0)
+    fill_color_bgr = tuple(int(round(float(channel))) for channel in median)
+    fill_spread_bgr = tuple(round(float(channel), 2) for channel in spread)
+    fill_unstable = max(fill_spread_bgr) > 28.0
+
+    return {
+        "fill_color_bgr": fill_color_bgr,
+        "fill_spread_bgr": fill_spread_bgr,
+        "fill_band_px": band_px,
+        "fill_unstable": fill_unstable,
+        "fill_warning_reason": "background_fill_unstable" if fill_unstable else None,
+    }
+
+
 class AlphaCompositor(Compositor):
     """Composites using oriented homography for aspect-ratio-correct warping."""
 
@@ -30,6 +65,7 @@ class AlphaCompositor(Compositor):
         """Requires ``homo`` (oriented-homography dict) in *kwargs*."""
         homo: dict = kwargs["homo"]
         padding: float = kwargs.get("padding", 0.05)
+        debug_info: dict[str, object] | None = kwargs.get("debug_info")
 
         dst_w, dst_h = homo["dst_w"], homo["dst_h"]
         H_final = homo["H"]
@@ -64,7 +100,10 @@ class AlphaCompositor(Compositor):
         # frame_roi and corners_roi, so build a ROI version.
         H_to_rect_roi, _ = cv2.findHomography(corners_roi, homo["dst_rect"])
         warped_orig = cv2.warpPerspective(frame_roi, H_to_rect_roi, (dst_w, dst_h))
-        bg_color = tuple(int(c) for c in cv2.mean(warped_orig)[:3])
+        fill_info = estimate_rectified_border_fill(warped_orig)
+        bg_color = fill_info["fill_color_bgr"]
+        if debug_info is not None:
+            debug_info.update(fill_info)
 
         canvas = np.full((dst_h, dst_w, 3), bg_color, dtype=np.uint8)
         ox = (dst_w - new_w) // 2

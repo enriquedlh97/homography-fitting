@@ -1,0 +1,8 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
+  "temporal":{"occlusion_realism": 5, "jitter_visible": 5, "player_contact_shadow": 5},
+  "notes": "Floor Red Bull mark sits on the court like the Melbourne wordmark original. Texture/court tone preserved beneath the composite; perspective consistent with the floor plane across early, mid and late strips. Compared frame-by-frame against the gate-dormant run (P2-C010/A2), the late-frame strip looks pixel-equivalent — the 16 ramping firings did not introduce visible wobble, jitter or shimmer at this region. No motion-tracking improvement is visible either, since the dormant variant was already locked tight on these frames; the gate firings appear to ramp gently within the floor_roi_jitter_ratio budget without leaking onto the visual surface.",
+  "min_score": 5
+}

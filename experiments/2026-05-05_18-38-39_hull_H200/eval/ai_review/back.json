@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 5,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner Red Bull replaces the Kia wordmark on the same dark navy banner. Across early/mid/late motion strips the logo sits stable, perspective tracks the banner well, and color/luminance match the surrounding fabric. No bright halo around the wordmark is visible on the matte banner. A faint, very subtle ringing along the bull horns is barely detectable at this crop scale, but does not read as smearing — closer to the original Kia letter sharpness than not. Frame-to-frame the logo is rock-steady; no jitter is visible.",
+  "min_score": 4
+}

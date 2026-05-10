@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 5, "texture_match": 4},
+  "color": {"hue_match": 5, "brightness_match": 4, "saturation_match": 4},
+  "geometry": {"perspective_plausibility": 5, "size_plausibility": 5},
+  "notes": "At full-frame scale the rear banner Red Bull and the floor Red Bull are both clearly readable, well-positioned, and stable across the strip. Compared to the original full frames the broadcast composition reads as natural — viewer's eye is not pulled to the inserted ads. The court floor logo is visible and flat to the plane; the rear banner sits inside the same dark band as the surrounding signage. Brightness/saturation of the floor logo is marginally cleaner than the original Melbourne wordmark, which is the only soft tell at this zoom level. No visible jitter, swimming or edge seams across the five frames shown.",
+  "min_score": 4
+}

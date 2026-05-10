@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
+  "notes": "Left-side blue panel with diagonal slash. Red Bull wordmark + bull silhouette ride the same skewed plane as YoPRO does in the original, with matching foreshortening across early/mid/late strips. Blue panel hue and the white logo brightness match the original's fidelity exactly. No seam visible at the diagonal slash line or panel edges. Indistinguishable from a real painted-on ad.",
+  "min_score": 5
+}

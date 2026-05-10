@@ -1,0 +1,5 @@
+# Walkover — review
+
+A viewer scrubbing frames 685–724 would see the player walk across the floor mark and the Red Bull logo would stay locked to the court. Occlusion is clean: shoes, socks and shins cut into the wordmark naturally with no halo, no leak onto skin, and no smear behind the foot. The forensic sheets confirm this — the suspected-leak overlay panels stay free of the insertion at entry, pre-contact, contact, post-contact and exit.
+
+**Gate-active vs gate-dormant comparison:** I read the gate-dormant P2-C010/A2 `consecutive_frames.png` and `forensic_sheet_exit_f0723.png` alongside the gate-active versions. They are visually indistinguishable. The 16 ramping firings (concentrated near frames ~723–767 where the broadcast camera shifts subtly) do NOT introduce visible wobble in the walkover window itself. They also do not produce a clearly better track here — at this resolution both candidates render the player-on-logo composite at broadcast quality. The benefit, if real, lives past frame ~723 outside the forensic window.

@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full broadcast view across the clip. All five Red Bull insertions (3 back banners, 1 left side, 1 court floor) read as a coherent advertising package at viewing distance. Camera-light and perspective coherent. The new contact-shadow synthesis is too subtle to read at full-frame resolution — its impact lives in the walkover region. No global regression vs P3-A17.",
+  "min_score": 4
+}

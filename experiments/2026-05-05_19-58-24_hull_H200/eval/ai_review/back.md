@@ -1,0 +1,3 @@
+# back — what would a viewer notice?
+
+A viewer scrubbing the back banner would read the Red Bull mark as a real banner print — letters and rings are clean, no smear, no glow at the wordmark perimeter. The one tell on careful inspection is a faint rectangular footprint around the Red Bull area: tighter mask_dilate=4 leaves slightly less inpaint headroom than P3-A5's dilate=8, and on darker mid/late frames you can see a subtle brightness boundary where the patched banner meets the unpatched panel. It is below pop-out threshold but visible if you are hunting for it. Hue/brightness/saturation track the panel naturally across all five sampled timestamps. Net: a small regression vs P3-A5 on edge_seam_visibility and halo_presence — tighter dilate hurt the back banner.

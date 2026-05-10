@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 3,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 3,
+    "jitter_visible": 5,
+    "player_contact_shadow": 2
+  },
+  "notes": "Walkover window f0685–f0723. The Red Bull mark stays geometrically locked under the player's feet — BTN's stable H means no jitter. No bright halo around the wordmark across entry/pre-contact/contact/post-contact/exit forensic sheets. The forensic survival/leak overlays show some red/orange residue suggesting the original Melbourne wordmark partially survives through the patch in a few sub-pixels — typical of a hull/feather=4 mask under fast motion blur on the surrounding paint, but not an obvious viewer-visible artifact in the composite column itself. occlusion_realism is 3 because the mark renders as fully opaque even under the foot — there is no darkening / contact shadow under the shoe (that is the persistent player_contact_shadow=2 weakness, the worst dimension on the run). edge_seam_visibility is 4 (slightly cleaner than P3-A6/a2's 3 thanks to feather=4's softer falloff). The combined feather=4 + dilate=4 is the best walkover variant of the P3-A6 sweep: halo and seam both behave; only the missing contact shadow keeps this region from joining the others at min=4.",
+  "min_score": 2
+}

@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back banner Red Bull replacing Kia. Lockup sits on the dim back wall; saturation/brightness match the surrounding banner well. No bright halo on the dark navy fabric — the wordmark and bulls fade into the wall plane convincingly. A faint edge reflex along the underline of 'Red Bull' is detectable at small motion-strip scale but is on par with the original Kia letterforms which also show camera-induced softness. Geometry stable across early/mid/late strips. This object was not the target of the x4 shadow tweak so no change vs baseline.",
+  "min_score": 4
+}

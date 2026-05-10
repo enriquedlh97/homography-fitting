@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "notes": "Left side banner is the targeted region (obj_4 inpaint_feather_px=4 — even tighter than a2's 8, taking feather to its practical floor). Color/hue/saturation continue to match the blue diagonal banner exactly. Comparing top-row YoPRO baseline vs bottom-row Red Bull composite across early/mid/late strips: letter edges and the rampant-bulls icon look essentially identical to the feather=8 baseline. The reflex/smear at letter perimeters remains a contained thin softness — not the v2 canonical 'subtle ghost along letter edges'. Pushing feather from 8 to 4 does NOT visibly tighten the residual reflex further at strip resolution; the limiting factor is no longer the inpaint feather but the underlying composite anti-aliasing / blend math. Holding edge_reflex at 4 — does NOT reach 5 because YoPRO baseline is still incrementally sharper at letter terminals (e.g. 'd' and 'l' tails). No new halo introduced.",
+  "min_score": 4
+}

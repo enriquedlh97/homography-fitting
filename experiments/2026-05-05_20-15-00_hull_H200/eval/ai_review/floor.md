@@ -1,0 +1,3 @@
+# floor — viewer notes
+
+A viewer scrubbing this region will notice the floor logo first. The original Melbourne 'ELBOUR' wordmark sits as flat paint on the blue court; the composite Red Bull is placed on a brighter rectangular zone whose luminance does not match the surrounding court — the canonical halo / inpaint-patch tell from rubric v2. Hue and brightness are off enough that the ad reads as a sticker, not paint. Geometry and size are roughly correct. Edge reflex is mild on this region (less obvious than the side banner). The metrics back this up: floor delta-E and jitter ratio flagged regressions, and noise variance is ~26x the reference — the patch is visibly busier than the surrounding court. Player feet do not cast a darkened contact shadow on the ad.

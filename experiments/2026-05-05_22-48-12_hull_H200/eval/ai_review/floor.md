@@ -1,0 +1,1 @@
+At shadow_strength=0.7 the cast shadow under the feet is starting to feel heavy — the player is unambiguously planted but the dark blob risks reading as painted-on rather than ambient occlusion. Past the credible peak.

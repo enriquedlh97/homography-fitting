@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 5,
+    "texture_match": 3,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Walkover frames 685-723. Direct comparison vs P3-A12 (erase_text alone) and P3-A5 baseline. The headline P3-A8 finding — MELBOURNE bleed-through under the player's feet — is fully eliminated: the suspected_leak_overlay panel on the contact f0704 sheet is clean of the original wordmark under and around the legs, and consecutive_frames shows clean cuts at limb boundaries with NO bleed visible in any of the 21 frames. Halo and edge reflex on the small floor mark: absent (5/5). player_contact_shadow stays at 4: at f0704 the cast shadow under the planted feet is plausible, but at f0713 (post-contact) there is a darker streak/trail above the wordmark that reads slightly ghost-like rather than as an instantaneous cast shadow — the dilate_px=8 buffer fixes leak but the trailing shadow is buffer-induced, not a true contact-shadow synthesis. Combining dilate=8 + erase_text did NOT push contact_shadow to 5. occlusion_realism 4 not 5: same dilate-buffer halo of clean court paint around the player. Texture 3 (same inpaint smoothness as floor region).",
+  "min_score": 3
+}

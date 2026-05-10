@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 2,
+    "edge_seam_visibility": 3,
+    "texture_match": 3,
+    "halo_presence": 2,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 3,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 4,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 3,
+    "jitter_visible": 4,
+    "player_contact_shadow": 2
+  },
+  "notes": "Frames 685-723 — player traverses the floor logo. The forensic sheets (entry f0685, pre f0694, contact f0704, post f0713, exit f0723) all show the same pattern as the P3-A5 baseline: the suspected-leak overlay column reveals MELBOURNE original letters bleeding through under and around the player's shoes. Raising floor.occlusion_dilate_px from 2->8 did not visibly reduce the under-feet leak — at the contact frame f0704 the leak overlay looks unchanged from the P3-A5 baseline. The halo around the Red Bull wordmark on the matte court is visible throughout the window. The wordmark sits luminous on otherwise matte paint. Jitter is low and the logo tracks the camera plane stably. Occlusion of the legs above the foot contact is reasonable, but the contact-shadow handling is the weak link.",
+  "min_score": 2
+}

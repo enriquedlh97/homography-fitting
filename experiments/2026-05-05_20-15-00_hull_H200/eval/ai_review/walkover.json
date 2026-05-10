@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 2,
+    "edge_seam_visibility": 2,
+    "texture_match": 2,
+    "halo_presence": 2,
+    "edge_reflex": 3
+  },
+  "color": {
+    "hue_match": 3,
+    "brightness_match": 3,
+    "saturation_match": 3
+  },
+  "geometry": {
+    "perspective_plausibility": 4,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 3,
+    "jitter_visible": 4,
+    "player_contact_shadow": 2
+  },
+  "notes": "Walkover window 685-723 covers the player crossing the floor logo. Forensic sheets are damning: 'original survival' shows substantial Melbourne 'ELBOUR' text leaking through under the Red Bull on every frame (entry/pre/contact/post/exit), confirming the inpaint clean plate is not actually erasing the original wordmark — there's a ghost of the original ad bleeding through the composite. The 'suspected leak overlay' panel makes this explicit. The brighter-rectangle halo seen on the floor region is also present here. Player feet appear to be drawn in front of the logo (occlusion mostly works — IoU 0.96 in metrics) but consecutive frames show the Red Bull logo holding rigid through player passes with no contact shadow under the feet. Net: the walkover region exposes both rubric v2 calibration artifacts plus a leak from the underlying Melbourne paint.",
+  "min_score": 2
+}

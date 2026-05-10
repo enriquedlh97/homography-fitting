@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Wide-court frames show all replacements in context: back wall Red Bull (now noise=0), side floor band Red Bull, left-banner Red Bull. At full-court scale every surface reads as baked-in advertising. Venue tone consistent across original/composite rows, no misregistered planes, no edge seams. Composite holds across the strip without geometry breathing or tone shift.",
+  "min_score": 5
+}

@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 5,
+    "halo_presence": 5,
+    "edge_reflex": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Red Bull replacement on the back wall reads as fully painted-on. The dim, purple-lit wall is matched in hue, brightness, and saturation across early/mid/late strips. No halo at the wordmark perimeter — luminance falls off cleanly into the dark venue. No detectable reflex/smearing along letter edges or around the bull silhouettes. Geometry tracks the wall plane and size matches the original Kia banner footprint. obj_4 feather change does not affect the back region — back is unchanged from P3-A29/a3 baseline at 5/5/5/5/5.",
+  "min_score": 5
+}

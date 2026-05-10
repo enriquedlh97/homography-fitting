@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 3,
+    "edge_seam_visibility": 3,
+    "texture_match": 3,
+    "halo_presence": 3,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 3,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 3
+  },
+  "notes": "This is the P3-A6 axis under test. Floor surface override is alpha_feather=12 (vs P3-A5's 8). The expectation was that looser feather would re-introduce halo — and it does, partially. Across all motion strips, the Red Bull patch sits on a faintly visible bluer/cooler rectangle that does not match the surrounding court paint exactly: the feathered alpha falloff zone is wider than P3-A5's, so its luminance/hue mismatch with the matte court is now visible at the patch perimeter for ~10-12 px around the wordmark. This is the canonical halo case the rubric v2 calls out. It is not severe — the original MELBOURNE letters are not bleeding through (post_blend_cleanup is doing its job) — but the bluer-rectangle halo scores 3 on halo_presence vs P3-A5's clean 5. Edge_reflex on letters is fine (4) — the looser feather softens edges gently rather than smearing. Net: looser feather=12 noticeably regressed halo_presence as predicted.",
+  "min_score": 3
+}

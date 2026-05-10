@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Left side-banner Red Bull on the bright blue boundary panel. Letters look notably cleaner than P3-A4/a2 baseline — the mask_dilate=8 trim removed most of the perimeter glow and the letter-edge ghost is reduced. There is still a very mild softness on the upper edges of the wordmark and around the bulls' wing-tips (edge_reflex around 4, not 5 — original YoPRO is crisper than our Red Bull bake). Hue/saturation match the painted advertiser ad in the top row. No rectangular boundary seam; the patch perimeter is invisible against the panel.",
+  "min_score": 4
+}

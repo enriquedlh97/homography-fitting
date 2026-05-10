@@ -1,0 +1,5 @@
+# walkover
+
+Frames 685-723. Consecutive frames strip: legs/feet correctly occlude the Red Bull lockup throughout the cross — hull mask holds, no painted-on-top failure. Forensic sheets: residual MELBOURNE pixels still detectable in the leak-overlay panels at entry (f0685) and exit (f0723), unchanged from the a2 baseline because the floor obj wasn't re-exported.
+
+The rubric question this run is built to answer is `temporal.player_contact_shadow`. With x4 (strength=0.7, radius=10, blur=6) the contact shadow at f0704 is denser and more concentrated than P3-A33/a2 (0.6/15/10): the dark patch clusters tightly under the contact foot instead of spreading into a soft puddle. Reads more like a real cast shadow, more photographically credible. Score stays at 4 (same as a2) — slightly better grounding tradeoff against slightly more visible darkness, net neutral on the integer scale. Has NOT crossed into painted-blob territory; the localization is what saves it. Halo around bulls (3) and small leak residuals (4) keep min_score at 3.

@@ -1,0 +1,18 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 5,
+    "edge_seam_visibility": 5,
+    "texture_match": 5
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 5,
+    "saturation_match": 5
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Full-court crops_strip shows the entire scene at low resolution. Original (top row) and composite (bottom row) are visually indistinguishable at this scale across the five sampled frames. Court geometry is correct, lighting and tone match, banners and floor panels read as part of the scene. No artifacts visible at full-court zoom; per-region issues (floor halo, mild left-banner reflex) only become visible in the cropped strips.",
+  "min_score": 5
+}

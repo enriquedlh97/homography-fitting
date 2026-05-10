@@ -1,0 +1,7 @@
+{
+  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
+  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
+  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
+  "notes": "Red Bull composite on the left side panel matches the YoPRO original quality bar. The blue panel base and the diagonal seam line are preserved. Logo perspective tracks the panel rake correctly; size is consistent across early/mid/late strips. No edge halo, no color shift, no jitter visible.",
+  "min_score": 5
+}

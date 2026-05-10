@@ -1,0 +1,3 @@
+# left — viewer notes
+
+The diagonal side banner is geometrically locked — the Red Bull mark follows the YoPRO band exactly. A casual viewer would accept it, but the rubric v2 calibration callout fires here: side-by-side with the crisp YoPRO original, the composite Red Bull rings and the 'Red Bull' letters show a soft echo / ring around glyph edges. It reads as faint smearing rather than a hard ghost, but it is consistent across early, mid, and late motion strips. No luminance halo around the band — the saturated blue hides any rim glow. Color and brightness are good. Net: this is a plausible-looking insertion that fails specifically on the calibration-flagged edge-reflex axis.

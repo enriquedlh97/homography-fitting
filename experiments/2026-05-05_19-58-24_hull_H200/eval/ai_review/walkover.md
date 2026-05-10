@@ -1,0 +1,3 @@
+# walkover — what would a viewer notice?
+
+The walkover window (frames 685-723) is the strictest test in this run and it holds. Across all five forensic sheets — entry f685, pre-contact f694, contact f704, post-contact f713, exit f723 — the composite Red Bull mark sits cleanly under the player's feet with no seam, no jitter, and no boundary pop. The consecutive-frames strip confirms no temporal tear across the crossing. Original-survival panels show a residual MELBOURNE outline at the high-stress f723 exit, but the rendered composite is a clean Red Bull. The persistent weakness is player_contact_shadow: the mark stays opaque where feet land rather than darkening at contact. That is unchanged from P3-A5 and orthogonal to the dilate experiment.

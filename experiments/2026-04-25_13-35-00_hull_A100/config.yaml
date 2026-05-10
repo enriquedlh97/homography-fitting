@@ -1,0 +1,230 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.1
+      lum_strength: 0.0
+      shade_blend: false
+      inpaint_method: median_fill
+      mask_dilate_px: 20
+      alpha_feather_px: 1
+      quad_pad_px: 20
+      local_color_match: true
+      blend_mode: led
+    surface_overrides:
+      court_floor:
+        inpaint_method: ns
+        inpaint_radius: 3
+        mask_dilate_px: 8
+        inpaint_feather_px: 10
+        local_color_match: false
+        shade_blend: true
+        lum_strength: 0.0
+        alpha_feather_px: 3
+      side_panel:
+        inpaint_method: ns
+        inpaint_radius: 3
+        mask_dilate_px: 10
+        inpaint_feather_px: 5
+        local_color_match: false
+        lum_strength: 0.0
+  occlusion_masker:
+    type: person
+    confidence_threshold: 0.5
+  tracking:
+    corner_source: homography_offset
+    ema_alpha: 0.7
+  camera:
+    focal_length: null
+input:
+  video: data/tennis-clip.mp4
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 1
+    points:
+    - - 680
+      - 34
+    - - 683
+      - 66
+    - - 832
+      - 66
+    - - 831
+      - 35
+  - obj_id: 2
+    points:
+    - - 868
+      - 37
+    - - 870
+      - 66
+    - - 1024
+      - 66
+    - - 1025
+      - 34
+  - obj_id: 3
+    points:
+    - - 1070
+      - 38
+    - - 1069
+      - 63
+    - - 1225
+      - 66
+    - - 1225
+      - 38
+  - obj_id: 4
+    points:
+    - - 1269
+      - 54
+    - - 1271
+      - 35
+    - - 1415
+      - 38
+    - - 1414
+      - 56
+  - obj_id: 5
+    points:
+    - - 1444
+      - 36
+    - - 1441
+      - 53
+    - - 1587
+      - 61
+    - - 1586
+      - 41
+    - - 1517
+      - 36
+    - - 1516
+      - 56
+    - - 1553
+      - 59
+  - obj_id: 6
+    points:
+    - - 498
+      - 35
+    - - 498
+      - 61
+    - - 555
+      - 64
+    - - 627
+      - 65
+    - - 629
+      - 32
+    - - 569
+      - 32
+  - obj_id: 7
+    points:
+    - - 331
+      - 34
+    - - 333
+      - 64
+    - - 388
+      - 69
+    - - 445
+      - 65
+    - - 463
+      - 65
+    - - 461
+      - 34
+    - - 401
+      - 31
+  - obj_id: 8
+    surface_type: court_floor
+    points:
+    - - 800
+      - 848
+    - - 960
+      - 845
+    - - 1100
+      - 848
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 744
+    - 833
+    - 1176
+    - 862
+    placement_quad:
+    - - 760
+      - 815
+    - - 1160
+      - 815
+    - - 1180
+      - 870
+    - - 740
+      - 870
+  - obj_id: 9
+    surface_type: court_floor
+    points:
+    - - 270
+      - 535
+    - - 330
+      - 535
+    labels:
+    - 1
+    - 1
+    box:
+    - 222
+    - 521
+    - 382
+    - 547
+    placement_quad:
+    - - 225
+      - 505
+    - - 395
+      - 508
+    - - 400
+      - 558
+    - - 218
+      - 555
+  - obj_id: 10
+    surface_type: side_panel
+    points:
+    - - 168
+      - 286
+    labels:
+    - 1
+    box:
+    - 135
+    - 240
+    - 205
+    - 320
+    placement_quad:
+    - - 135
+      - 260
+    - - 185
+      - 240
+    - - 205
+      - 300
+    - - 155
+      - 320
+  - obj_id: 11
+    surface_type: side_panel
+    points:
+    - - 215
+      - 260
+    labels:
+    - 1
+    box:
+    - 185
+    - 220
+    - 255
+    - 300
+    placement_quad:
+    - - 185
+      - 240
+    - - 235
+      - 220
+    - - 255
+      - 280
+    - - 205
+      - 300
+output:
+  dir: experiments/

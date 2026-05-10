@@ -1,0 +1,3 @@
+# walkover — unchanged from P3-A5 baseline
+
+Across the five forensic sheets (entry f0685, pre f0694, contact f0704, post f0713, exit f0723) the player feet and lower legs occlude the Red Bull wordmark cleanly with no leak through the player silhouette. The suspected_leak overlay column matches baseline visually. consecutive_frames strip from f0685-f0724 stays rock-steady — no patch wobble or jitter visible at the patch boundary. shade_strength=0.6 produces no visible change to walkover behavior; the small delta_E tightening on the floor does not show up in the walkover crops. The standing weakness remains player_contact_shadow: the wordmark is fully opaque under the planted foot rather than darkened in contact. No new halo or edge reflex introduced.

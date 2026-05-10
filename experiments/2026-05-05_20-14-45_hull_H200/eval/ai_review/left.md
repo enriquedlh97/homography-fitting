@@ -1,0 +1,3 @@
+# left — unchanged by shade_strength
+
+Left banner is off the experiment axis. The Red Bull wordmark and bull/rings replace YoPRO with no rectangular seam, no halo, and no obvious smearing on letter edges across early/mid/late motion strips. A very subtle softness around the bull rings keeps me from rating edge_reflex a perfect 5 — it is not the canonical Red Bull-on-Melbourne reflex case, but the strokes are not as crisp as the original YoPRO chrome. Color and saturation match the blue banner fabric well; brightness is a half-stop under the original white. Geometry locked (zero corner jump). A scrubbing viewer would not flag this as pasted-on.

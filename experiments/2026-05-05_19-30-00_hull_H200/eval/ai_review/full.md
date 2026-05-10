@@ -1,0 +1,3 @@
+# full — visual review
+
+At full-frame broadcast scale all three insertions read as plausible painted-on advertising. Side banners, back banner, and floor logo sit at correct positions, correct scale, and correct perspective. The floor-region seam noted at zoomed-in inspection is below the visibility threshold from the broadcast camera distance — a casual viewer scrubbing the full frame would not flag any region. No jitter across the strip; no perimeter pop. Color/brightness/saturation track the surrounding panel and court tones cleanly. This region is the sanity-check view; it confirms that the per-region issues do not propagate to the show-level perception.

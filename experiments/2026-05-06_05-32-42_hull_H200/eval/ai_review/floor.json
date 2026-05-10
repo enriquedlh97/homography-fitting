@@ -1,0 +1,25 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 5,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 5,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 4
+  },
+  "temporal": {
+    "occlusion_realism": 4,
+    "jitter_visible": 5,
+    "player_contact_shadow": 4
+  },
+  "notes": "Floor logo region is unchanged from a2 (config delta is obj_4 only, which is the LEFT banner, not the floor). Across early/mid/late motion strips the Red Bull wordmark and bulls icon read flat on the matte court paint without a perimeter halo. Letter edges show only a thin residual softness, not a ghost band — comparable to the original Melbourne wordmark above. Hue tracks the blue court paint correctly. Geometry stays locked across the dolly-in. No new artifacts vs a2 baseline.",
+  "min_score": 4
+}

@@ -1,0 +1,3 @@
+# full — viewer scrub notes
+
+At full-frame scale the composite is indistinguishable from the original broadcast: same court, same crowd, same lighting envelope. The three replacement regions (back banner, left panel, floor) each blend into the surrounding scene without visual weight — your eye does not snap to any of them as "the fake one." Comparing rows side by side, the only differences are the actual brand swaps (Kia/YoPRO/Melbourne -> Red Bull); no background bleed, no banding artifacts, no scaling tells. A scrubbing viewer at normal playback speed would have no cue that any insertion happened. This is gold-equivalent at the wide shot.

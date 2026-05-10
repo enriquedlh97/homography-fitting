@@ -1,0 +1,138 @@
+pipeline:
+  mode: video_hybrid
+  segmenter:
+    type: sam2_image
+    checkpoint: sam2/checkpoints/sam2.1_hiera_tiny.pt
+    model_cfg: configs/sam2.1/sam2.1_hiera_t.yaml
+  fitter:
+    type: hull
+  compositor:
+    type: inpaint
+    params:
+      padding: 0.1
+      lum_strength: 0.0
+      shade_blend: false
+      inpaint_method: median_fill
+      mask_dilate_px: 20
+      alpha_feather_px: 1
+      quad_pad_px: 20
+      local_color_match: true
+      blend_mode: led
+      erase_only: true
+    surface_overrides:
+      court_floor:
+        padding: 0.0
+        alpha_scale: 1.0
+        alpha_feather_px: 25
+        erase_text: false
+        erase_only: false
+        shade_strength: 0.0
+        quad_expand_px: 80
+        occlusion_dilate_px: 2
+  occlusion_masker:
+    type: matanyone2
+    confidence_threshold: 0.5
+    mask_smooth: true
+    mask_close_px: 5
+    mask_dilate_px: 2
+  tracking:
+    corner_source: bbox
+  camera:
+    focal_length: null
+input:
+  video: experiments/previews/walkover_v58_first_frame_input.mp4
+  clean_video: data/clean_court_de_35px_temporal_median_quad.mp4
+  clean_video_quad:
+  - - 649
+    - 840
+  - - 1268
+    - 840
+  - - 1268
+    - 1038
+  - - 649
+    - 1038
+  clean_video_dilate_px: 25
+  clean_video_core_dilate_px: 3
+  clean_video_feather_px: 20
+  clean_video_quad_feather_px: 60
+  clean_video_temporal_window: 0
+  clean_video_lumin_match: true
+  clean_video_lumin_blur_px: 51
+  clean_video_text_cleanup: true
+  clean_video_text_threshold: 130
+  clean_video_text_alpha_thresh: 0.7
+  clean_video_text_focus_cleanup: true
+  clean_video_text_focus_box:
+  - 760
+  - 880
+  - 1180
+  - 985
+  clean_video_text_focus_ref_width: 1912
+  clean_video_text_focus_ref_height: 1074
+  clean_video_text_focus_threshold: 122
+  clean_video_text_focus_alpha_thresh: 0.62
+  clean_video_text_focus_dilate_px: 2
+  clean_video_text_focus_replace_alpha: 0.85
+  clean_video_underfoot_decontaminate: true
+  clean_video_underfoot_box:
+  - 600
+  - 780
+  - 1160
+  - 1020
+  clean_video_underfoot_ref_width: 1912
+  clean_video_underfoot_ref_height: 1074
+  clean_video_underfoot_alpha_min: 0.03
+  clean_video_underfoot_alpha_max: 0.72
+  clean_video_underfoot_delta_threshold: 22.0
+  clean_video_underfoot_survival_threshold: 0.55
+  clean_video_underfoot_bright_threshold: 118
+  clean_video_underfoot_dilate_px: 1
+  clean_video_underfoot_close_px: 1
+  clean_video_underfoot_replace_alpha: 0.88
+  clean_video_residue_cleanup: false
+  clean_video_post_blend_cleanup: true
+  clean_video_post_blend_threshold: 130
+  clean_video_post_blend_alpha: 0.3
+  clean_video_post_blend_blur_px: 5
+  logo: data/logos/redbull_white.png
+  prompts:
+  - obj_id: 3
+    surface_type: court_floor
+    points:
+    - - 758
+      - 939
+    - - 957
+      - 939
+    - - 1117
+      - 939
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 729
+    - 920
+    - 1188
+    - 958
+  - obj_id: 4
+    surface_type: court_floor
+    compositor_params:
+      fill_canvas_background: false
+    points:
+    - - 198
+      - 611
+    - - 285
+      - 611
+    - - 324
+      - 611
+    labels:
+    - 1
+    - 1
+    - 1
+    box:
+    - 180
+    - 598
+    - 346
+    - 625
+output:
+  dir: experiments/

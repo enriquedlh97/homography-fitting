@@ -1,0 +1,20 @@
+{
+  "realism": {
+    "painted_on_vs_pasted_on": 4,
+    "edge_seam_visibility": 4,
+    "texture_match": 4,
+    "halo_presence": 4,
+    "edge_reflex": 4
+  },
+  "color": {
+    "hue_match": 4,
+    "brightness_match": 4,
+    "saturation_match": 4
+  },
+  "geometry": {
+    "perspective_plausibility": 5,
+    "size_plausibility": 5
+  },
+  "notes": "Back-wall banners are dim and small in frame; original (top row) is the Kia mark, composite is Red Bull. Composite reads as a reasonable banner: wordmark is dark-on-banner without a bright halo glow, letter edges clean within the resolution available. No obvious side-effect from the mask_dilate_px reduction — back banners look consistent across early/mid/late strips, no visible new ringing or smear introduced. Color slightly cooler than the original's banner tone but plausible. Geometry/perspective is plausible across pan. Edge_reflex 4: small region, hard to spot ringing, but no obvious artifact. Halo_presence 4: no bright glow, faint perimeter softness only.",
+  "min_score": 4
+}
