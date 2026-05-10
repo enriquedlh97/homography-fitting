@@ -62,8 +62,7 @@ of the iterations on the static clip:
 | `sponsor logo on fixed courtside advertising board` | `2026-05-03_22-01-40_sam3_pca_A100-80GB` | 11 detected | 3.37 | better, still misses lateral banners |
 | `sponsor logo on fixed advertising board at the bottom of the field on the court, one lateral` | — | 13 segmented | 2.70 | wordy, no real gain |
 | `sponsor logo on fixed advertising board on tennis court perimeter` | — | 6 segmented | 4.11 | too restrictive |
-| **`sponsor logo on fixed advertising board`** ✅ | `2026-05-03_22-39-21_sam3_pca_A100-80GB` | 12 detected | 3.11 | **chosen final prompt** |
-| `sponsor logo on fixed advertising board` (rerun) | `2026-05-06_16-13-17_sam3_pca_A100-80GB` | 9 segmented | 3.95 | confirms stability |
+| **`sponsor logo on fixed advertising board`** ✅ | `2026-05-06_16-13-17_sam3_pca_A100-80GB` | 9 segmented | 3.95 | **chosen final prompt** |
 | `KIA sponsor logo on fixed advertising board` | `2026-05-07_17-09-30_sam3_pca_A100-80GB` | 8 detected | **4.09** | brand-specific prompt, fastest run |
 
 ## Takeaway
