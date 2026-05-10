@@ -71,6 +71,59 @@ class _FakeCompositor:
         return frame
 
 
+class _FakeTemporalRectifiedCompositor:
+    name = "temporal_rectified"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def composite(
+        self,
+        frame: np.ndarray,
+        _corners: np.ndarray,
+        _overlay: np.ndarray,
+        mask: np.ndarray | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        self.calls.append(
+            {
+                "obj_id": kwargs["obj_id"],
+                "surface_type": kwargs["surface_type"],
+                "frame_idx": kwargs["frame_idx"],
+                "geometry_fit_method": kwargs["geometry_fit_method"],
+                "geometry_held": kwargs["geometry_held"],
+                "mask_present": mask is not None,
+            }
+        )
+        return frame
+
+    def finalize_metrics(self):
+        return {
+            "compositor_runtime_enabled": True,
+            "compositor_object_model": {
+                str(int(call["obj_id"])): "temporal_wall_plate"
+                if call["surface_type"] == "back_wall_banner"
+                else "delegated_inpaint"
+                for call in self.calls
+            },
+            "compositor_object_stats": {
+                str(int(call["obj_id"])): {
+                    "plate_init_frame": 0,
+                    "plate_reused_frames": 1,
+                    "plate_reset_count": 0,
+                    "delegated_inpaint_frames": 0
+                    if call["surface_type"] == "back_wall_banner"
+                    else 1,
+                    "court_shading_updates": 0,
+                }
+                for call in self.calls
+            },
+        }
+
+    def render_debug_artifacts(self) -> dict[str, np.ndarray]:
+        return {"compositor_rectified_obj_1": np.zeros((8, 24, 3), dtype=np.uint8)}
+
+
 def _video_config() -> dict:
     return {
         "pipeline": {
@@ -202,10 +255,13 @@ class _FakeGeometryEngine:
         corners_map = {}
         for prompt in self.prompts:
             obj_id = int(prompt.obj_id)
-            self.details[obj_id] = SimpleNamespace(
-                fit_method="court_plane"
+            geometry_model = getattr(prompt, "geometry_model", None) or (
+                "court_plane"
                 if getattr(prompt, "surface_type", "banner") == "court_marking"
-                else "fronto_parallel_wall_banner",
+                else "fronto_parallel_wall_banner"
+            )
+            self.details[obj_id] = SimpleNamespace(
+                fit_method=geometry_model,
                 held=False,
                 used_fallback=False,
             )
@@ -220,7 +276,11 @@ class _FakeGeometryEngine:
     def finalize_metrics(self):
         return {
             "geometry_runtime_enabled": True,
-            "geometry_active_objects": [int(prompt.obj_id) for prompt in self.prompts],
+            "geometry_active_objects": [
+                int(prompt.obj_id)
+                for prompt in self.prompts
+                if getattr(prompt, "geometry_model", None) != "mask_free_quad"
+            ],
             "geometry_frames_held": 0,
             "geometry_fallback_frames": 0,
             "vp_width_valid_ratio": 1.0,
@@ -229,27 +289,47 @@ class _FakeGeometryEngine:
             "court_depth_candidate_count": 4.0,
             "object_geometry_model": {
                 str(int(prompt.obj_id)): (
-                    "court_plane"
-                    if getattr(prompt, "surface_type", "banner") == "court_marking"
-                    else "fronto_parallel_wall_banner"
+                    getattr(prompt, "geometry_model", None)
+                    or (
+                        "court_plane"
+                        if getattr(prompt, "surface_type", "banner") == "court_marking"
+                        else "fronto_parallel_wall_banner"
+                    )
                 )
                 for prompt in self.prompts
             },
             "back_wall_runtime_model": {
-                str(int(prompt.obj_id)): "fronto_parallel_wall_banner"
+                str(int(prompt.obj_id)): (
+                    getattr(prompt, "geometry_model", None) or "fronto_parallel_wall_banner"
+                )
                 for prompt in self.prompts
                 if getattr(prompt, "surface_type", "banner") == "back_wall_banner"
             },
             "side_wall_runtime_model": {
-                str(int(prompt.obj_id)): "vp_constrained_vertical_banner"
+                str(int(prompt.obj_id)): (
+                    getattr(prompt, "geometry_model", None) or "vp_constrained_vertical_banner"
+                )
                 for prompt in self.prompts
                 if getattr(prompt, "surface_type", "banner") == "side_wall_banner"
             },
+            "geometry_object_jitter_stats": {
+                str(int(prompt.obj_id)): {
+                    "count_samples": 1,
+                    "median_corner_rms_px": 0.0,
+                    "p95_corner_rms_px": 0.0,
+                }
+                for prompt in self.prompts
+            },
             "geometry_fit_method_counts": {
                 str(int(prompt.obj_id)): {
-                    "court_plane"
-                    if getattr(prompt, "surface_type", "banner") == "court_marking"
-                    else "fronto_parallel_wall_banner": 2
+                    (
+                        getattr(prompt, "geometry_model", None)
+                        or (
+                            "court_plane"
+                            if getattr(prompt, "surface_type", "banner") == "court_marking"
+                            else "fronto_parallel_wall_banner"
+                        )
+                    ): 2
                 }
                 for prompt in self.prompts
             },
@@ -441,6 +521,7 @@ def test_run_pipeline_video_uses_geometry_for_supported_non_banner_surfaces(
         "1": "fronto_parallel_wall_banner",
         "2": "court_plane",
     }
+    assert metrics["geometry_object_jitter_stats"]["1"]["median_corner_rms_px"] == 0.0
     assert metrics["geometry_fit_method_counts"]["2"] == {"court_plane": 2}
     assert metrics["object_valid_frame_coverage"]["2"] == {
         "frames_valid": 2,
@@ -599,6 +680,89 @@ def test_run_pipeline_video_fails_when_geometry_is_enabled_but_runtime_metrics_a
     ]
 
     with pytest.raises(RuntimeError, match="geometry was enabled"):
+        pipeline_mod.run_pipeline_video(
+            config,
+            output_path=str(tmp_path / "output.mp4"),
+        )
+
+
+def test_run_pipeline_video_records_temporal_compositor_metrics_and_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={0: {1: _banner_mask()}, 1: {1: _banner_mask()}},
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    temporal_compositor = _FakeTemporalRectifiedCompositor()
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: temporal_compositor)
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+    monkeypatch.setattr(
+        pipeline_mod.court_geometry_mod,
+        "GeometryFittingEngine",
+        _FakeGeometryEngine,
+    )
+
+    config = _video_config()
+    config["pipeline"]["geometry"] = {"enabled": True}
+    config["pipeline"]["compositor"] = {"type": "temporal_rectified", "params": {}}
+    config["input"]["prompts"] = [
+        {"obj_id": 1, "points": [[10, 10]], "labels": [1], "surface_type": "back_wall_banner"}
+    ]
+
+    results = pipeline_mod.run_pipeline_video(
+        config,
+        output_path=str(tmp_path / "output.mp4"),
+    )
+
+    assert len(temporal_compositor.calls) == 2
+    assert temporal_compositor.calls[0]["obj_id"] == 1
+    assert temporal_compositor.calls[0]["surface_type"] == "back_wall_banner"
+    assert temporal_compositor.calls[0]["frame_idx"] == 0
+    assert temporal_compositor.calls[0]["geometry_fit_method"] == "fronto_parallel_wall_banner"
+    assert temporal_compositor.calls[0]["geometry_held"] is False
+    assert "compositor_rectified_obj_1" in results["preview_artifacts"]
+
+    metrics = results["metrics"]
+    assert metrics["compositor_config_enabled"] is True
+    assert metrics["compositor_runtime_enabled"] is True
+    assert metrics["compositor_total_s"] >= 0.0
+    assert metrics["compositor_object_model"] == {"1": "temporal_wall_plate"}
+    assert metrics["compositor_object_stats"]["1"]["plate_init_frame"] == 0
+
+
+def test_run_pipeline_video_fails_when_temporal_compositor_metrics_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    segmenter = _FakeVideoSegmenter(
+        video_segments={0: {1: _banner_mask()}, 1: {1: _banner_mask()}},
+        frame_dir=str(frame_dir),
+        frame_names=["00000.jpg", "00001.jpg"],
+    )
+    _install_common_video_mocks(monkeypatch, segmenter=segmenter)
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _QuadFitter())
+    monkeypatch.setattr(pipeline_mod, "StreamingVideoWriter", _FakeWriter)
+
+    class _BrokenTemporalCompositor(_FakeCompositor):
+        name = "temporal_rectified"
+
+        def finalize_metrics(self):
+            return {}
+
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: _BrokenTemporalCompositor())
+
+    config = _video_config()
+    config["pipeline"]["compositor"] = {"type": "temporal_rectified", "params": {}}
+
+    with pytest.raises(RuntimeError, match="compositor was enabled"):
         pipeline_mod.run_pipeline_video(
             config,
             output_path=str(tmp_path / "output.mp4"),

@@ -153,14 +153,21 @@ def test_sam3_default_config_enables_geometry_for_tennis_banners() -> None:
     court_eval_cfg = yaml.safe_load((ROOT / "configs" / "sam3_court_eval.yaml").read_text())
     fast_cfg = yaml.safe_load((ROOT / "configs" / "matrix" / "1prompt_fast.yaml").read_text())
 
-    assert sam3_cfg["pipeline"]["compositor"]["type"] == "inpaint"
+    assert sam3_cfg["pipeline"]["compositor"]["type"] == "temporal_rectified"
     assert sam3_cfg["pipeline"]["geometry"]["enabled"] is True
+    assert sam3_cfg["pipeline"]["geometry"]["back_wall_line_smoothing_alpha"] == 0.9
     assert court_eval_cfg["pipeline"]["geometry"]["enabled"] is True
+    assert court_eval_cfg["pipeline"]["compositor"]["type"] == "temporal_rectified"
     assert fast_cfg["pipeline"]["compositor"]["type"] == "alpha"
     assert [prompt["surface_type"] for prompt in sam3_cfg["input"]["prompts"]] == [
         "back_wall_banner",
         "side_wall_banner",
         "back_wall_banner",
+    ]
+    assert [prompt.get("geometry_model") for prompt in sam3_cfg["input"]["prompts"]] == [
+        None,
+        "mask_free_quad",
+        None,
     ]
     assert [prompt["surface_type"] for prompt in court_eval_cfg["input"]["prompts"]] == [
         "court_marking"

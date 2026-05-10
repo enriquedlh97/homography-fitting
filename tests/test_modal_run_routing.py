@@ -139,6 +139,36 @@ def test_modal_run_git_output_returns_trimmed_stdout(monkeypatch: pytest.MonkeyP
     assert module._git_output("branch", "--show-current") == "feat/court-geometry-stabilisation"
 
 
+def test_workspace_state_summary_is_clean_when_git_status_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_modal_run_module(monkeypatch, "A100")
+    monkeypatch.setattr(module, "_git_output", lambda *_args: None)
+
+    assert module._workspace_state_summary() == (False, None)
+
+
+def test_workspace_state_summary_hashes_dirty_status_and_diff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_modal_run_module(monkeypatch, "A100")
+
+    def _fake_git_output(*args: str) -> str | None:
+        if args[:2] == ("status", "--short"):
+            return " M src/banner_pipeline/court_geometry.py\n?? configs/sam3_court_eval.yaml"
+        if args[:2] == ("diff", "--binary"):
+            return "diff --git a/x b/x\n+test"
+        return None
+
+    monkeypatch.setattr(module, "_git_output", _fake_git_output)
+
+    dirty, digest = module._workspace_state_summary()
+
+    assert dirty is True
+    assert digest is not None
+    assert len(digest) == 64
+
+
 @pytest.mark.parametrize("gpu", ["A100", "H100", "H200"])
 def test_modal_run_uses_fa2_image_for_supported_sam3_gpus(
     monkeypatch: pytest.MonkeyPatch,

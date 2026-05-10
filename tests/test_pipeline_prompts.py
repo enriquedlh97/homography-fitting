@@ -58,6 +58,54 @@ class _PreviewCompositor:
         return preview
 
 
+class _TemporalPreviewCompositor:
+    name = "temporal_rectified"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def composite(
+        self,
+        frame: np.ndarray,
+        _corners: np.ndarray,
+        _overlay: np.ndarray,
+        mask: np.ndarray | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        self.calls.append(
+            {
+                "obj_id": kwargs["obj_id"],
+                "surface_type": kwargs["surface_type"],
+                "frame_idx": kwargs["frame_idx"],
+                "geometry_fit_method": kwargs["geometry_fit_method"],
+                "geometry_held": kwargs["geometry_held"],
+                "mask_present": mask is not None,
+            }
+        )
+        return frame
+
+    def finalize_metrics(self):
+        return {
+            "compositor_runtime_enabled": True,
+            "compositor_object_model": {
+                str(int(call["obj_id"])): "temporal_wall_plate" for call in self.calls
+            },
+            "compositor_object_stats": {
+                str(int(call["obj_id"])): {
+                    "plate_init_frame": int(call["frame_idx"]),
+                    "plate_reused_frames": 0,
+                    "plate_reset_count": 0,
+                    "delegated_inpaint_frames": 0,
+                    "court_shading_updates": 0,
+                }
+                for call in self.calls
+            },
+        }
+
+    def render_debug_artifacts(self) -> dict[str, np.ndarray]:
+        return {"compositor_rectified_obj_1": np.zeros((8, 24, 3), dtype=np.uint8)}
+
+
 class _WarnAlphaPreviewCompositor:
     name = "alpha"
 
@@ -254,6 +302,14 @@ class _PreviewGeometryEngine:
             },
             "back_wall_runtime_model": {},
             "side_wall_runtime_model": {},
+            "geometry_object_jitter_stats": {
+                str(int(prompt.obj_id)): {
+                    "count_samples": 0,
+                    "median_corner_rms_px": 0.0,
+                    "p95_corner_rms_px": 0.0,
+                }
+                for prompt in self.prompts
+            },
             "geometry_fit_method_counts": {
                 str(int(prompt.obj_id)): {"court_plane": 1} for prompt in self.prompts
             },
@@ -347,6 +403,98 @@ def test_run_pipeline_uses_sam3_preview_mode(
     assert results["metrics"]["preview_objects_with_masks"] == 1
     assert results["metrics"]["preview_objects_with_quads"] == 1
     assert results["metrics"]["preview_ok"] is True
+
+
+def test_run_pipeline_preview_records_temporal_compositor_metrics_and_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "pipeline": {
+            "mode": "image",
+            "segmenter": {"type": "sam3_video"},
+            "fitter": {"type": "pca", "params": {}},
+            "compositor": {"type": "temporal_rectified", "params": {}},
+            "camera": {"focal_length": None},
+            "geometry": {"enabled": True},
+        },
+        "input": {
+            "video": "/tmp/input.mp4",
+            "logo": "/tmp/logo.png",
+            "prompts": [
+                {
+                    "obj_id": 1,
+                    "points": [[10, 10], [14, 10], [10, 4]],
+                    "labels": [1, 1, 0],
+                    "frame_idx": 5,
+                    "surface_type": "back_wall_banner",
+                }
+            ],
+        },
+    }
+    preview_segmenter = _FakePreviewSegmenter()
+    temporal_compositor = _TemporalPreviewCompositor()
+    monkeypatch.setattr(pipeline_mod, "build_video_segmenter", lambda _cfg: preview_segmenter)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "build_segmenter",
+        lambda _cfg: pytest.fail("run_pipeline should not use the single-frame segmenter for SAM3"),
+    )
+    monkeypatch.setattr(pipeline_mod, "build_fitter", lambda _cfg: _PreviewFitter())
+
+    class _GeometryEngine:
+        def __init__(self, **_kwargs) -> None:
+            self.details = {
+                1: SimpleNamespace(
+                    fit_method="fronto_parallel_wall_banner",
+                    held=False,
+                    used_fallback=False,
+                )
+            }
+
+        def fit_frame(self, **_kwargs):
+            return ({1: np.array([[1, 1], [14, 1], [14, 10], [1, 10]], dtype=np.float32)}, {})
+
+        def finalize_metrics(self):
+            return {
+                "geometry_runtime_enabled": True,
+                "geometry_total_s": 0.01,
+                "geometry_active_objects": [1],
+                "object_geometry_model": {"1": "fronto_parallel_wall_banner"},
+                "back_wall_runtime_model": {"1": "fronto_parallel_wall_banner"},
+                "side_wall_runtime_model": {},
+                "geometry_object_jitter_stats": {
+                    "1": {
+                        "count_samples": 0,
+                        "median_corner_rms_px": 0.0,
+                        "p95_corner_rms_px": 0.0,
+                    }
+                },
+                "geometry_fit_method_counts": {"1": {"fronto_parallel_wall_banner": 1}},
+            }
+
+        def render_debug_overlay(self, frame_bgr: np.ndarray) -> np.ndarray:
+            return frame_bgr
+
+    monkeypatch.setattr(pipeline_mod.court_geometry_mod, "GeometryFittingEngine", _GeometryEngine)
+    monkeypatch.setattr(pipeline_mod, "build_compositor", lambda _cfg: temporal_compositor)
+    monkeypatch.setattr(
+        pipeline_mod.cv2,
+        "imread",
+        lambda _path, flags=None: (
+            np.zeros((8, 8, 4), dtype=np.uint8)
+            if flags == pipeline_mod.cv2.IMREAD_UNCHANGED
+            else np.zeros((24, 32, 3), dtype=np.uint8)
+        ),
+    )
+
+    results = pipeline_mod.run_pipeline(config)
+
+    assert temporal_compositor.calls[0]["surface_type"] == "back_wall_banner"
+    assert temporal_compositor.calls[0]["geometry_fit_method"] == "fronto_parallel_wall_banner"
+    assert "compositor_rectified_obj_1" in results["preview_artifacts"]
+    assert results["metrics"]["compositor_config_enabled"] is True
+    assert results["metrics"]["compositor_runtime_enabled"] is True
+    assert results["metrics"]["compositor_object_model"] == {"1": "temporal_wall_plate"}
 
 
 def test_run_pipeline_skips_court_marking_prompts_in_sam3_preview_when_geometry_disabled(

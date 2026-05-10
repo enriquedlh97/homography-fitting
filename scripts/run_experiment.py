@@ -67,6 +67,10 @@ def main():
     if mode == "video":
         if results.get("output_path"):
             print(f"  Video: {results['output_path']}")
+        for name, image in results.get("preview_artifacts", {}).items():
+            out_path = os.path.join(outputs_dir, f"{name}.png")
+            cv2.imwrite(out_path, image)
+            print(f"  Saved: {out_path}")
     else:
         preview_artifacts = results.get("preview_artifacts", {})
         if preview_artifacts:

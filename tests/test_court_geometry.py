@@ -4,8 +4,10 @@ import cv2
 import numpy as np
 
 from banner_pipeline import court_geometry as court_geometry_mod
+from banner_pipeline.fitting.base import QuadFitter
 from banner_pipeline.fitting.fronto_parallel import FrontoParallelBannerFitter
 from banner_pipeline.fitting.vp_constrained import VPConstrainedBannerFitter
+from banner_pipeline.segment.base import ObjectPrompt
 
 
 def _horizontal_banner_mask(*, jagged: bool = False) -> np.ndarray:
@@ -64,6 +66,15 @@ def _synthetic_court_frame(*, width_shift_px: int = 0, add_clutter: bool = False
         cv2.line(frame, (302, 4), (302, 170), (255, 255, 255), 3, cv2.LINE_AA)
 
     return frame
+
+
+class _QuadFitter(QuadFitter):
+    def fit(self, mask: np.ndarray, **kwargs) -> np.ndarray | None:  # noqa: ARG002
+        return np.array([[24, 40], [196, 40], [196, 72], [24, 72]], dtype=np.float32)
+
+    @property
+    def name(self) -> str:
+        return "stub"
 
 
 def test_fronto_parallel_wall_banner_fitter_keeps_parallel_edges_on_jagged_masks() -> None:
@@ -172,3 +183,49 @@ def test_court_geometry_estimator_resets_state_on_large_cut() -> None:
     assert cut_estimate.geometry_confidence == 0.0
     assert cut_estimate.width_family_confidence == 0.0
     assert cut_estimate.depth_family_confidence == 0.0
+
+
+def test_geometry_engine_hard_holds_back_wall_quads_on_tiny_jitter() -> None:
+    engine = court_geometry_mod.GeometryFittingEngine(
+        config={
+            "enabled": True,
+            "back_wall_line_smoothing_alpha": 0.9,
+        },
+        prompts=[
+            ObjectPrompt(
+                obj_id=2,
+                points=np.array([[10.0, 10.0]], dtype=np.float32),
+                labels=np.array([1], dtype=np.int32),
+                surface_type="back_wall_banner",
+            )
+        ],
+        fallback_fitter=_QuadFitter(),
+        fitter_params={},
+    )
+    frame = np.zeros((120, 220, 3), dtype=np.uint8)
+    base_mask = _horizontal_banner_mask()
+    jittered_mask = np.zeros_like(base_mask)
+    jittered_mask[41:73, 24:196] = 255
+
+    corners_a, rejections_a = engine.fit_frame(
+        frame_idx=0,
+        frame_bgr=frame,
+        masks_by_obj={2: base_mask},
+        frame_shape=frame.shape[:2],
+    )
+    corners_b, rejections_b = engine.fit_frame(
+        frame_idx=1,
+        frame_bgr=frame.copy(),
+        masks_by_obj={2: jittered_mask},
+        frame_shape=frame.shape[:2],
+    )
+
+    assert rejections_a == {}
+    assert rejections_b == {}
+    np.testing.assert_allclose(corners_a[2], corners_b[2])
+    assert engine.details[2].fit_method == "hold_last_good"
+
+    metrics = engine.finalize_metrics()
+    assert metrics["geometry_fit_method_counts"]["2"]["hold_last_good"] == 1
+    assert metrics["geometry_object_jitter_stats"]["2"]["count_samples"] == 1
+    assert metrics["geometry_object_jitter_stats"]["2"]["median_corner_rms_px"] == 0.0

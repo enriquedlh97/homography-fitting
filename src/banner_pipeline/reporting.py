@@ -35,12 +35,19 @@ _PASSTHROUGH_KEYS = [
     "object_geometry_model",
     "back_wall_runtime_model",
     "side_wall_runtime_model",
+    "geometry_object_jitter_stats",
     "geometry_fit_method_counts",
     "stabilization_config_enabled",
     "stabilization_runtime_enabled",
     "stabilization_object_stats",
+    "compositor_config_enabled",
+    "compositor_runtime_enabled",
+    "compositor_object_model",
+    "compositor_object_stats",
     "git_branch",
     "git_commit_sha",
+    "git_dirty",
+    "workspace_diff_sha256",
     "requested_config_path",
     "frozen_config_path",
     "frozen_config_sha256",
@@ -80,6 +87,7 @@ _NUMERIC_KEYS = [
     "stabilization_frames_held",
     "stabilization_frames_blended",
     "stabilization_frames_raw_accepted",
+    "compositor_total_s",
 ]
 
 

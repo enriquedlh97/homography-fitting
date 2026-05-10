@@ -30,6 +30,9 @@ SURFACE_TO_GEOMETRY_MODEL = {
     "court_marking": "court_plane",
 }
 SUPPORTED_GEOMETRY_SURFACE_TYPES = set(SURFACE_TO_GEOMETRY_MODEL)
+_BACK_WALL_HOLD_CORNER_RMS_PX = 1.25
+_BACK_WALL_HOLD_AREA_DELTA_RATIO = 0.12
+_GEOMETRY_NEAR_STATIC_FRAME_DIFF_THRESHOLD = 1.25
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class GeometryConfig:
     enabled: bool = False
     court_backend: str = "classical_lines_v1"
     vp_smoothing_alpha: float = 0.7
+    back_wall_line_smoothing_alpha: float = 0.9
     line_smoothing_alpha: float = 0.65
     hold_frames: int = 8
     fallback_after_frames: int = 3
@@ -53,6 +57,7 @@ class GeometryConfig:
             enabled=bool(config.get("enabled", False)),
             court_backend=str(config.get("court_backend", "classical_lines_v1")),
             vp_smoothing_alpha=float(config.get("vp_smoothing_alpha", 0.7)),
+            back_wall_line_smoothing_alpha=float(config.get("back_wall_line_smoothing_alpha", 0.9)),
             line_smoothing_alpha=float(config.get("line_smoothing_alpha", 0.65)),
             hold_frames=int(config.get("hold_frames", 8)),
             fallback_after_frames=int(config.get("fallback_after_frames", 3)),
@@ -81,6 +86,8 @@ class CourtGeometryEstimate:
     bottom_width_line: np.ndarray | None = None
     left_depth_line: np.ndarray | None = None
     right_depth_line: np.ndarray | None = None
+    frame_mean_abs_diff: float = 0.0
+    near_static: bool = True
     cut_reset: bool = False
 
 
@@ -218,6 +225,19 @@ def _filter_angle_inliers(
         if _angle_distance_deg(angle, center) <= angle_window_deg
     ]
     return filtered or segments
+
+
+def _quad_motion_stats(
+    prev_quad: np.ndarray,
+    quad: np.ndarray,
+) -> tuple[float, float]:
+    prev = prev_quad.astype(np.float32)
+    current = quad.astype(np.float32)
+    corner_rms_px = float(np.sqrt(np.mean(np.sum((current - prev) ** 2, axis=1))))
+    prev_area = quality_mod.polygon_area(prev)
+    current_area = quality_mod.polygon_area(current)
+    area_delta_ratio = abs(current_area - prev_area) / max(max(prev_area, current_area), 1.0)
+    return corner_rms_px, float(area_delta_ratio)
 
 
 def _detect_line_segments(frame_bgr: np.ndarray) -> list[np.ndarray]:
@@ -536,11 +556,12 @@ class CourtGeometryEstimator:
     def estimate(self, frame_bgr: np.ndarray) -> CourtGeometryEstimate:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         cut_reset = False
+        frame_mean_abs_diff = 0.0
         if self._prev_gray is not None:
-            diff = float(
+            frame_mean_abs_diff = float(
                 np.mean(np.abs(gray.astype(np.float32) - self._prev_gray.astype(np.float32)))
             )
-            if diff > 18.0:
+            if frame_mean_abs_diff > 18.0:
                 self._vp_width = None
                 self._vp_depth = None
                 self._dir_width = None
@@ -632,6 +653,8 @@ class CourtGeometryEstimator:
             right_depth_line=(
                 right_depth_line.astype(np.float32) if right_depth_line is not None else None
             ),
+            frame_mean_abs_diff=frame_mean_abs_diff,
+            near_static=frame_mean_abs_diff < _GEOMETRY_NEAR_STATIC_FRAME_DIFF_THRESHOLD,
             cut_reset=cut_reset,
         )
 
@@ -707,6 +730,12 @@ class GeometryFittingEngine:
             for prompt in prompts
             if (str(prompt.surface_type).strip().lower() or "banner") == "side_wall_banner"
         }
+        self.last_emitted_quads: dict[int, np.ndarray | None] = {
+            int(prompt.obj_id): None for prompt in prompts
+        }
+        self.object_jitter_samples: dict[str, list[float]] = {
+            str(int(prompt.obj_id)): [] for prompt in prompts
+        }
         self.geometry_active_objects = sorted(
             int(prompt.obj_id)
             for prompt in prompts
@@ -779,13 +808,35 @@ class GeometryFittingEngine:
                 rejection_reasons[obj_id] = flags
                 self._record_fit_method(obj_id, self.details[obj_id].fit_method)
                 continue
+            prev_quad = self.last_emitted_quads.get(obj_id)
+            if prev_quad is not None:
+                corner_rms_px, _area_delta_ratio = _quad_motion_stats(prev_quad, corners)
+                self.object_jitter_samples[str(obj_id)].append(corner_rms_px)
             corners_map[obj_id] = corners
+            accepted_corners = corners.astype(np.float32).copy()
+            self.last_emitted_quads[obj_id] = accepted_corners
+            self.states[obj_id].last_quad = accepted_corners
             self._record_fit_method(obj_id, self.details[obj_id].fit_method)
 
         return corners_map, rejection_reasons
 
     def finalize_metrics(self) -> dict[str, Any]:
         total_frames = max(self.frames_processed, 1)
+        jitter_stats = {}
+        for obj_id, samples in self.object_jitter_samples.items():
+            if samples:
+                arr = np.asarray(samples, dtype=np.float64)
+                jitter_stats[obj_id] = {
+                    "count_samples": int(arr.size),
+                    "median_corner_rms_px": round(float(np.median(arr)), 4),
+                    "p95_corner_rms_px": round(float(np.percentile(arr, 95)), 4),
+                }
+            else:
+                jitter_stats[obj_id] = {
+                    "count_samples": 0,
+                    "median_corner_rms_px": 0.0,
+                    "p95_corner_rms_px": 0.0,
+                }
         return {
             "geometry_total_s": None,
             "geometry_runtime_enabled": self.config.enabled and self.frames_processed > 0,
@@ -799,6 +850,7 @@ class GeometryFittingEngine:
             "object_geometry_model": self.object_geometry_model,
             "back_wall_runtime_model": self.back_wall_runtime_model,
             "side_wall_runtime_model": self.side_wall_runtime_model,
+            "geometry_object_jitter_stats": jitter_stats,
             "geometry_fit_method_counts": self.fit_method_counts,
         }
 
@@ -870,19 +922,17 @@ class GeometryFittingEngine:
 
         if geometry_model == "mask_free_quad" or not self.config.enabled:
             detail.fit_method = "mask_free_quad"
-            corners = self._fit_free_quad(
+            return self._fit_free_quad(
                 mask=mask,
                 mask_area_px=mask_area_px,
                 mask_bbox=mask_bbox,
                 frame_shape=frame_shape,
             )
-            if corners is not None:
-                state.last_quad = corners
-            return corners
 
         if geometry_model == "court_plane":
             if estimate.court_homography is None:
                 return self._hold_or_fallback(
+                    obj_id=obj_id,
                     state=state,
                     detail=detail,
                     mask=mask,
@@ -919,6 +969,7 @@ class GeometryFittingEngine:
                 or raw_fit.lateral_offsets is None
             ):
                 return self._hold_or_fallback(
+                    obj_id=obj_id,
                     state=state,
                     detail=detail,
                     mask=mask,
@@ -935,7 +986,7 @@ class GeometryFittingEngine:
                     prev_lateral_offsets=state.lateral_offsets,
                     support_offsets=support_offsets,
                     lateral_offsets=lateral_offsets,
-                    alpha=self.config.line_smoothing_alpha,
+                    alpha=self.config.back_wall_line_smoothing_alpha,
                 )
             corners = self.fronto_fitter.reconstruct_from_params(
                 parallel_dir=parallel_dir,
@@ -944,6 +995,7 @@ class GeometryFittingEngine:
             )
             if corners is None:
                 return self._hold_or_fallback(
+                    obj_id=obj_id,
                     state=state,
                     detail=detail,
                     mask=mask,
@@ -952,10 +1004,23 @@ class GeometryFittingEngine:
                     frame_shape=frame_shape,
                 )
 
+            last_good_quad = self.last_emitted_quads.get(obj_id)
+            if last_good_quad is not None and estimate.near_static and not estimate.cut_reset:
+                corner_rms_px, area_delta_ratio = _quad_motion_stats(last_good_quad, corners)
+                if (
+                    corner_rms_px < _BACK_WALL_HOLD_CORNER_RMS_PX
+                    and area_delta_ratio < _BACK_WALL_HOLD_AREA_DELTA_RATIO
+                ):
+                    state.failure_streak = 0
+                    state.hold_streak = 0
+                    detail.held = True
+                    detail.fit_method = "hold_last_good"
+                    self.frames_held += 1
+                    return last_good_quad
+
             state.support_offsets = support_offsets
             state.lateral_offsets = lateral_offsets
             state.ray_angles = None
-            state.last_quad = corners
             state.failure_streak = 0
             state.hold_streak = 0
             detail.fit_method = geometry_model
@@ -979,6 +1044,7 @@ class GeometryFittingEngine:
             or vp_conf < self.config.vp_confidence_min
         ):
             return self._hold_or_fallback(
+                obj_id=obj_id,
                 state=state,
                 detail=detail,
                 mask=mask,
@@ -995,6 +1061,7 @@ class GeometryFittingEngine:
         )
         if vp_fit.corners is None or vp_fit.support_offsets is None or vp_fit.ray_angles is None:
             return self._hold_or_fallback(
+                obj_id=obj_id,
                 state=state,
                 detail=detail,
                 mask=mask,
@@ -1021,6 +1088,7 @@ class GeometryFittingEngine:
         )
         if corners is None:
             return self._hold_or_fallback(
+                obj_id=obj_id,
                 state=state,
                 detail=detail,
                 mask=mask,
@@ -1032,7 +1100,6 @@ class GeometryFittingEngine:
         state.support_offsets = support_offsets
         state.lateral_offsets = None
         state.ray_angles = ray_angles
-        state.last_quad = corners
         state.failure_streak = 0
         state.hold_streak = 0
         detail.fit_method = geometry_model
@@ -1064,7 +1131,6 @@ class GeometryFittingEngine:
                 inv_h.astype(np.float32),
             ).reshape(-1, 2)
             state.last_corners_local = local.astype(np.float32)
-            state.last_quad = fallback_corners
             return fallback_corners
 
         projected = cv2.perspectiveTransform(
@@ -1072,7 +1138,6 @@ class GeometryFittingEngine:
             estimate.court_homography.astype(np.float32),
         ).reshape(-1, 2)
         corners = sort_corners_tlbr(projected.astype(np.float32))
-        state.last_quad = corners
         state.failure_streak = 0
         state.hold_streak = 0
         return corners
@@ -1080,6 +1145,7 @@ class GeometryFittingEngine:
     def _hold_or_fallback(
         self,
         *,
+        obj_id: int,
         state: _ObjectState,
         detail: FitDetail,
         mask: np.ndarray,
@@ -1088,8 +1154,9 @@ class GeometryFittingEngine:
         frame_shape: tuple[int, int],
     ) -> np.ndarray | None:
         state.failure_streak += 1
+        last_good_quad = self.last_emitted_quads.get(obj_id)
         if (
-            state.last_quad is not None
+            last_good_quad is not None
             and state.failure_streak <= self.config.fallback_after_frames
             and state.hold_streak < self.config.hold_frames
         ):
@@ -1097,7 +1164,7 @@ class GeometryFittingEngine:
             detail.held = True
             detail.fit_method = "hold_last_good"
             self.frames_held += 1
-            return state.last_quad
+            return last_good_quad
 
         fallback = self._fit_free_quad(
             mask=mask,
@@ -1109,17 +1176,16 @@ class GeometryFittingEngine:
             detail.used_fallback = True
             detail.fit_method = "mask_free_quad_fallback"
             self.frames_fallback += 1
-            state.last_quad = fallback
             state.failure_streak = 0
             state.hold_streak = 0
             return fallback
 
-        if state.last_quad is not None and state.hold_streak < self.config.hold_frames:
+        if last_good_quad is not None and state.hold_streak < self.config.hold_frames:
             state.hold_streak += 1
             detail.held = True
             detail.fit_method = "hold_last_good"
             self.frames_held += 1
-            return state.last_quad
+            return last_good_quad
         return None
 
     def _fit_free_quad(

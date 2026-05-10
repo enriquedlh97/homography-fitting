@@ -8,15 +8,22 @@ pipeline:
     params:
       axis: short
   compositor:
-    type: inpaint
+    type: temporal_rectified
     params:
       padding: 0.05
+      rectified_min_size_px: 500
+      erase_mask_dilate_px: 7
+      wall_freeze_after_init: true
+      court_shading_enabled: true
+      court_shading_blur_px: 41
+      court_shading_alpha: 0.9
   camera:
     focal_length: null
   geometry:
     enabled: true
     court_backend: classical_lines_v1
     vp_smoothing_alpha: 0.7
+    back_wall_line_smoothing_alpha: 0.9
     line_smoothing_alpha: 0.65
     hold_frames: 8
     fallback_after_frames: 3
@@ -58,6 +65,7 @@ input:
     - 1
     - 0
     surface_type: side_wall_banner
+    geometry_model: mask_free_quad
   - obj_id: 4
     points:
     - - 693

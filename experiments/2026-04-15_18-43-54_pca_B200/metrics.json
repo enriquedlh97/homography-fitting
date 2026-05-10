@@ -1,0 +1,192 @@
+{
+  "runs": 1,
+  "gpu": "NVIDIA B200",
+  "gpu_memory_gb": 178.4,
+  "mode": "video",
+  "num_prompts": 3,
+  "num_prompt_points": 8,
+  "num_frames": 202,
+  "input_fps": 25.0,
+  "duration_s": 8.08,
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "video_path": "/tmp/tmpn7_6i4_w/input.mp4",
+  "fitter_type": "pca",
+  "compositor_type": "inpaint",
+  "checkpoint": "/checkpoints/sam3.1_multiplex.pt",
+  "object_frame_coverage": {
+    "2": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    },
+    "4": {
+      "frames_with_masks": 202,
+      "coverage_ratio": 1.0
+    }
+  },
+  "object_valid_frame_coverage": {
+    "2": {
+      "frames_valid": 202,
+      "coverage_ratio": 1.0
+    },
+    "3": {
+      "frames_valid": 202,
+      "coverage_ratio": 1.0
+    },
+    "4": {
+      "frames_valid": 200,
+      "coverage_ratio": 0.9901
+    }
+  },
+  "object_rejection_counts": {
+    "2": 0,
+    "3": 0,
+    "4": 2
+  },
+  "object_rejection_reasons": {
+    "2": {},
+    "3": {},
+    "4": {
+      "quad_mask_iou_low": 1,
+      "quad_coverage_low": 2
+    }
+  },
+  "sam3_reanchor_events": [
+    {
+      "obj_id": 2,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 4,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 4,
+      "frame_idx": 6,
+      "refresh_count": 1
+    },
+    {
+      "obj_id": 3,
+      "frame_idx": 138,
+      "refresh_count": 2
+    }
+  ],
+  "geometry_config_enabled": true,
+  "geometry_runtime_enabled": true,
+  "geometry_active_objects": [
+    2,
+    4
+  ],
+  "object_geometry_model": {
+    "2": "fronto_parallel_wall_banner",
+    "3": "mask_free_quad",
+    "4": "fronto_parallel_wall_banner"
+  },
+  "back_wall_runtime_model": {
+    "2": "fronto_parallel_wall_banner",
+    "4": "fronto_parallel_wall_banner"
+  },
+  "side_wall_runtime_model": {
+    "3": "mask_free_quad"
+  },
+  "geometry_object_jitter_stats": {
+    "2": {
+      "count_samples": 201,
+      "median_corner_rms_px": 0.0,
+      "p95_corner_rms_px": 2.8815
+    },
+    "3": {
+      "count_samples": 201,
+      "median_corner_rms_px": 0.0,
+      "p95_corner_rms_px": 1.0252
+    },
+    "4": {
+      "count_samples": 199,
+      "median_corner_rms_px": 0.0,
+      "p95_corner_rms_px": 2.647
+    }
+  },
+  "geometry_fit_method_counts": {
+    "2": {
+      "fronto_parallel_wall_banner": 74,
+      "hold_last_good": 128
+    },
+    "3": {
+      "mask_free_quad": 202
+    },
+    "4": {
+      "fronto_parallel_wall_banner": 73,
+      "hold_last_good": 129
+    }
+  },
+  "stabilization_config_enabled": true,
+  "stabilization_runtime_enabled": true,
+  "stabilization_object_stats": {
+    "2": {
+      "frames_held": 28,
+      "frames_empty_reused": 3,
+      "frames_blended": 171,
+      "frames_raw_accepted": 3,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 3
+    },
+    "3": {
+      "frames_held": 14,
+      "frames_empty_reused": 3,
+      "frames_blended": 185,
+      "frames_raw_accepted": 3,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 3
+    },
+    "4": {
+      "frames_held": 66,
+      "frames_empty_reused": 3,
+      "frames_blended": 132,
+      "frames_raw_accepted": 4,
+      "frames_dropped": 0,
+      "max_empty_hold_streak": 3
+    }
+  },
+  "segment_total_s": 148.598538743,
+  "fit_mean_ms": 67.21,
+  "fit_std_ms": 4.35,
+  "composite_mean_ms": 21.12,
+  "composite_std_ms": 5.16,
+  "write_video_s": 0.949,
+  "total_s": 167.3906,
+  "run_total_s": 169.99587383899998,
+  "output_fps": 1.21,
+  "frames_with_masks": 202,
+  "frames_with_valid_objects": 202,
+  "frames_with_quads": 202,
+  "frames_composited": 202,
+  "object_masks_total": 606,
+  "first_frame_with_mask": 0,
+  "last_frame_with_mask": 201,
+  "max_consecutive_mask_gap": 0,
+  "geometry_total_s": 13.5763,
+  "geometry_frames_held": 257,
+  "geometry_fallback_frames": 0,
+  "vp_width_valid_ratio": 0.0,
+  "vp_depth_valid_ratio": 1.0,
+  "court_width_candidate_count": 57.5248,
+  "court_depth_candidate_count": 19.5099,
+  "stabilization_total_s": 24.1904,
+  "stabilization_static_frame_ratio": 1.0,
+  "stabilization_frames_held": 108,
+  "stabilization_frames_blended": 488,
+  "stabilization_frames_raw_accepted": 10,
+  "git_branch": "feat/court-geometry-stabilisation",
+  "git_commit_sha": "df0f7a01ffc138fe32e96b34b876ebdd9ed9e779",
+  "git_dirty": true,
+  "workspace_diff_sha256": "b023667e90b077479a58fca6dffebee4b91bc58ad472ccceae0b0a47481f7e32",
+  "requested_config_path": "/Users/giovannivisi/Documents/University/Master/Data-Shack/homography-fitting/configs/sam3_default.yaml",
+  "frozen_config_path": "/Users/giovannivisi/Documents/University/Master/Data-Shack/homography-fitting/experiments/2026-04-15_18-43-54_pca_B200/config.yaml",
+  "frozen_config_sha256": "3add47b33a6eadab37b3d96fd550ff5aea73a036985efd44277853c8f9244d92"
+}

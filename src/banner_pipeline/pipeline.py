@@ -16,6 +16,7 @@ from banner_pipeline import stabilization as stabilization_mod
 from banner_pipeline.composite.alpha import AlphaCompositor
 from banner_pipeline.composite.base import Compositor
 from banner_pipeline.composite.inpaint import InpaintCompositor
+from banner_pipeline.composite.temporal_rectified import TemporalRectifiedCompositor
 from banner_pipeline.fitting.base import QuadFitter
 from banner_pipeline.fitting.hull_fit import HullFitter
 from banner_pipeline.fitting.lp_fit import LPFitter
@@ -45,6 +46,7 @@ FITTERS: dict[str, type[QuadFitter]] = {
 COMPOSITORS: dict[str, type[Compositor]] = {
     "inpaint": InpaintCompositor,
     "alpha": AlphaCompositor,
+    "temporal_rectified": TemporalRectifiedCompositor,
 }
 SUPPORTED_BANNER_SURFACE_TYPES = {"banner"}
 COURT_MARKING_SURFACE_TYPE = "court_marking"
@@ -71,7 +73,10 @@ def build_fitter(cfg: dict) -> QuadFitter:
 
 
 def build_compositor(cfg: dict) -> Compositor:
-    return COMPOSITORS[cfg["type"]]()
+    if cfg["type"] == "temporal_rectified":
+        return TemporalRectifiedCompositor(**cfg.get("params", {}))
+    cls = COMPOSITORS[cfg["type"]]
+    return cls()
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +317,7 @@ def _init_runtime_feature_metrics(
     *,
     pipeline_cfg: dict[str, Any],
     prompts: list[ObjectPrompt],
+    logo_path: str | None,
 ) -> None:
     geometry_enabled = _geometry_enabled(pipeline_cfg)
     metrics["geometry_config_enabled"] = geometry_enabled
@@ -322,6 +328,53 @@ def _init_runtime_feature_metrics(
     )
     metrics["stabilization_config_enabled"] = _stabilization_enabled(pipeline_cfg)
     metrics["stabilization_runtime_enabled"] = False
+    compositor_cfg = pipeline_cfg.get("compositor", {})
+    metrics["compositor_config_enabled"] = compositor_cfg.get(
+        "type"
+    ) == "temporal_rectified" and bool(logo_path)
+    metrics["compositor_runtime_enabled"] = False
+
+
+def _compositor_extra_kwargs(
+    *,
+    obj_id: int,
+    prompt: ObjectPrompt | None,
+    surface_type: str | None,
+    fit_method: str | None,
+    fit_held: bool | None,
+    frame_idx: int,
+) -> dict[str, Any]:
+    if prompt is not None:
+        normalized_surface_type = _normalize_surface_type(prompt.surface_type)
+    else:
+        normalized_surface_type = _normalize_surface_type(surface_type)
+    return {
+        "obj_id": int(obj_id),
+        "surface_type": normalized_surface_type,
+        "frame_idx": int(frame_idx),
+        "geometry_fit_method": fit_method or "",
+        "geometry_held": bool(fit_held),
+    }
+
+
+def _collect_compositor_metrics(
+    *,
+    compositor: Compositor | None,
+    metrics: dict[str, Any],
+    total_s: float | None = None,
+) -> dict[str, np.ndarray]:
+    artifacts: dict[str, np.ndarray] = {}
+    if compositor is None or not hasattr(compositor, "finalize_metrics"):
+        return artifacts
+    compositor_metrics = compositor.finalize_metrics()
+    if compositor_metrics:
+        metrics.update(compositor_metrics)
+        metrics["compositor_runtime_enabled"] = bool(metrics.get("compositor_runtime_enabled"))
+    if total_s is not None and metrics.get("compositor_runtime_enabled"):
+        metrics["compositor_total_s"] = round(float(total_s), 4)
+    if hasattr(compositor, "render_debug_artifacts"):
+        artifacts = compositor.render_debug_artifacts()
+    return artifacts
 
 
 def _require_runtime_feature_metrics(
@@ -512,20 +565,19 @@ def _composite_preview_with_diagnostics(
     corners_map: dict[int, np.ndarray],
     preview_object_diagnostics: dict[str, dict[str, Any]],
     focal_length: float | None,
-) -> tuple[np.ndarray, float | None, list[str]]:
+) -> tuple[np.ndarray, float | None, list[str], dict[str, Any], dict[str, np.ndarray]]:
     preview = frame.copy()
     if overlay is None:
         for diag in preview_object_diagnostics.values():
             diag["composite_status"] = "skipped"
             diag["composite_failure_reason"] = "no_logo_configured"
-        return preview, None, []
+        return preview, None, [], {}, {}
 
     compositor = build_compositor(compositor_cfg)
     compositor_params = compositor_cfg.get("params", {})
     K = estimate_camera_matrix(frame.shape, focal_length=focal_length)
     t0 = time.perf_counter()
     failures: list[str] = []
-
     for obj_id_text, diag in preview_object_diagnostics.items():
         obj_id = int(obj_id_text)
         diag.setdefault("background_fill_color_bgr", None)
@@ -546,6 +598,16 @@ def _composite_preview_with_diagnostics(
             if compositor.name == "alpha":
                 extra_kw["homo"] = compute_oriented_homography(corners_map[obj_id], K)
                 extra_kw["debug_info"] = debug_info
+            extra_kw.update(
+                _compositor_extra_kwargs(
+                    obj_id=obj_id,
+                    prompt=None,
+                    surface_type=str(diag.get("surface_type") or "banner"),
+                    fit_method=str(diag.get("fit_method") or ""),
+                    fit_held=bool(diag.get("fit_held")),
+                    frame_idx=int(diag.get("frame_idx", 0)),
+                )
+            )
             preview = compositor.composite(
                 preview,
                 corners_map[obj_id],
@@ -571,7 +633,16 @@ def _composite_preview_with_diagnostics(
             diag["composite_status"] = "ok"
             diag["composite_failure_reason"] = None
 
-    return preview, time.perf_counter() - t0, failures
+    composite_s = time.perf_counter() - t0
+    compositor_metrics: dict[str, Any] = {}
+    compositor_artifacts: dict[str, np.ndarray] = {}
+    if hasattr(compositor, "finalize_metrics"):
+        compositor_artifacts = _collect_compositor_metrics(
+            compositor=compositor,
+            metrics=compositor_metrics,
+            total_s=composite_s,
+        )
+    return preview, composite_s, failures, compositor_metrics, compositor_artifacts
 
 
 def _build_preview_diagnostics(
@@ -846,7 +917,12 @@ def run_pipeline(
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
-    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+    _init_runtime_feature_metrics(
+        metrics,
+        pipeline_cfg=pipeline_cfg,
+        prompts=prompts,
+        logo_path=input_cfg.get("logo"),
+    )
 
     # --- Segment ---
     t0 = time.perf_counter()
@@ -996,7 +1072,12 @@ def _run_sam3_image_preview(
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
     metrics["frame_height"], metrics["frame_width"] = frame.shape[:2]
     metrics["preview_frame_idx"] = preview_frame_idx
-    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+    _init_runtime_feature_metrics(
+        metrics,
+        pipeline_cfg=pipeline_cfg,
+        prompts=prompts,
+        logo_path=input_cfg.get("logo"),
+    )
 
     fitter = build_fitter(pipeline_cfg["fitter"])
     fitter_params = pipeline_cfg["fitter"].get("params", {})
@@ -1043,7 +1124,13 @@ def _run_sam3_image_preview(
     metrics["preview_objects_with_quads"] = len(corners_map)
 
     overlay = _load_overlay(input_cfg.get("logo"))
-    composited, composite_s, composite_failures = _composite_preview_with_diagnostics(
+    (
+        composited,
+        composite_s,
+        composite_failures,
+        compositor_metrics,
+        compositor_artifacts,
+    ) = _composite_preview_with_diagnostics(
         frame=frame,
         overlay=overlay,
         compositor_cfg=pipeline_cfg["compositor"],
@@ -1052,6 +1139,8 @@ def _run_sam3_image_preview(
         preview_object_diagnostics=preview_object_diagnostics,
         focal_length=pipeline_cfg.get("camera", {}).get("focal_length"),
     )
+    if compositor_metrics:
+        metrics.update(compositor_metrics)
     composited = _annotate_preview_frame(composited, masks, corners_map)
     preview_failure_reasons = _summarize_preview_failures(
         preview_object_diagnostics,
@@ -1069,8 +1158,20 @@ def _run_sam3_image_preview(
     }
     if geometry_engine is not None and hasattr(geometry_engine, "render_debug_overlay"):
         preview_artifacts["preview_geometry"] = geometry_engine.render_debug_overlay(frame)
+    preview_artifacts.update(compositor_artifacts)
     if composite_s is not None:
         metrics["composite_s"] = composite_s
+    _require_runtime_feature_metrics(
+        feature_name="compositor",
+        metrics=metrics,
+        config_enabled=bool(metrics["compositor_config_enabled"]),
+        runtime_enabled=bool(metrics["compositor_runtime_enabled"]),
+        required_keys=[
+            "compositor_total_s",
+            "compositor_object_model",
+            "compositor_object_stats",
+        ],
+    )
 
     metrics["total_s"] = sum(v for k, v in metrics.items() if k.endswith("_s"))
     print(
@@ -1303,7 +1404,12 @@ def run_pipeline_video(
     metrics["fitter_type"] = pipeline_cfg["fitter"]["type"]
     metrics["compositor_type"] = pipeline_cfg["compositor"]["type"]
     metrics["checkpoint"] = pipeline_cfg["segmenter"].get("checkpoint", "")
-    _init_runtime_feature_metrics(metrics, pipeline_cfg=pipeline_cfg, prompts=prompts)
+    _init_runtime_feature_metrics(
+        metrics,
+        pipeline_cfg=pipeline_cfg,
+        prompts=prompts,
+        logo_path=input_cfg.get("logo"),
+    )
 
     # Read frame size from the first frame.
     first_frame = load_frame(video_path, frame_idx=0)
@@ -1410,6 +1516,7 @@ def run_pipeline_video(
     compositor = build_compositor(pipeline_cfg["compositor"]) if overlay is not None else None
     compositor_params = pipeline_cfg["compositor"].get("params", {}) if overlay is not None else {}
     focal_length = pipeline_cfg.get("camera", {}).get("focal_length")
+    prompt_by_obj = {int(prompt.obj_id): prompt for prompt in prompts}
 
     fit_times: list[float] = []
     composite_times: list[float] = []
@@ -1483,6 +1590,19 @@ def run_pipeline_video(
                     if compositor.name == "alpha":
                         homo = compute_oriented_homography(corners_map[obj_id], K)
                         extra_kw["homo"] = homo
+                    detail = (
+                        geometry_engine.details.get(obj_id) if geometry_engine is not None else None
+                    )
+                    extra_kw.update(
+                        _compositor_extra_kwargs(
+                            obj_id=obj_id,
+                            prompt=prompt_by_obj.get(obj_id),
+                            surface_type=None,
+                            fit_method=detail.fit_method if detail is not None else None,
+                            fit_held=detail.held if detail is not None else None,
+                            frame_idx=frame_idx,
+                        )
+                    )
                     frame_bgr = compositor.composite(
                         frame_bgr,
                         corners_map[obj_id],
@@ -1570,6 +1690,22 @@ def run_pipeline_video(
         comp_arr = np.array(composite_times) * 1000
         metrics["composite_mean_ms"] = round(float(comp_arr.mean()), 2)
         metrics["composite_std_ms"] = round(float(comp_arr.std()), 2)
+    compositor_artifacts = _collect_compositor_metrics(
+        compositor=compositor,
+        metrics=metrics,
+        total_s=sum(composite_times),
+    )
+    _require_runtime_feature_metrics(
+        feature_name="compositor",
+        metrics=metrics,
+        config_enabled=bool(metrics["compositor_config_enabled"]),
+        runtime_enabled=bool(metrics["compositor_runtime_enabled"]),
+        required_keys=[
+            "compositor_total_s",
+            "compositor_object_model",
+            "compositor_object_stats",
+        ],
+    )
 
     metrics["total_s"] = round(
         metrics["segment_total_s"]
@@ -1589,6 +1725,7 @@ def run_pipeline_video(
     return {
         "output_path": output_path,
         "metrics": metrics,
+        "preview_artifacts": compositor_artifacts,
     }
 
 

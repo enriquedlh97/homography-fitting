@@ -8,15 +8,9 @@ pipeline:
     params:
       axis: short
   compositor:
-    type: temporal_rectified
+    type: inpaint
     params:
       padding: 0.05
-      rectified_min_size_px: 500
-      erase_mask_dilate_px: 7
-      wall_freeze_after_init: true
-      court_shading_enabled: true
-      court_shading_blur_px: 41
-      court_shading_alpha: 0.9
   camera:
     focal_length: null
   geometry:
@@ -42,18 +36,42 @@ input:
   video: data/tennis-clip.mp4
   logo: data/sponsor_logo.png
   prompts:
-  - obj_id: 5
+  - obj_id: 2
     points:
-    - - 246
-      - 612
-    - - 334
-      - 618
-    - - 398
-      - 620
+    - - 899
+      - 45
+    - - 983
+      - 43
+    - - 963
+      - 78
     labels:
     - 1
     - 1
     - 0
-    surface_type: court_marking
+    surface_type: back_wall_banner
+  - obj_id: 3
+    points:
+    - - 168
+      - 286
+    - - 196
+      - 296
+    labels:
+    - 1
+    - 0
+    surface_type: side_wall_banner
+    geometry_model: mask_free_quad
+  - obj_id: 4
+    points:
+    - - 693
+      - 41
+    - - 787
+      - 49
+    - - 741
+      - 87
+    labels:
+    - 1
+    - 1
+    - 0
+    surface_type: back_wall_banner
 output:
   dir: experiments/

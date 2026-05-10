@@ -165,6 +165,15 @@ def _git_output(*args: str) -> str | None:
     return text or None
 
 
+def _workspace_state_summary() -> tuple[bool, str | None]:
+    status = _git_output("status", "--short", "--untracked-files=all")
+    if not status:
+        return False, None
+    diff = _git_output("diff", "--binary", "--no-ext-diff", "HEAD", "--") or ""
+    payload = f"{status}\n{diff}"
+    return True, hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 image = _select_image_for_gpu(_GPU)
 
 app = modal.App("banner-pipeline", image=image)
@@ -277,16 +286,17 @@ def run_on_gpu(
         all_metrics.append(m)
 
         # Save output from last run.
-        if mode == "video" and results.get("output_path"):
-            with open(results["output_path"], "rb") as f:
-                output_bytes = f.read()
-        elif results.get("preview_artifacts"):
+        if results.get("preview_artifacts"):
             preview_artifacts = {}
             for name, image in results["preview_artifacts"].items():
                 success, buf = cv2.imencode(".png", image)
                 if not success:
                     raise RuntimeError(f"Could not encode preview artifact: {name}")
                 preview_artifacts[name] = buf.tobytes()
+        if mode == "video" and results.get("output_path"):
+            with open(results["output_path"], "rb") as f:
+                output_bytes = f.read()
+        elif results.get("preview_artifacts"):
             output_bytes = preview_artifacts.get("composited")
         elif results.get("composited") is not None:
             _, buf = cv2.imencode(".png", results["composited"])
@@ -424,6 +434,9 @@ def main(
     metrics = result["metrics"]
     metrics["git_branch"] = _git_output("branch", "--show-current")
     metrics["git_commit_sha"] = _git_output("rev-parse", "HEAD")
+    git_dirty, workspace_diff_sha256 = _workspace_state_summary()
+    metrics["git_dirty"] = git_dirty
+    metrics["workspace_diff_sha256"] = workspace_diff_sha256
     metrics["requested_config_path"] = os.path.abspath(config)
     metrics["frozen_config_path"] = os.path.abspath(config_path)
     metrics["frozen_config_sha256"] = frozen_config_sha256
