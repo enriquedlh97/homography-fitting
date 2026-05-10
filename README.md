@@ -14,7 +14,66 @@ This is the final commit of a capstone project on virtual ad insertion. The Melb
 - Hybrid lock at 30-px tolerance — stays pixel-locked at the seed when the camera is static, ramps to the BTN estimate when motion exceeds tolerance
 - V68's compositor settings (median_fill inpaint, LED brightness re-baking, MatAnyone2 person-mask occlusion)
 
-**Side-by-side vs the V68 static-clicked gold:** `experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`
+**Side-by-side vs the V68 static-clicked gold:** [`experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`](experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4)
+
+## Final result — visual gallery
+
+Top row in each strip = unmodified original broadcast (the real baked-in ads — Kia, YoPRO, Melbourne wordmark — are the quality bar). Bottom row = our virtual composite.
+
+### Back banners (3 black banners over the court — obj_1, obj_2, obj_5)
+
+![Back banners — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png)
+
+### Left side banner (Red Bull logo on the side panel — obj_4)
+
+![Left banner — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png)
+
+### Court floor walkover logo (Red Bull on the painted floor — obj_3)
+
+![Floor logo — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png)
+
+### Full frame
+
+![Full frame — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/full/crops_strip.png)
+
+### Walkover window — player on the logo (frame 704, mid-window)
+
+Columns: original | clean court | our composite | original-clean delta | survival heatmap | leak red overlay.
+
+![Walkover — player ON the logo](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png)
+
+### All other walkover key frames
+
+| Frame | Stage | Image |
+|---|---|---|
+| 685 | walkover entry | [`forensic_sheet_entry_f0685.png`](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_entry_f0685.png) |
+| 694 | pre-contact (~25% across) | [`forensic_sheet_pre_contact_f0694.png`](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_pre_contact_f0694.png) |
+| 704 | contact (player ON logo) | [`forensic_sheet_contact_f0704.png`](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png) |
+| 713 | post-contact (~75% across) | [`forensic_sheet_post_contact_f0713.png`](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_post_contact_f0713.png) |
+| 723 | walkover exit | [`forensic_sheet_exit_f0723.png`](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_exit_f0723.png) |
+
+### Per-region motion strips (8 consecutive frames at 15% / 50% / 85% of the clip)
+
+| Region | Early (15%) | Mid (50%) | Late (85%) |
+|---|---|---|---|
+| Back banners | [early](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_early.png) | [mid](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_mid.png) | [late](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/motion_strip_late.png) |
+| Left banner | [early](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_early.png) | [mid](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_mid.png) | [late](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/motion_strip_late.png) |
+| Floor logo | [early](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_early.png) | [mid](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_mid.png) | [late](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/motion_strip_late.png) |
+
+### Walkover consecutive-frames strip (every frame in window 685–723)
+
+![Walkover consecutive frames](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/consecutive_frames.png)
+
+### Final-run metrics (extracted from `eval/quality_metrics.json`)
+
+| Region | Pass | `roi_temporal_ssim_mean` | `roi_jitter_ratio` | `walkover_logo_visible_pct` | `walkover_occlusion_iou` |
+|---|---|---|---|---|---|
+| back banners | ✅ | 0.9999 | 0.291 | — | — |
+| left banner | ✅ | 1.0000 | 0.390 | — | — |
+| floor logo | ✅ | 0.9927 | 0.805 | 0.179 | 0.985 |
+| full | ✅ | 0.9987 | 0.687 | — | — |
+
+All four per-region scorecards pass. Walkover-window evaluation passes (gates `> 0.10` and `> 0.80`). Walkover window auto-detected at frames 685–723. Full numbers + vs-gold regression analysis in [`docs/FINAL_REPORT.md` §7](docs/FINAL_REPORT.md).
 
 ## Where to start reading
 
@@ -156,16 +215,30 @@ End-to-end:
 
 ```
 data/<input>.mov
-  → SAM2 segmenter      (segment/sam2_image.py)
+  → SAM2 segmenter      (segment/sam2_image.py + segment/sam2_video.py)
   → hull quad fitter    (fitting/hull_fit.py)
   → court geometry      (court_geometry_ball_tracker.py — FINAL)
-  → hybrid lock         (court_geometry.py:HybridLockState)
+  → hybrid lock         (court_geometry.py:HybridLockState — line 1390)
   → MatAnyone2 mask     (occlusion alpha matting)
   → inpaint compositor  (composite/painted.py — median_fill + LED-blend)
   → outputs/composited.mp4
 ```
 
-For details on each module and why each was chosen, see `docs/FINAL_REPORT.md` §3.
+| Stage | What it does | Source |
+|---|---|---|
+| Segmentation | SAM2 image-then-video tracker turns 1–3 click prompts into per-frame binary masks | [`segment/sam2_image.py`](src/banner_pipeline/segment/sam2_image.py), [`segment/sam2_video.py`](src/banner_pipeline/segment/sam2_video.py), [`segment/base.py`](src/banner_pipeline/segment/base.py) |
+| Quad fitting | Reduces each per-frame mask to 4 corner points (placement quad) | [`fitting/hull_fit.py`](src/banner_pipeline/fitting/hull_fit.py), [`fitting/pca_fit.py`](src/banner_pipeline/fitting/pca_fit.py), [`fitting/lp_fit.py`](src/banner_pipeline/fitting/lp_fit.py) |
+| Court geometry — FINAL | BallTrackerNet learned 14-keypoint detector + RANSAC + V68-seed bridge | [`court_geometry_ball_tracker.py`](src/banner_pipeline/court_geometry_ball_tracker.py) |
+| Court geometry — Phase 2 | classical_lines (Hough + RANSAC) — too noisy for dynamic gating | [`court_geometry.py`](src/banner_pipeline/court_geometry.py) |
+| Hybrid lock | Per-frame state machine that gates dynamic estimates against the seed | [`court_geometry.py:HybridLockState`](src/banner_pipeline/court_geometry.py) line 1390 |
+| Person occlusion | MatAnyone2 alpha matting — produces the alpha matte the compositor uses to occlude logos behind the player | configured via `occlusion_masker.type: matanyone2` |
+| Compositor | Erase original ad → warp new logo → LED-blend brightness re-bake → person-mask occlusion | [`composite/painted.py`](src/banner_pipeline/composite/painted.py) |
+| Eval framework | Post-hoc deterministic scoring + crops + side-by-side video | [`eval/`](src/banner_pipeline/eval/) ([`__main__.py`](src/banner_pipeline/eval/__main__.py), [`report.py`](src/banner_pipeline/eval/report.py), [`walkover.py`](src/banner_pipeline/eval/walkover.py)) |
+| Orchestration | Loads frozen config, runs the per-frame loop | [`pipeline.py`](src/banner_pipeline/pipeline.py) |
+| Modal entrypoint | Cloud-GPU runner | [`scripts/modal_run.py`](scripts/modal_run.py) |
+| Local CPU runner | For prompt collection + small previews | [`scripts/run_experiment.py`](scripts/run_experiment.py), [`scripts/collect_prompts.py`](scripts/collect_prompts.py) |
+
+For per-component build details (line refs, config knobs, why each was chosen), see [`docs/FINAL_REPORT.md` §3](docs/FINAL_REPORT.md).
 
 ## Configuration
 
