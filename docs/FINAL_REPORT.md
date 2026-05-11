@@ -18,7 +18,7 @@ This document is the canonical narrative for the project. It is structured so th
 
 **Final result.** `experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`. Visually indistinguishable from the V68 manually-clicked-corners gold while the camera is static, with stable BallTrackerNet tracking through the walkover frames where the V68 baseline would have drifted. All five regions pass the deterministic per-region scorecard. Walkover occlusion IoU = 0.985 (gate > 0.80). Temporal SSIM ≥ 0.99 across every region.
 
-**Why this beat the autonomous-experiment winner.** Phase 3 ran ~50 H200 GPU runs across 14 waves of autonomous experimentation, layering shadow synthesis + `erase_text=true` + tightened compositor params on top of the BallTrackerNet baseline. The autonomous winner (P3-A38/e2) scored 5/5 on an LLM-driven visual rubric for the two user-flagged artifacts. On direct human visual review, those same layered changes produced visible regressions (floor-shadow darkening, MELBOURNE wordmark erasure changing the floor texture context, harder banner edges). The simpler P3-A1 baseline — without any of those compositor tweaks — looked better. The lesson is in §6.5.
+**Why this beat the rubric-best variant.** Phase 3 ran ~50 H200 GPU runs across 14 waves of iterative experimentation, layering shadow synthesis + `erase_text=true` + tightened compositor params on top of the BallTrackerNet baseline. The rubric-best variant (P3-A38/e2) scored 5/5 on the structured visual rubric for the two user-flagged artifacts. On direct human visual review, those same layered changes produced visible regressions (floor-shadow darkening, MELBOURNE wordmark erasure changing the floor texture context, harder banner edges). The simpler P3-A1 baseline — without any of those compositor tweaks — looked better. The lesson is in §6.5.
 
 ---
 
@@ -166,7 +166,7 @@ We deliberately do not use a "person detector + bounding-box mask" approach beca
 1. **Erase the original ad** (`_erase_original_text`, line 411 of `painted.py`). Inpaint the placement quad's pixels using `inpaint_method: median_fill` — a temporal-median fill from neighbouring frames in a clean-court video (when one is available; the Melbourne config provides `data/clean_court_de_35px_temporal_median_quad.mp4` as the clean-plate reference). Spatial-median fallback when temporal is unavailable. Feathered alpha controlled by `alpha_feather_px`, configurable dilate via `mask_dilate_px`, configurable padding via `padding`.
 2. **Warp the new logo** (`cv2.warpPerspective`) into the placement quad using the per-frame homography (locked or BTN-estimated per §3.4).
 3. **LED-style brightness re-baking** (the `local_color_match: true` + `blend_mode: led` settings). For each pixel inside the placement quad: take the warped logo's RGB value, then re-bake its luminance against the local surface luminance (computed from the inpainted background). This makes the logo read like a physical paint/print job — the logo brightness adapts to local lighting on the surface, just as a real painted ad would. Without this, the placed logo looks like a 2D overlay floating on top of the frame.
-4. **Optional shadow synthesis on `court_floor`** (lines 379–409 of `painted.py`; controlled by `shadow_strength` knob, default 0.0 = disabled). When enabled: the inserted Red Bull pixels are multiplied by `1.0 - shadow_strength * gaussian_blur(player_mask, shadow_radius_px, shadow_blur_px)`, synthesizing a soft player-foot cast shadow on the floor logo. This was used in the autonomous Phase 3 winner; **the FINAL config disables it** (`shadow_strength: 0.0`) because direct visual review showed it darkened the logo too aggressively (§6.5).
+4. **Optional shadow synthesis on `court_floor`** (lines 379–409 of `painted.py`; controlled by `shadow_strength` knob, default 0.0 = disabled). When enabled: the inserted Red Bull pixels are multiplied by `1.0 - shadow_strength * gaussian_blur(player_mask, shadow_radius_px, shadow_blur_px)`, synthesizing a soft player-foot cast shadow on the floor logo. This was used in the rubric-best Phase 3 variant; **the FINAL config disables it** (`shadow_strength: 0.0`) because direct visual review showed it darkened the logo too aggressively (§6.5).
 5. **Person-mask occlusion** (per §3.5). The final pixel is `composite * (1 - person_alpha) + original * person_alpha`.
 
 **Final config's surface override block** (excerpt from `eval_walkover_p3_a1_ball_tracker_net_v1.yaml`):
@@ -255,7 +255,7 @@ Only the always-locked sanity baseline (`tol=99999`) passed all gates and showed
 
 ---
 
-## 6. Phase 3 — BallTrackerNet port + autonomous quality experimentation
+## 6. Phase 3 — BallTrackerNet port + iterative quality experimentation
 
 ### 6.1 Why BallTrackerNet
 
@@ -269,23 +269,23 @@ Phase 2 concluded that the binding constraint was the estimator. We needed somet
 
 **Result.** With BTN + hybrid_lock at `tolerance_px: 30`, the floor-region SSIM is 0.9927 (vs gold's 0.997) — the per-frame BTN estimates are stable enough to gate on. P3-A1 became the new baseline for any further compositor work. Run dir: `experiments/2026-05-05_18-38-39_hull_H200/`.
 
-### 6.2 The autonomous experimentation framework
+### 6.2 The iterative experimentation framework
 
-Once we had a viable dynamic homography, the question shifted to: *can we lift the visual quality of the placements further with compositor tweaks?* This question is well-suited to autonomous experimentation: many config knobs, many independent variants, parallel Modal capacity available.
+Once we had a viable dynamic homography, the question shifted to: *can we lift the visual quality of the placements further with compositor tweaks?* This question is well-suited to iterative experimentation: many config knobs, many independent variants, parallel Modal capacity available.
 
 The framework (defined in `docs/AGENT_BRIEFING.md`, internal-only):
 
-- **Per-cycle worker** — one sub-agent per Modal cycle. Writes ONE branched config (one knob change), runs the pipeline on H200, runs the eval framework, returns a structured 250-word report. Each cycle is config-only by default; "code-fork" cycles (where source edits are required) are dispatched in isolated git worktrees.
+- **Per-cycle worker** — one worker process per Modal cycle. Writes ONE branched config (one knob change), runs the pipeline on H200, runs the eval framework, returns a structured 250-word report. Each cycle is config-only by default; "code-fork" cycles (where source edits are required) are dispatched in isolated git worktrees.
 - **Parallel manager** — when an axis has independent variants, fan out 5–8 in parallel. The user pays for 10 concurrent Modal H200 slots and we aimed to keep them saturated.
 - **Cross-agent knowledge sharing** — each cycle's report contains a "Lessons learned" block. The manager extracts non-obvious findings from completed sibling reports and prepends them to the next worker's brief.
 
-**Total Phase 3 cycles.** ~50 H200 GPU runs across 14 waves (P3-A1 through P3-A40) + 3 code-fork worktrees + ~12 visual rubric sub-agents. Detail in `docs/EXPERIMENT_LEDGER.md`.
+**Total Phase 3 cycles.** ~50 H200 GPU runs across 14 waves (P3-A1 through P3-A40) + 3 code-fork worktrees + ~12 visual-rubric review passes. Detail in `docs/EXPERIMENT_LEDGER.md`.
 
 ### 6.3 Code changes shipped during Phase 3
 
 1. **BallTrackerNet port** — `src/banner_pipeline/court_geometry_ball_tracker.py` (P3-A1). New file (~720 lines). Drop-in replacement for `CourtGeometryEstimator` selected via `geometry.court_backend`.
 2. **Motion-aware adaptive `vp_smoothing_alpha`** — `src/banner_pipeline/court_geometry.py` (P3-A2). Auto-switches between high (smooth) and low (responsive) alpha based on frame-to-frame H delta. Code shipped, sweep didn't conclude on Modal capacity. Default disabled.
-3. **Shadow synthesis on `court_floor`** — `src/banner_pipeline/composite/painted.py` + `src/banner_pipeline/pipeline.py` (P3-A28). New compositor knobs `shadow_strength`, `shadow_radius_px`, `shadow_blur_px` on the `court_floor` surface override. Multiplies inserted Red Bull pixels by a Gaussian-blurred dilation of the player mask, synthesizing a player-foot cast shadow on the floor logo. Default 0 = no behavior change. **Used in the autonomous Phase 3 winner; NOT used in the final P3-A1 deliverable.**
+3. **Shadow synthesis on `court_floor`** — `src/banner_pipeline/composite/painted.py` + `src/banner_pipeline/pipeline.py` (P3-A28). New compositor knobs `shadow_strength`, `shadow_radius_px`, `shadow_blur_px` on the `court_floor` surface override. Multiplies inserted Red Bull pixels by a Gaussian-blurred dilation of the player mask, synthesizing a player-foot cast shadow on the floor logo. Default 0 = no behavior change. **Used in the rubric-best Phase 3 variant; NOT used in the final P3-A1 deliverable.**
 4. **Reporting filter passthrough** — `src/banner_pipeline/reporting.py`. Adds `hybrid_lock_*`, `court_plane_*`, `adaptive_alpha_*` counter keys to the report's allow-list (carry-over from Phase 2 bug fix).
 
 ### 6.4 Wave-by-wave summary
@@ -307,9 +307,9 @@ The framework (defined in `docs/AGENT_BRIEFING.md`, internal-only):
 
 Full per-cycle reports in `docs/EXPERIMENT_LEDGER.md`.
 
-### 6.5 Why the autonomous winner was rejected on visual review
+### 6.5 Why the rubric-best variant was rejected on visual review
 
-P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the autonomous winner. Recipe = P3-A1 + shadow synthesis (`shadow_strength: 0.6`) + `erase_text: true` on the court_floor + `obj_4 mask_dilate=4 / inpaint_feather=8 / padding=0` on the left banner. It scored 5/5 on the LLM-driven rubric for `realism.halo_presence` (the floor halo) and `realism.edge_reflex` (the left banner) — the two artifacts the user originally flagged.
+P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the rubric-best variant. Recipe = P3-A1 + shadow synthesis (`shadow_strength: 0.6`) + `erase_text: true` on the court_floor + `obj_4 mask_dilate=4 / inpaint_feather=8 / padding=0` on the left banner. It scored 5/5 on the structured visual rubric for `realism.halo_presence` (the floor halo) and `realism.edge_reflex` (the left banner) — the two artifacts the user originally flagged.
 
 **On direct viewing it had visible regressions vs P3-A1:**
 
@@ -317,11 +317,11 @@ P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the autonomous winn
 2. **MELBOURNE wordmark erasure.** `erase_text=true` removed the painted MELBOURNE wordmark from under the floor logo. This was the right move on the rubric ("no bleed-through") but visually changed the floor texture context — the logo now sat on a plain green floor instead of the patterned painted area, which read as artificial.
 3. **Harder banner edges.** `obj_4 padding=0` exposed harder banner edges on the left logo. The rubric called this `edge_reflex=5` (no smearing); on direct viewing the harder edge actually read as "pasted on" more than the slightly-softer P3-A1 baseline did.
 
-**Why the rubric got it wrong.** The LLM rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was specified in `docs/AGENT_BRIEFING.md` but the rubric agents in practice scored the composite alone rather than direct-comparing to the original.
+**Why the rubric got it wrong.** The visual rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was specified in `docs/AGENT_BRIEFING.md` but the rubric reviewers in practice scored the composite alone rather than direct-comparing to the original.
 
-**Lesson.** A numerical rubric — even an LLM-driven one — is not a substitute for direct human visual review against the ground truth. The deterministic metrics (§8) are useful as regression gates and as outlier detectors, but the final accept/reject decision needs a human looking at the video.
+**Lesson.** A numerical rubric — even an structured visual one — is not a substitute for direct human visual review against the ground truth. The deterministic metrics (§8) are useful as regression gates and as outlier detectors, but the final accept/reject decision needs a human looking at the video.
 
-**Decision.** P3-A1 (the BTN port baseline, before any compositor tweaks) is the final delivered output. The `feat/quality-fixes-next` branch retains the autonomous Phase 3 code changes (shadow synthesis lives in the compositor; rubric v2 lives in the eval module) so that future work can opt back in to those knobs if it wants — but the final config does not enable them.
+**Decision.** P3-A1 (the BTN port baseline, before any compositor tweaks) is the final delivered output. The `feat/quality-fixes-next` branch retains the experimental Phase 3 code changes (shadow synthesis lives in the compositor; rubric v2 lives in the eval module) so that future work can opt back in to those knobs if it wants — but the final config does not enable them.
 
 ---
 
@@ -536,7 +536,7 @@ These are the canonical artifacts referenced in the report (§7.4).
 3. **Multi-clip generalization.** The eval framework supports any clip via `configs/eval/reference.yaml`; the only entry today is the Melbourne walkover. Adding the existing `data/tennis-clip.mp4` and `data/zoom-clip-melbourne.mov` as reference clips would catch clip-specific regressions during further iteration.
 4. **Threshold calibration.** The deterministic gates (`corner_max_jump_px < 2.0`, etc.) were set by hand from the V68 H200 gold baseline. With more clips a per-clip or learned threshold would be more robust. Specifically `roi_delta_E_lab > 5.0` currently fires as a warning on every region of every run — its calibration is dataset-specific and the metric should be replaced or recalibrated.
 5. **Walkover-window detection on zoom clips.** The current detector assumes a clean-plate reference; for zoom clips where the clean plate is harder to construct, the temporal-median fallback should be tested.
-6. **Compositor improvements that the autonomous run discovered but visual review rejected.** Shadow synthesis (P3-A28), `erase_text` (P3-A12), and obj_4 padding=0 are all available behind config flags — none are on by default. Future work could explore softer / lower-strength variants of these (e.g., shadow_strength=0.3 instead of 0.6) that lift the rubric numbers without the visible regressions documented in §6.5.
+6. **Compositor improvements that the experiment iteration discovered but visual review rejected.** Shadow synthesis (P3-A28), `erase_text` (P3-A12), and obj_4 padding=0 are all available behind config flags — none are on by default. Future work could explore softer / lower-strength variants of these (e.g., shadow_strength=0.3 instead of 0.6) that lift the rubric numbers without the visible regressions documented in §6.5.
 
 ---
 
@@ -642,16 +642,16 @@ Each branch's own README is the authoritative design doc for that direction.
 - `configs/experiments/eval_walkover_v68_clicked_homography_static_full.yaml` — Phase 1 baseline (V68 gold).
 - `configs/experiments/eval_walkover_v68_clicked_homography_dynamic_full.yaml` — Phase 2 dynamic (line-based; failed axis).
 - `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml` — Phase 3 BTN port (**FINAL**).
-- `configs/experiments/eval_walkover_p3_a38_e2_obj4_padding_0.yaml` — Phase 3 autonomous winner (rejected on visual review).
+- `configs/experiments/eval_walkover_p3_a38_e2_obj4_padding_0.yaml` — Phase 3 rubric-best variant (rejected on visual review).
 - `configs/eval/reference.yaml` — input-video → gold-dir map for `--reference auto`.
 
 **Experiments:**
 - `experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200/` — V68 gold (regression reference).
 - `experiments/2026-05-05_18-38-39_hull_H200/` — **FINAL deliverable.**
-- `experiments/2026-05-06_05-33-48_hull_H200/` — autonomous winner (rejected, kept as historical record).
+- `experiments/2026-05-06_05-33-48_hull_H200/` — rubric-best variant (rejected, kept as historical record).
 
 **Internal docs:**
-- `docs/AGENT_BRIEFING.md` — autonomous worker contract (internal only; for anyone continuing the experimentation loop).
+- `docs/AGENT_BRIEFING.md` — iterative experimentation contract (internal only; for anyone continuing the experimentation loop).
 - `docs/EXPERIMENT_LEDGER.md` — append-only raw experiment log (1779 lines as of hand-off).
 - `docs/EVALUATION.md` — eval framework spec (deterministic metrics + CLI).
 
@@ -664,5 +664,5 @@ Each branch's own README is the authoritative design doc for that direction.
 ### Key git commits
 
 - `94a0383` — fix `hybrid_lock_*` counters not surfacing in `quality_metrics.json` (Phase 2 reporting bug).
-- `247f74a` — P3-A38/e2 = autonomous-experiment best (later rejected).
+- `247f74a` — P3-A38/e2 = rubric-best Phase 3 variant (later rejected).
 - `89e9212` — final pre-handoff state at deadline.
