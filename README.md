@@ -1,46 +1,46 @@
-# Banner Pipeline — Virtual Ad Insertion in Tennis Broadcasts
+# Banner Pipeline, Virtual Ad Insertion in Tennis Broadcasts
 
 Capstone hand-off. SAM2-based banner / logo replacement on real broadcast footage: detects placement regions, tracks them across all frames, fits perspective-aware quadrilaterals via court-plane homography, and composites new logos with correct aspect ratio, brightness response, and player occlusion.
 
 ## What's in this repo
 
-This is the final commit of a capstone project on virtual ad insertion. The Melbourne walkover demo clip is the canonical test case — a 13-second broadcast clip with five simultaneous virtual ad placements (3 back banners, 1 left side banner, 1 court-floor Red Bull walkover logo) over a player walking across the court.
+This is the final commit of a capstone project on virtual ad insertion. The Melbourne walkover demo clip is the canonical test case, a 13-second broadcast clip with five simultaneous virtual ad placements (3 back banners, 1 left side banner, 1 court-floor Red Bull walkover logo) over a player walking across the court.
 
 **Final delivered output:** `experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`
 
 **Recipe** (config `configs/experiments/eval_walkover_p3_a1_ball_tracker_net_v1.yaml`):
 - V68 manually-clicked court corners as the seed homography
 - BallTrackerNet learned 14-keypoint detector for per-frame court geometry estimation
-- Hybrid lock at 30-px tolerance — stays pixel-locked at the seed when the camera is static, ramps to the BTN estimate when motion exceeds tolerance
+- Hybrid lock at 30-px tolerance, stays pixel-locked at the seed when the camera is static, ramps to the BTN estimate when motion exceeds tolerance
 - V68's compositor settings (median_fill inpaint, LED brightness re-baking, MatAnyone2 person-mask occlusion)
 
 **Side-by-side vs the V68 static-clicked gold:** [`experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4`](experiments/2026-05-05_18-38-39_hull_H200/eval/vs_reference_side_by_side.mp4)
 
-## Final result — visual gallery
+## Final result, visual gallery
 
-Top row in each strip = unmodified original broadcast (the real baked-in ads — Kia, YoPRO, Melbourne wordmark — are the quality bar). Bottom row = our virtual composite.
+Top row in each strip = unmodified original broadcast (the real baked-in ads, Kia, YoPRO, Melbourne wordmark, are the quality bar). Bottom row = our virtual composite.
 
-### Back banners (3 black banners over the court — obj_1, obj_2, obj_5)
+### Back banners (3 black banners over the court, obj_1, obj_2, obj_5)
 
-![Back banners — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png)
+![Back banners, original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/back_banners/crops_strip.png)
 
-### Left side banner (Red Bull logo on the side panel — obj_4)
+### Left side banner (Red Bull logo on the side panel, obj_4)
 
-![Left banner — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png)
+![Left banner, original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/left_logo/crops_strip.png)
 
-### Court floor walkover logo (Red Bull on the painted floor — obj_3)
+### Court floor walkover logo (Red Bull on the painted floor, obj_3)
 
-![Floor logo — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png)
+![Floor logo, original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/floor_logo/crops_strip.png)
 
 ### Full frame
 
-![Full frame — original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/full/crops_strip.png)
+![Full frame, original vs composite](experiments/2026-05-05_18-38-39_hull_H200/eval/full/crops_strip.png)
 
-### Walkover window — player on the logo (frame 704, mid-window)
+### Walkover window, player on the logo (frame 704, mid-window)
 
 Columns: original | clean court | our composite | original-clean delta | survival heatmap | leak red overlay.
 
-![Walkover — player ON the logo](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png)
+![Walkover, player ON the logo](experiments/2026-05-05_18-38-39_hull_H200/eval/walkover/forensic_sheet_contact_f0704.png)
 
 ### All other walkover key frames
 
@@ -68,10 +68,10 @@ Columns: original | clean court | our composite | original-clean delta | surviva
 
 | Region | Pass | `roi_temporal_ssim_mean` | `roi_jitter_ratio` | `walkover_logo_visible_pct` | `walkover_occlusion_iou` |
 |---|---|---|---|---|---|
-| back banners | ✅ | 0.9999 | 0.291 | — | — |
-| left banner | ✅ | 1.0000 | 0.390 | — | — |
+| back banners | ✅ | 0.9999 | 0.291 | n/a | n/a |
+| left banner | ✅ | 1.0000 | 0.390 | n/a | n/a |
 | floor logo | ✅ | 0.9927 | 0.805 | 0.179 | 0.985 |
-| full | ✅ | 0.9987 | 0.687 | — | — |
+| full | ✅ | 0.9987 | 0.687 | n/a | n/a |
 
 All four per-region scorecards pass. Walkover-window evaluation passes (gates `> 0.10` and `> 0.80`). Walkover window auto-detected at frames 685–723. Full numbers + vs-gold regression analysis in [`docs/FINAL_REPORT.md` §7](docs/FINAL_REPORT.md).
 
@@ -79,7 +79,7 @@ All four per-region scorecards pass. Walkover-window evaluation passes (gates `>
 
 | You want to | Read |
 |---|---|
-| Read the canonical project narrative — problem, approach, every phase, why the final approach won | **`docs/FINAL_REPORT.md`** |
+| Read the canonical project narrative, problem, approach, every phase, why the final approach won | **`docs/FINAL_REPORT.md`** |
 | Reproduce the final result | "Reproduce the final" below |
 | Understand the eval framework (gates, walkover detection, side-by-side video) | `docs/EVALUATION.md` |
 | Read the raw append-only experiment log | `docs/EXPERIMENT_LEDGER.md` |
@@ -147,7 +147,7 @@ cd sam2/checkpoints && ./download_ckpts.sh && cd ../..
 
 Two-step process: collect clicks locally on a chosen seed frame, then run on a remote GPU via Modal.
 
-### Step 1 — Select banner regions (local, no GPU)
+### Step 1, Select banner regions (local, no GPU)
 
 ```bash
 uv run python scripts/collect_prompts.py --config configs/default.yaml
@@ -155,7 +155,7 @@ uv run python scripts/collect_prompts.py --config configs/default.yaml
 
 This opens the seed frame and saves the prompt points into the config automatically. SAM2: left-click positive points. SAM3: left-click positive, right-click negative, `U` to undo, `N` for next object.
 
-### Step 2 — Run on a Modal GPU
+### Step 2, Run on a Modal GPU
 
 ```bash
 # Video mode (full clip)
@@ -229,10 +229,10 @@ End-to-end:
 data/<input>.mov
   → SAM2 segmenter      (segment/sam2_image.py + segment/sam2_video.py)
   → hull quad fitter    (fitting/hull_fit.py)
-  → court geometry      (court_geometry_ball_tracker.py — FINAL)
-  → hybrid lock         (court_geometry.py:HybridLockState — line 1390)
+  → court geometry      (court_geometry_ball_tracker.py, FINAL)
+  → hybrid lock         (court_geometry.py:HybridLockState, line 1390)
   → MatAnyone2 mask     (occlusion alpha matting)
-  → inpaint compositor  (composite/painted.py — median_fill + LED-blend)
+  → inpaint compositor  (composite/painted.py, median_fill + LED-blend)
   → outputs/composited.mp4
 ```
 
@@ -240,10 +240,10 @@ data/<input>.mov
 |---|---|---|
 | Segmentation | SAM2 image-then-video tracker turns 1–3 click prompts into per-frame binary masks | [`segment/sam2_image.py`](src/banner_pipeline/segment/sam2_image.py), [`segment/sam2_video.py`](src/banner_pipeline/segment/sam2_video.py), [`segment/base.py`](src/banner_pipeline/segment/base.py) |
 | Quad fitting | Reduces each per-frame mask to 4 corner points (placement quad) | [`fitting/hull_fit.py`](src/banner_pipeline/fitting/hull_fit.py), [`fitting/pca_fit.py`](src/banner_pipeline/fitting/pca_fit.py), [`fitting/lp_fit.py`](src/banner_pipeline/fitting/lp_fit.py) |
-| Court geometry — FINAL | BallTrackerNet learned 14-keypoint detector + RANSAC + V68-seed bridge | [`court_geometry_ball_tracker.py`](src/banner_pipeline/court_geometry_ball_tracker.py) |
-| Court geometry — Phase 2 | classical_lines (Hough + RANSAC) — too noisy for dynamic gating | [`court_geometry.py`](src/banner_pipeline/court_geometry.py) |
+| Court geometry, FINAL | BallTrackerNet learned 14-keypoint detector + RANSAC + V68-seed bridge | [`court_geometry_ball_tracker.py`](src/banner_pipeline/court_geometry_ball_tracker.py) |
+| Court geometry, Phase 2 | classical_lines (Hough + RANSAC), too noisy for dynamic gating | [`court_geometry.py`](src/banner_pipeline/court_geometry.py) |
 | Hybrid lock | Per-frame state machine that gates dynamic estimates against the seed | [`court_geometry.py:HybridLockState`](src/banner_pipeline/court_geometry.py) line 1390 |
-| Person occlusion | MatAnyone2 alpha matting — produces the alpha matte the compositor uses to occlude logos behind the player | configured via `occlusion_masker.type: matanyone2` |
+| Person occlusion | MatAnyone2 alpha matting, produces the alpha matte the compositor uses to occlude logos behind the player | configured via `occlusion_masker.type: matanyone2` |
 | Compositor | Erase original ad → warp new logo → LED-blend brightness re-bake → person-mask occlusion | [`composite/painted.py`](src/banner_pipeline/composite/painted.py) |
 | Eval framework | Post-hoc deterministic scoring + crops + side-by-side video | [`eval/`](src/banner_pipeline/eval/) ([`__main__.py`](src/banner_pipeline/eval/__main__.py), [`report.py`](src/banner_pipeline/eval/report.py), [`walkover.py`](src/banner_pipeline/eval/walkover.py)) |
 | Orchestration | Loads frozen config, runs the per-frame loop | [`pipeline.py`](src/banner_pipeline/pipeline.py) |
@@ -340,10 +340,10 @@ Each run also writes a top-level `metrics.json` with timing / GPU info:
 ## Reproducibility
 
 Each run saves `experiments/<timestamp>_<name>_<gpu>/` with:
-- `config.yaml` — frozen config with exact click coordinates and all settings
-- `metrics.json` — timing + GPU info
-- `outputs/composited.mp4` — output
-- `eval/` — full eval framework output (after running `python -m banner_pipeline.eval`)
+- `config.yaml`, frozen config with exact click coordinates and all settings
+- `metrics.json`, timing + GPU info
+- `outputs/composited.mp4`, output
+- `eval/`, full eval framework output (after running `python -m banner_pipeline.eval`)
 
 To reproduce any run exactly: `uv run modal run scripts/modal_run.py --config <run_dir>/config.yaml --gpu H200 --mode video_hybrid`.
 
@@ -359,7 +359,7 @@ The final has three known ceilings, documented in `docs/FINAL_REPORT.md` §9:
 
 ## Internal-only experimentation framework
 
-For the iterative experimentation loop (Phase 3 produced ~50 H200 GPU runs across 14 waves of parallel experiments): see `docs/AGENT_BRIEFING.md`. Defines the per-cycle worker contract, parallelism patterns, and the "lessons learned" knowledge-sharing protocol. Internal — not part of the production pipeline.
+For the iterative experimentation loop (Phase 3 produced ~50 H200 GPU runs across 14 waves of parallel experiments): see `docs/AGENT_BRIEFING.md`. Defines the per-cycle worker contract, parallelism patterns, and the "lessons learned" knowledge-sharing protocol. Internal, not part of the production pipeline.
 
 ## Adding a new segmentation model
 
