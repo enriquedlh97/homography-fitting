@@ -12,7 +12,7 @@ quality on static / slowly-changing footage.
 
 - **Frame 0** → full SAM3 run (detection + segmentation). The frame's HSV
   histogram is stored as the *target*.
-- **Frame `t > 0`** (online):
+- **Frame `t > 0`** (causal, per-frame inner loop — see caveat below):
   1. compute the HSV histogram of the current frame and the correlation
      `sim = correlation(target_hist, cur_hist)`;
   2. if `sim < similarity_threshold` (default `0.85`) we assume a camera
@@ -25,6 +25,27 @@ The rest of the pipeline (`detection_filter → stabilization → fit →
 CornerTracker → inpaint median_fill`) is unchanged: the light segmenter
 respects the same `(video_segments, frame_dir, frame_names)` contract as
 `SAM3VideoSegmenter`.
+
+> **Note — this pipeline is NOT an online / real-time streaming
+> pipeline.** Although the HSV/motion-gated SAM3 inner loop in
+> `sam3_light_video.py` is itself causal (frame-by-frame, no look-ahead),
+> the overall run is offline:
+> - `extract_all_frames()` decodes the full video to JPEGs on disk before
+>   segmentation starts;
+> - `_apply_detection_filter` (and IoU-dedup) accept/reject obj_ids using
+>   statistics aggregated over **all** frames (`max_area`, `n_frames`,
+>   mean confidence) — non-causal by construction;
+> - mask stabilization and the fit/composite stage are a **second pass**
+>   over the frames already on disk;
+> - SAM3 itself is invoked via `build_sam3_video_predictor` but each
+>   rerun spins up a new session on a 1-frame mp4 (effectively an
+>   image-predictor wrapper), at ~3–4 fps on A100-80GB — well below any
+>   real-time budget.
+>
+> Making this real-time would require: a streaming frame reader, a
+> causal detection filter (running-window stats), a single-pass
+> stabilization, and removal of the per-rerun ffmpeg + new-session
+> overhead in SAM3.
 
 Implementation: `src/banner_pipeline/segment/sam3_light_video.py`.
 Config: `configs/experiments/sam3_light_auto.yaml`.
