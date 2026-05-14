@@ -1,1 +1,0 @@
-Left side banner Red Bull insertion replaces YoPRO on the blue diagonal board. Geometry tracks across early/mid/late strips. Slight softness on the bulls' rings versus the crisp YoPRO original, but no obvious smearing. No halo. shadow_strength does not affect this region.

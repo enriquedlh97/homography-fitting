@@ -1,3 +1,0 @@
-## Full — visual review
-
-The full-frame crops_strip shows the broadcast composite at viewing distance. All five Red Bull insertions (back banners obj 1/2/5, left side obj 4, court floor obj 3) form a coherent advertising package — same brand across all surfaces, perspectives match the camera angle, lighting reads consistent. No surfaces draw the eye more than another. The court-floor wordmark is small at this scale; the new shadow synthesis only visibly fires when a player crosses the mark and the effect is too subtle to register at full-frame resolution. Painted_on_vs_pasted_on 4 across all surfaces; no regressions vs P3-A17.

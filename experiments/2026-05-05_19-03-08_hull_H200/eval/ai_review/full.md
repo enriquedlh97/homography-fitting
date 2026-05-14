@@ -1,3 +1,0 @@
-# full — synthesis (BTN + mask_dilate=8 + alpha_feather=8)
-
-At broadcast scale the full-frame composite reads as a clean bake. All three surface regions (back banner, left side-banner, floor mark) coexist without one calling attention. The court geometry is stable across the 5 sampled timestamps — baselines and service boxes do not crawl. None of the three patches show a perimeter rectangle at full-frame zoom-out. The floor Red Bull is the slightest bit cooler/bluer than the surrounding court, which is the only thing keeping this from being a clean 5; at broadcast distance it is plausibly real paint. Overall this is the most cohesive composite of the Phase 3 axis runs.

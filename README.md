@@ -83,7 +83,6 @@ All four per-region scorecards pass. Walkover-window evaluation passes (gates `>
 | Reproduce the final result | "Reproduce the final" below |
 | Understand the eval framework (gates, walkover detection, side-by-side video) | `docs/EVALUATION.md` |
 | Read the raw append-only experiment log | `docs/EXPERIMENT_LEDGER.md` |
-| Continue the iterative experimentation work | `docs/AGENT_BRIEFING.md` |
 | See the parallel directions we tried on other branches | `docs/FINAL_REPORT.md` §10 |
 
 ## Other branches we tried (parallel explorations)
@@ -193,7 +192,6 @@ homography-fitting/
     FINAL_REPORT.md                       canonical narrative (start here)
     EVALUATION.md                         eval framework spec
     EXPERIMENT_LEDGER.md                  append-only experiment log
-    AGENT_BRIEFING.md                     iterative experimentation contract (internal)
   src/banner_pipeline/
     pipeline.py                           orchestration
     segment/sam2_image.py, sam2_video.py  segmentation
@@ -357,9 +355,9 @@ The final has three known ceilings, documented in `docs/FINAL_REPORT.md` §9:
 2. **Single-clip eval.** Only `melbourne-walking-over-logo.mov` is wired into `configs/eval/reference.yaml`. Adding `data/tennis-clip.mp4` and `data/zoom-clip-melbourne.mov` would catch clip-specific regressions.
 3. **Adaptive vp_smoothing.** Code shipped (P3-A2) but the parameter sweep didn't conclude. Worth completing.
 
-## Internal-only experimentation framework
+## Iterative experimentation log
 
-For the iterative experimentation loop (Phase 3 produced ~50 H200 GPU runs across 14 waves of parallel experiments): see `docs/AGENT_BRIEFING.md`. Defines the per-cycle worker contract, parallelism patterns, and the "lessons learned" knowledge-sharing protocol. Internal, not part of the production pipeline.
+Phase 3 produced ~50 H200 GPU runs across 14 waves of parallel experiments — the full chronological record (one entry per cycle: hypothesis, branched config, run output, metrics, decision) is in `docs/EXPERIMENT_LEDGER.md`. We dispatched 5–8 parallel cycles per wave on Modal's H200 slots; each cycle wrote a frozen config + outputs + eval-framework metrics into its own `experiments/<timestamp>_<gpu>/` directory.
 
 ## Adding a new segmentation model
 

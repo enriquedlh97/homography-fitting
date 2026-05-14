@@ -17,7 +17,6 @@ Red Bull demo and for future homography/perspective experiments.
 **Baseline config:** `configs/experiments/eval_walkover_v68_clicked_homography_static_preview.yaml`
 **Baseline output:** `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/outputs/composited.mp4`
 **Review crops:** `experiments/2026-04-30_16-22-17_walkover_v68_clicked_homography_static_preview_H200/crops/`
-**Presentation notes:** `docs/walkover-redbull-demo-approach.md`
 
 **Decision:** Treat `v68_clicked_homography_static_preview_H200` as the current
 walking-over demo baseline. It keeps the accepted v61 composition stack while

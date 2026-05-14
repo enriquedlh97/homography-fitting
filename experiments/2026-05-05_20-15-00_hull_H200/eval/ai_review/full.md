@@ -1,3 +1,0 @@
-# full — viewer notes
-
-At full-frame zoom the run is the most flattering view: framing matches, banners are in the right place, and the small inserted Red Bull marks read as plausible ads. The court patch is faintly visible as a slightly brighter rectangle on close inspection, but a casual scrub at this scale would not flag it. No popping or jitter in the strip — temporally stable. The per-region artifacts (floor halo, left-banner reflex, walkover Melbourne leak) are real but small enough at full-frame to escape notice. This region scores well; the run's actual problems live in the close-up regions.

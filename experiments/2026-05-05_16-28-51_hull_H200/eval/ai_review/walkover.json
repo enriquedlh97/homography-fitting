@@ -1,8 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
-  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
-  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
-  "temporal":{"occlusion_realism": 5, "jitter_visible": 5, "player_contact_shadow": 5},
-  "notes": "Walkover frames 685-723: player crosses the Red Bull floor mark on shoes/legs and the occlusion is clean. Forensic sheets (entry/pre-contact/contact/post-contact/exit) show 'composite' panels with the player's feet correctly hiding the logo where they overlap, no leak around shoe edges. The 'suspected leak overlay' panels show only the inserted Red Bull pixels, not any player pixels — confirming the alpha mask respects the player silhouette. No wobble or jitter across the consecutive_frames strip; the Red Bull mark stays locked to the court while shoes pass over it. This is the qualitative differentiator and it lands.",
-  "min_score": 5
-}

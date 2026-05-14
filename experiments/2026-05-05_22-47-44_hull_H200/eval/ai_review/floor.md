@@ -1,1 +1,0 @@
-Floor logo crops/motion strips look stable. With shadow_strength=0.3 the contact shadow under the player's feet is so faint it barely registers — the player reads as slightly floating above the Red Bull mark when traversing. Halo on Melbourne paint is acceptable. Geometry stable across early/mid/late.

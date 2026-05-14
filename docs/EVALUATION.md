@@ -1,6 +1,6 @@
 # Evaluation Framework
 
-Canonical reference for evaluating virtual banner placement runs. Supersedes `docs/evaluation-protocol.md`.
+Canonical reference for evaluating virtual banner placement runs.
 
 ## What this evaluates
 
@@ -228,7 +228,3 @@ There is **no Melbourne-specific pixel coordinate** in the eval framework. All R
 - Person-detector-based occlusion. We use the clean-vs-composite delta heuristic (no model dependency).
 - Modal-side eval execution. Eval is local/CPU and runs after the pipeline finishes.
 - Modifying `scripts/run_experiment.py` or `scripts/modal_run.py`. Use `scripts/run_and_eval.sh` to chain.
-
----
-
-For internal design rationale and historical context, see [`docs/evaluation-protocol.md`](evaluation-protocol.md) (superseded — kept for reference).

@@ -1,3 +1,0 @@
-# Back banners (P3-A17)
-
-The back-panel Red Bull mark is small and sits against a dark/violet rear-banner background. Scrubbing the early/mid/late motion strips, no halo, no letter-edge reflex, no rectangular seam, no jitter — the patch reads as broadcast banner content. Brightness tracks the panel as it shifts from dim to mid-bright across the clip; hue stays consistent. obj_4 mask_dilate=4 is a left-banner-only override and the floor erase_text=true does not touch this region, so this surface should be (and is) identical to P3-A12 and P3-A5. Verdict: clean 5 across the rubric — not a regression.

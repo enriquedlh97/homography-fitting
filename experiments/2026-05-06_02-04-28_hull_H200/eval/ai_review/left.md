@@ -1,3 +1,0 @@
-# left
-
-The targeted region for this run. obj_4 inpaint_feather_px=8 (down from 14). Red Bull wordmark and bull silhouettes sit on the same diagonal blue banner that carries YoPRO in the original. Letter edges are noticeably tighter than the P3-A29/a3 baseline — the prior subtle reflex along letter perimeters and around the bull rings has receded to thin residual softness. A scrubbing viewer would now read this as plausibly baked-in at normal playback, though slow-zoom side-by-side with YoPRO still reveals slightly softer edges. No new halo or seam introduced by the tighter feather. Color and geometry remain rock-solid.

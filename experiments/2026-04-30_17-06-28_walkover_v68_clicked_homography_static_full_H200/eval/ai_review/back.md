@@ -1,3 +1,0 @@
-# back — viewer notes
-
-A scrubbing viewer would see a Red Bull wordmark on the rear banner that reads as part of the broadcast. Compared head-to-head with the original Kia ad, the Red Bull substitution sits at the same brightness and hue, occupies the right slice of the panel, and tracks the camera with no swimming or crawling on the edges. Across early, mid and late motion strips the logo holds its position cleanly. The only tell — and it is subtle — is that the Red Bull mark looks marginally crisper than the slightly grainy original, which a trained eye might read as "newly painted" rather than "weathered signage." Player and umpire occlusions on top of the banner look as plausible on the composite as they do on the original. Overall this region is broadcast-grade.

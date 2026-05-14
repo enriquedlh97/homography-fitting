@@ -1,3 +1,0 @@
-# left — visual review
-
-The left side banner is the canonical reflex case. The original YoPRO logo above shows clean, hard-edged white type. Our Red Bull composite below shows a faint ghost / smear along the top and bottom edges of the wordmark and the bull rings — letters render slightly softer, with a hint of duplicate-edge ringing. A scrubbing viewer would notice the typographic edges feel gummier than the baked-in YoPRO above. Color, brightness, and saturation all track the cobalt panel well, and the perspective along the slanted white stripe is plausible. No bright halo, no jitter, no seam pop across early/mid/late strips. The dimension that lets this region down is `realism.edge_reflex` — a 2 by rubric v2's calibration.

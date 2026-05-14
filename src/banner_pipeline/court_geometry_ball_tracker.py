@@ -90,8 +90,8 @@ def _candidate_weights_paths() -> list[Path]:
     Walks upward from this file looking for ``weights/`` and the sibling
     ``tennis-virtual-ads`` and ``TennisCourtDetector`` repos.  This works
     regardless of whether the pipeline runs from the repo root, a
-    worktree under ``.claude/worktrees/<name>/``, or a Modal-deployed
-    image where the repo lives at an arbitrary path.
+    sibling worktree directory, or a Modal-deployed image where the
+    repo lives at an arbitrary path.
     """
     here = Path(__file__).resolve()
     candidates: list[Path] = []

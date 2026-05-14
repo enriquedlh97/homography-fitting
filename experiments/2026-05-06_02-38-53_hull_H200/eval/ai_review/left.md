@@ -1,3 +1,0 @@
-# left — feather=4 variant (a1)
-
-The left diagonal banner is the focus dimension this experiment was designed to break (`left.edge_reflex` ceiling at 4). Tightening obj_4 inpaint_feather_px from 8 down to 4 — close to its practical floor — does not visibly change the residual letter-edge softness. Wordmark letters and bull rings remain a clean 4 vs the YoPRO baseline's 5; the reflex artifact is no longer the v2 canonical 'subtle ghost' but a thin AA-band that doesn't crisp up further with smaller feather. The bottleneck is now downstream of inpaint feather. No new halo introduced; geometry and color are unchanged.

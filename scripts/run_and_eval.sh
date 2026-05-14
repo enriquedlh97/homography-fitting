@@ -8,7 +8,6 @@
 # Env vars:
 #   MODAL=1            -> dispatch through scripts/modal_run.py instead of run_experiment.py
 #   GPU=B200|H200|...  -> Modal GPU type (default B200)
-#   EVAL_AI_REVIEW=1   -> add --with-ai-review to the eval call (Anthropic API)
 #   EVAL_REFERENCE=auto|off|<path>  -> --reference value (default: auto)
 
 set -euo pipefail
@@ -31,9 +30,4 @@ if [[ -z "${OUTPUT}" ]]; then
     exit 1
 fi
 
-EVAL_ARGS=(--experiment "$OUTPUT" --reference "$REFERENCE")
-if [[ "${EVAL_AI_REVIEW:-0}" == "1" ]]; then
-    EVAL_ARGS+=(--with-ai-review)
-fi
-
-uv run python -m banner_pipeline.eval "${EVAL_ARGS[@]}"
+uv run python -m banner_pipeline.eval --experiment "$OUTPUT" --reference "$REFERENCE"

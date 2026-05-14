@@ -1,8 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4},
-  "color": {"hue_match": 5, "brightness_match": 4, "saturation_match": 4},
-  "geometry": {"perspective_plausibility": 5, "size_plausibility": 5},
-  "notes": "The Red Bull bull-and-wordmark sits on the blue court paint where the original 'MELBOURNE' text was. Perspective and scale look correct — the logo appears flat on the court plane rather than floating. Hue matches the surrounding court blue closely. Brightness/saturation are a hair flatter than the original wordmark which has more painted-on contrast variation; the composite reads slightly cleaner, almost decal-like, where a real court paint job would have more wear and reflection. No visible edge seam in the static crops. Across motion strips the logo is locked to the court plane with no jitter. Temporal occlusion (when players' shoes / shadows pass over) is largely correct in non-walkover frames; player_contact_shadow is the weakest sub-score because the logo doesn't darken under foot contact the way real court paint would.",
-  "temporal": {"occlusion_realism": 4, "jitter_visible": 5, "player_contact_shadow": 3},
-  "min_score": 3
-}

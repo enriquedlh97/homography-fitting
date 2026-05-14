@@ -1,3 +1,0 @@
-# floor
-
-Floor-band Red Bull (court_floor obj_3) is unchanged in this experiment — the padding change applies to obj_4 (left banner). On the floor stripe a viewer would see clean color and brightness match against the surrounding blue band, and the underlying MELBOURNE wordmark is fully covered with no leak in the early/mid/late motion strips. Two soft v2 artifacts remain: a faint halo and faint letter-edge reflex around the bull silhouettes when compared to the very crisp baked-in MELBOURNE letterforms above. Both are subtle, not dramatic — both score 4. Geometry rides the floor plane without jitter; player traffic is absent in this region's strip windows. Same calibration as P3-A33/a2, ceiling 4.

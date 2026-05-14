@@ -1,7 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 5},
-  "color":   {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
-  "geometry":{"perspective_plausibility": 5, "size_plausibility": 5},
-  "notes": "Full-frame paired strip: composite views are visually identical to the original broadcast frame at thumbnail scale, with all three swapped regions (back banner, left panel, floor) reading as native parts of the scene. No region attracts the eye as obviously synthetic; nothing flickers between paired rows. Court geometry, scoreboard, crowd, and lighting are unchanged. Indistinguishable at scrub speed.",
-  "min_score": 5
-}

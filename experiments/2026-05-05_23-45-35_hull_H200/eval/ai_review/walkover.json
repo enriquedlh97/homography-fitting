@@ -1,8 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
-  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
-  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
-  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
-  "notes": "Walkover s=0.65 r=15 b=10: f0704 contact shadow has slightly more density than baseline; still in credible range. Hull occlusion clean, geometry stable, halo controlled. Equivalent to baseline player_contact_shadow but trending denser.",
-  "min_score": 4
-}

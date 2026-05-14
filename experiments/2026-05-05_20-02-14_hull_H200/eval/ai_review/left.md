@@ -1,3 +1,0 @@
-# left — sub-agent prose
-
-The left diagonal banner replacement reads as plausible at glance distance but loses to the YoPRO baseline at close inspection. Color and saturation of the blue band carry over cleanly. The Red Bull wordmark and bull-pair, however, exhibit a faint letter-edge softness / reflex that the YoPRO original does not have — the rubric-v2 edge_reflex flag fires at a 3. No bright halo is visible (the saturated blue masks any perimeter glow). The wordmark also sits slightly low in the available banner area, which is a minor geometry/size note rather than a misregistration. No rectangular seam, no jitter; replacement is stable across the early/mid/late strips. This region is the run's main visual ceiling.

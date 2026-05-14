@@ -1,3 +1,0 @@
-# back
-
-A scrubbing viewer would not flag the back wall. The Red Bull replacement reads as a baked-in banner on the dim purple-lit venue wall in every motion strip sample. No halo at the wordmark perimeter, no smearing or ghost band along letter edges, and the bull silhouette outlines are clean. Color tone (hue/brightness/saturation) is consistent with the surrounding wall and stable across early/mid/late samples — no breathing, no shift. Geometry tracks the back-wall plane and the size matches the Kia footprint from the top row. obj_4 padding=0 is a left-banner change and has no effect on the back region — back stays at the P3-A33/a2 ceiling.

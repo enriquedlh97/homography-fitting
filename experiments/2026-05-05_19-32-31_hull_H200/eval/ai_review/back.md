@@ -1,3 +1,0 @@
-# back — visual review
-
-A scrubbing viewer would read the back-LED Red Bull as plausibly displayed on the banner, since the original (Kia) is also a luminous LED graphic — so the surface tolerates some glow. However the white wordmark and bull rings show a faint edge reflex when scrubbed in motion: thin letter strokes have a slight ringing / softening at the top and bottom that the cleaner Kia wordmark does not exhibit. Hue and brightness track the navy banner well; saturation on the bulls reads marginally hotter than the surrounding banner. Geometry and size are stable across early/mid/late strips with no flicker, jitter, or seam pop. Net: convincing-enough for a quick glance but a careful viewer would notice the letter-edge softness vs. the baked-in original.

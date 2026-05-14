@@ -16,7 +16,7 @@ All notable milestones for the capstone project. Newest first.
 ## 2026-05-05 → 2026-05-06, Phase 3: BTN port + iterative quality experimentation
 
 - **BallTrackerNet port (P3-A1).** New module `src/banner_pipeline/court_geometry_ball_tracker.py` (~720 lines): learned 14-keypoint detector + RANSAC homography + frame-0 bridge to V68's manually-clicked corners. Drop-in replacement for `CourtGeometryEstimator`, selected via `geometry.court_backend: ball_tracker_net_v1`. Sufficient stability under hybrid_lock@30 for the production candidate.
-- **Iterative experimentation framework.** ~50 H200 GPU runs across 14 waves of parallel experiments (P3-A1 through P3-A40). Per-cycle worker contract + parallel manager + cross-agent lessons-learned sharing. Defined in `docs/AGENT_BRIEFING.md`.
+- **Iterative experimentation cadence.** ~50 H200 GPU runs across 14 waves of parallel experiments (P3-A1 through P3-A40), one branched config per cycle, evaluated by the framework in `docs/EVALUATION.md`. Full per-cycle hypothesis/result/decision record in `docs/EXPERIMENT_LEDGER.md`.
 - **Code shipped:**
   - Motion-aware adaptive `vp_smoothing_alpha` in `court_geometry.py` (P3-A2; sweep didn't conclude).
   - Shadow synthesis on `court_floor` surface override in `composite/painted.py` + `pipeline.py` (P3-A28; new knobs `shadow_strength`, `shadow_radius_px`, `shadow_blur_px`; default 0 = no behavior change).

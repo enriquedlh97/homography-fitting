@@ -40,7 +40,6 @@ def run_eval(
     reference_arg: str | None = None,
     regions_subset: list[str] | None = None,
     walkover_window_override: tuple[int, int] | None = None,
-    with_ai_review: bool = False,  # deprecated; kept for API back-compat
     original_video: str | Path | None = None,
     clean_video: str | Path | None = None,
 ) -> tuple[dict[str, Any], int]:
@@ -235,38 +234,6 @@ def run_eval(
             else None,
         )
         artifacts["vs_reference_video"] = str(eval_dir / "vs_reference_side_by_side.mp4")
-
-    # ---- Visual rubric manifest (always emitted) + read back sub-agent rubrics ----
-    # The eval framework writes a MANIFEST.md listing the per-region crop PNGs and
-    # the rubric schema. A sub-agent (vision-capable Claude) is dispatched
-    # SEPARATELY by the manager to read the PNGs via the Read tool and write
-    # <region>.{json,md} into eval/ai_review/. We then pick up any rubric files
-    # the sub-agent wrote on a prior pass and surface their min_score in the
-    # quality_metrics. No SDK calls, no API key, no `--with-ai-review` flag.
-    from banner_pipeline.eval import ai_review as ai_mod
-
-    regions_in_manifest = list(per_region.keys())
-    if walkover_window is not None and "walkover" not in regions_in_manifest:
-        regions_in_manifest.append("walkover")
-    ai_mod.write_manifest(
-        eval_dir=eval_dir,
-        regions_present=regions_in_manifest,
-        walkover_window=(walkover_window.start, walkover_window.end)
-        if walkover_window is not None
-        else None,
-    )
-
-    for region_kind in ("back", "left", "floor", "full", "walkover"):
-        rubric = ai_mod.load_existing_rubric(eval_dir, region_kind)
-        if rubric is None:
-            continue
-        score = rubric.get("min_score")
-        if not isinstance(score, int):
-            continue
-        # Walkover scores attach to the floor region (they're about obj_3 too).
-        target = "floor" if region_kind == "walkover" else region_kind
-        if target in per_region:
-            per_region[target][f"ai_review_min_score{'_walkover' if region_kind == 'walkover' else ''}"] = score
 
     # ---- Reference comparison + regression flags ----
     vs_ref: dict[str, Any] = {}

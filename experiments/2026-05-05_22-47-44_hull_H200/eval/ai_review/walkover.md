@@ -1,1 +1,0 @@
-Walkover frames f0685 (entry) through f0723 (exit) show clean hull occlusion with no halo around the Red Bull. At shadow_strength=0.3 the cast shadow under the feet at contact (f0704) is too faint to anchor the player to the floor — feet read as floating. A stronger shadow would close this gap.

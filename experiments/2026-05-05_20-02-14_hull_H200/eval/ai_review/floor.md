@@ -1,3 +1,0 @@
-# floor — sub-agent prose
-
-A scrubbing viewer would see the Red Bull lockup sitting on a uniform blue floor band where MELBOURNE used to be. The erase_text=true + feather_px=4 setting produces a clean substrate — no MELBOURNE letterforms ghost through across the early/mid/late strips. Color, hue and saturation match the surrounding floor perfectly. A faint halo and faint letter-edge reflex are detectable around the bull silhouettes when held against the crisp baked-in MELBOURNE letters; neither is dramatic. The lockup feels slightly vertically compressed vs the wide MELBOURNE wordmark, but geometry is stable with no jitter through the strips. Net: comparable to P3-A29 in floor quality and visibly cleaner than P3-A12, where the inpaint texture was too smooth.

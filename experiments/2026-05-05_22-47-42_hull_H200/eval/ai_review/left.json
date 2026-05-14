@@ -1,7 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 4, "edge_reflex": 4},
-  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
-  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
-  "notes": "Left banner identical to other shadow_strength variants — shadow doesn't apply here. Red Bull on blue diagonal banner is stable. Bull rings show only mild softness vs YoPRO original.",
-  "min_score": 4
-}

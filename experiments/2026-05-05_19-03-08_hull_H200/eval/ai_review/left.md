@@ -1,3 +1,0 @@
-# left — synthesis (BTN + mask_dilate=8 + alpha_feather=8)
-
-The left side-banner now reads close to a bake. Compared to baseline P2-C012 (where the user flagged paint-drift on the bull rings and a top/bottom letter reflex), the synthesis version of the banner is materially cleaner: mask_dilate dropping from 20 to 8 has trimmed the bright fringe to roughly 1 px, and the BTN-driven stable H means the mark is not jittering inside the panel boundary. Letter edges are still slightly soft (a hair of reflex remains on the wing-tips of the bulls and along the top of "RedBull"), so this is calibrated at 4 not 5 — the original YoPRO bake is sharper. No halo glow visible. No rectangular seam at the patch perimeter. Color hue and brightness sit naturally on the panel.

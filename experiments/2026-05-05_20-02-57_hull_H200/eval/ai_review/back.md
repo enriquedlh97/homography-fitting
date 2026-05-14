@@ -1,3 +1,0 @@
-# back
-
-A scrubbing viewer would see a clean Red Bull replacement on the navy back banner. Letters stay crisp across the duration, the bull rings render without visible halo or letter-edge ghost, and there is no rectangular seam where the patch boundary lives. Under fast pans the wordmark softens slightly, but the original Kia ad softens the same amount on the same frames, so the artifact reads as legitimate motion blur rather than a synthesis defect. Hue and brightness track the banner tone. This region does not depend on the floor `erase_text` flag; output is statistically identical to the P3-A5 baseline.

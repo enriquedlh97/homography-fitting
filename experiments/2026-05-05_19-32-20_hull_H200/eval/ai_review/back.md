@@ -1,3 +1,0 @@
-# back — short-form prose
-
-A scrubbing viewer would read the back banner Red Bull as a real painted banner ad. The wordmark stays opaque and crisp from early to late strip; the bull-rings show a touch of motion softness but consistent with the broadcaster's own Kia frames in the top row. No rectangular boundary seam pops at the banner edges, and there is no luminance halo around the letters. The dark navy background blends naturally with the composite. This region is governed by the banner surface override (mask_dilate=18, alpha_feather=3) and is not affected by the P3-A6 floor-only relaxation, so it matches the P3-A5 baseline read. The only mild ding is a faint edge softness on the rings under motion blur (edge_reflex=4) that the YoPRO baseline is slightly cleaner on.

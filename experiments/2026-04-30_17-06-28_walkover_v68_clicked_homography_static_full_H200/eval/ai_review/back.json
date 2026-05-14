@@ -1,7 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 5, "edge_seam_visibility": 5, "texture_match": 4},
-  "color": {"hue_match": 5, "brightness_match": 5, "saturation_match": 5},
-  "geometry": {"perspective_plausibility": 5, "size_plausibility": 5},
-  "notes": "Red Bull replaces the original Kia banner cleanly. The dark band tone and brightness of the composite are an excellent match for the original signage band — at first glance the Red Bull wordmark reads as genuinely painted onto the same backdrop as the original ad. Edges are clean across early/mid/late motion strips with no visible seam. The wordmark stays locked to the banner panel through camera motion. Texture is close but the Red Bull mark looks a hair sharper / cleaner than the slightly noisier original, which is the only thing keeping texture_match shy of a 5. Geometry and scale are spot-on relative to the surrounding seat block.",
-  "min_score": 4
-}

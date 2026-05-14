@@ -1,1 +1,0 @@
-Walkover at shadow_strength=0.7: contact shadow at f0704 / f0713 is dense enough that the shadow itself starts to draw attention as a painted-on artifact under the player rather than blending into the scene. Player is well-grounded but the effect has overshot natural.

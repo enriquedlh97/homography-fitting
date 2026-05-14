@@ -1,8 +1,0 @@
-{
-  "realism": {"painted_on_vs_pasted_on": 4, "edge_seam_visibility": 4, "texture_match": 4, "halo_presence": 5, "edge_reflex": 4},
-  "color":   {"hue_match": 4, "brightness_match": 4, "saturation_match": 4},
-  "geometry":{"perspective_plausibility": 4, "size_plausibility": 4},
-  "temporal":{"occlusion_realism": 4, "jitter_visible": 4, "player_contact_shadow": 4},
-  "notes": "Walkover s=0.6 r=20 b=14: at f0704 contact and f0713 post-contact, the wider blur radius produces a soft cast shadow that integrates better with the court paint than the tight-radius variants. Hull occlusion clean. Equivalent to baseline on player_contact_shadow with a slight perceptual edge in shadow softness.",
-  "min_score": 4
-}

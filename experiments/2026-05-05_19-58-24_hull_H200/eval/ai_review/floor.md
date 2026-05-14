@@ -1,3 +1,0 @@
-# floor — what would a viewer notice?
-
-A viewer scrubbing the court floor sees a stable Red Bull mark with no perimeter glow on the matte court paint and no smear around the wordmark or bulls. The patch boundary is invisible across all sampled motion strips. Color is fractionally cooler than the surrounding court but well within real painted-court variance. The only persistent weakness is player_contact_shadow: the mark stays opaque where feet land instead of darkening under contact — that is a separate axis from this experiment and unchanged from P3-A5. The tighter global dilate=4 (vs P3-A5's 8) does not visibly hurt the floor since the court_floor surface override keeps alpha_feather_px=8 and the soft falloff hides any mask tightening. Floor is on par with P3-A5.

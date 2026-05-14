@@ -1,3 +1,0 @@
-# back — viewer notes
-
-A casual viewer scrubbing this region would not flag the back banner as a virtual ad. The Red Bull wordmark sits cleanly on the navy banner band, holds size across all crops, and tracks with the camera. The color match is close enough to a real banner that nothing screams "pasted on". Two minor tells under scrutiny: (1) the white wordmark and the bull rings read slightly softer than the original Kia, hinting at warp/interpolation blur; (2) at letter and ring edges there is a faint reflex / ringing — not the canonical Red Bull "drift", but enough to register. No luminance halo. This is the region that most behaves like a painted-on ad in this run.

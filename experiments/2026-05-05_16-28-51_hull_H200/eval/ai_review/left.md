@@ -1,3 +1,0 @@
-# left — viewer scrub notes
-
-The left-side panel is the easiest region geometrically (large, planar, well-lit) and the composite delivers. Across early, mid, and late motion strips the Red Bull mark tracks the panel's slight skew without any wobble, and the diagonal slash separating the two panel halves stays crisp through the swap. Blue background hue is identical to the YoPRO original — no color shift, no edge halo on the panel rails. The bull silhouette and wordmark hold the same brightness as YoPRO's white wordmark; nothing pops or flattens. A scrubbing viewer would see a stable, painted-on Red Bull logo; nothing about the replacement reads as composited.

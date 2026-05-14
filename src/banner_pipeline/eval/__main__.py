@@ -36,14 +36,6 @@ def main() -> int:
         default=None,
         help="Override walkover-window auto-detect, e.g. 690:745",
     )
-    parser.add_argument(
-        "--with-ai-review",
-        action="store_true",
-        help=(
-            "Deprecated; the visual rubric MANIFEST.md is now always emitted. "
-            "Sub-agent vision is the only review path (no SDK)."
-        ),
-    )
     parser.add_argument("--original", default=None, help="Override the original video path")
     parser.add_argument("--clean", default=None, help="Override the clean-plate video path")
     args = parser.parse_args()
@@ -57,7 +49,6 @@ def main() -> int:
         reference_arg=args.reference,
         regions_subset=regions_subset,
         walkover_window_override=args.walkover_window,
-        with_ai_review=args.with_ai_review,
         original_video=args.original,
         clean_video=args.clean,
     )
@@ -72,11 +63,6 @@ def main() -> int:
                 print(f"  [{region:5s}] {status}")
         if payload.get("any_regression"):
             print("  REGRESSION vs reference detected.")
-        # Manifest is always emitted; surface it.
-        print(
-            f"  Visual rubric manifest: {payload['experiment_dir']}/eval/ai_review/MANIFEST.md "
-            "(dispatch a sub-agent with this manifest to score the rubric)."
-        )
     return exit_code
 
 

@@ -1,3 +1,0 @@
-# floor
-
-Floor Red Bull on the blue band, replacing MELBOURNE. Color-match across the strip is excellent and geometry holds with no jitter. The honest deduction here is `halo_presence` (3) — a soft glow around the bull silhouettes against the matte court paint, the canonical v2 calibration case. The x4 shadow tuning (0.7 / 10 / 6) produces a visibly denser, smaller, more concentrated contact shadow than P3-A33/a2 (0.6 / 15 / 10): the dark pixels cluster directly under the foot rather than spreading into a soft puddle. Net read: more credible as a real foot shadow without crossing into painted-blob territory.

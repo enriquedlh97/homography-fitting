@@ -1,3 +1,0 @@
-# back — viewer scrub notes
-
-Scrubbing the back-banner crops, the Red Bull replacement reads as a real broadcast logo, indistinguishable in style from the Kia ad it replaces. Edges hug the banner rails through every motion-strip frame; no flicker, no leakage onto the back wall, no seam glow. The composite carries the same dim, slightly desaturated arena-light tint as the original — both wordmarks sit at the same apparent brightness, neither blown out nor floating. Perspective shrink toward the right side of frame is preserved; the wordmark gets visibly smaller and tilts the same way the Kia mark does. A casual viewer would not detect the swap; a trained eye sees a clean, painted-on result. Nothing surprising in this region.

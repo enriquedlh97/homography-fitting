@@ -1,3 +1,0 @@
-# left — what would a viewer notice?
-
-The left side banner is the cleanest surface of this run. A scrub through frames 0-766 shows the Red Bull wordmark and bulls reading as a real painted banner ad — no halo glow at letter perimeters, no ghost ringing around the bulls' wing-tips, no rectangular patch boundary anywhere on the bright blue panel. The tighter mask_dilate=4 visibly removed the soft letter-edge perimeter that lingered in P3-A5. Color is a touch less saturated than the original YoPRO bake (top row) but sits within real broadcast-print variance. Geometry is locked across motion strips. This is the predicted win of the experiment: tighter dilate cleaned up the side-banner reflex.

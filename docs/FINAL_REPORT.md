@@ -58,22 +58,22 @@ End-to-end contract for a single run:
 
 ```
 data/<input>.mov
-   ↓
-SAM2 image segmenter         src/banner_pipeline/segment/sam2_image.py
-   ↓
-Hull quad fitter             src/banner_pipeline/fitting/hull_fit.py
-   ↓
-CourtGeometryEstimator       src/banner_pipeline/court_geometry.py
-   ├─ classical_lines_v1     src/banner_pipeline/court_geometry.py        (Phase 2 baseline)
-   └─ ball_tracker_net_v1    src/banner_pipeline/court_geometry_ball_tracker.py  (FINAL)
-   ↓
-HybridLockState              src/banner_pipeline/court_geometry.py:HybridLockState
-   ↓
-MatAnyone2 person masker     CVPR 2026 alpha-matting model (occlusion)
-   ↓
-Inpaint compositor           src/banner_pipeline/composite/painted.py
-   (median_fill inpaint, LED brightness re-baking, surface overrides)
-   ↓
+ ↓
+SAM2 image segmenter src/banner_pipeline/segment/sam2_image.py
+ ↓
+Hull quad fitter src/banner_pipeline/fitting/hull_fit.py
+ ↓
+CourtGeometryEstimator src/banner_pipeline/court_geometry.py
+ ├─ classical_lines_v1 src/banner_pipeline/court_geometry.py (Phase 2 baseline)
+ └─ ball_tracker_net_v1 src/banner_pipeline/court_geometry_ball_tracker.py (FINAL)
+ ↓
+HybridLockState src/banner_pipeline/court_geometry.py:HybridLockState
+ ↓
+MatAnyone2 person masker CVPR 2026 alpha-matting model (occlusion)
+ ↓
+Inpaint compositor src/banner_pipeline/composite/painted.py
+ (median_fill inpaint, LED brightness re-baking, surface overrides)
+ ↓
 outputs/composited.mp4
 ```
 
@@ -137,12 +137,12 @@ The bridge means we get the best of both: V68's pixel-perfect production seed (t
 # pseudocode of HybridLockState.step()
 disp = max_corner_distance(project(seed_corners, H_seed), project(seed_corners, H_t))
 if disp < self.tolerance_px:
-    self.ramp_progress = 0
-    return self.H_seed                                     # locked
+ self.ramp_progress = 0
+ return self.H_seed # locked
 else:
-    self.ramp_progress += 1
-    alpha = min(1.0, self.ramp_progress / self.ramp_min_frames)
-    return blend(self.H_seed, H_t, alpha)                  # ramp
+ self.ramp_progress += 1
+ alpha = min(1.0, self.ramp_progress / self.ramp_min_frames)
+ return blend(self.H_seed, H_t, alpha) # ramp
 ```
 
 In the final config: `tolerance_px: 30, ramp_min_frames: 3, ramp_motion_px_per_frame: 2.0`. The 30-px tolerance is loose enough that the eye doesn't see micro-jitter from BTN's per-frame estimation but tight enough that real camera motion (PTZ pans, walkover handheld drift) crosses the threshold and the dynamic estimate kicks in. The 3-frame ramp prevents pop artifacts when the gate fires.
@@ -151,7 +151,7 @@ The Melbourne clip is a mostly-static camera, so the vast majority of the 767 fr
 
 ### 3.5 Person-mask occlusion, MatAnyone2
 
-**Source:** Configured via `pipeline.occlusion_masker.type: matanyone2`. The MatAnyone2 model is loaded into the Modal worker image (CVPR 2026 alpha matting; PyTorch CNN that predicts a per-pixel alpha matte for foreground-person pixels).
+**Source:** Configured via `pipeline.occlusion_masker.type: matanyone2`. The MatAnyone2 model is loaded into the Modal experiments image (CVPR 2026 alpha matting; PyTorch CNN that predicts a per-pixel alpha matte for foreground-person pixels).
 
 **How it's built.** The model takes the original frame and a sparse set of positive prompt points (the player's center) and returns a continuous alpha matte (0 = fully background, 1 = fully foreground person) at full resolution. We run it once per frame. The matte is post-processed with `mask_smooth: true` and `mask_close_px: 5` to smooth temporal flicker and close pinhole gaps. The final compositor uses this alpha matte to occlude any logo pixels behind the player, `final_pixel = composite_pixel * (1 - person_alpha) + frame_pixel * person_alpha`.
 
@@ -173,25 +173,25 @@ We deliberately do not use a "person detector + bounding-box mask" approach beca
 
 ```yaml
 compositor:
-  type: inpaint
-  params:
-    padding: 0.1
-    lum_strength: 0.0
-    inpaint_method: median_fill
-    mask_dilate_px: 20
-    alpha_feather_px: 1
-    quad_pad_px: 20
-    local_color_match: true
-    blend_mode: led
-  surface_overrides:
-    court_floor:
-      padding: 0.0
-      alpha_feather_px: 25
-      erase_text: false        # Phase 3 P3-A12 set this to true; rejected on visual review
-      shade_strength: 0.0
-      quad_expand_px: 80
-      occlusion_dilate_px: 2
-      # shadow_strength: 0.0   # Phase 3 P3-A28 lifted this to 0.6; rejected on visual review
+ type: inpaint
+ params:
+ padding: 0.1
+ lum_strength: 0.0
+ inpaint_method: median_fill
+ mask_dilate_px: 20
+ alpha_feather_px: 1
+ quad_pad_px: 20
+ local_color_match: true
+ blend_mode: led
+ surface_overrides:
+ court_floor:
+ padding: 0.0
+ alpha_feather_px: 25
+ erase_text: false # Phase 3 P3-A12 set this to true; rejected on visual review
+ shade_strength: 0.0
+ quad_expand_px: 80
+ occlusion_dilate_px: 2
+ # shadow_strength: 0.0 # Phase 3 P3-A28 lifted this to 0.6; rejected on visual review
 ```
 
 ### 3.7 Pipeline orchestration
@@ -273,11 +273,11 @@ Phase 2 concluded that the binding constraint was the estimator. We needed somet
 
 Once we had a viable dynamic homography, the question shifted to: *can we lift the visual quality of the placements further with compositor tweaks?* This question is well-suited to iterative experimentation: many config knobs, many independent variants, parallel Modal capacity available.
 
-The framework (defined in `docs/AGENT_BRIEFING.md`, internal-only):
+The framework (defined in `docs/EXPERIMENT_LEDGER.md`, internal-only):
 
-- **Per-cycle worker**, one worker process per Modal cycle. Writes ONE branched config (one knob change), runs the pipeline on H200, runs the eval framework, returns a structured 250-word report. Each cycle is config-only by default; "code-fork" cycles (where source edits are required) are dispatched in isolated git worktrees.
-- **Parallel manager**, when an axis has independent variants, fan out 5–8 in parallel. The user pays for 10 concurrent Modal H200 slots and we aimed to keep them saturated.
-- **Cross-agent knowledge sharing**, each cycle's report contains a "Lessons learned" block. The manager extracts non-obvious findings from completed sibling reports and prepends them to the next worker's brief.
+- **Per-cycle experiments**, one experiments process per Modal cycle. Writes ONE branched config (one knob change), runs the pipeline on H200, runs the eval framework, returns a structured 250-word report. Each cycle is config-only by default; "code-fork" cycles (where source edits are required) are dispatched in isolated git worktrees.
+- **Parallel operator**, when an axis has independent variants, fan out 5–8 in parallel. The user pays for 10 concurrent Modal H200 slots and we aimed to keep them saturated.
+- **Cross-agent knowledge sharing**, each cycle's report contains a "Lessons learned" block. The operator extracts non-obvious findings from completed sibling reports and prepends them to the next experiments's brief.
 
 **Total Phase 3 cycles.** ~50 H200 GPU runs across 14 waves (P3-A1 through P3-A40) + 3 code-fork worktrees + ~12 visual-rubric review passes. Detail in `docs/EXPERIMENT_LEDGER.md`.
 
@@ -302,7 +302,7 @@ The framework (defined in `docs/AGENT_BRIEFING.md`, internal-only):
 | P3-A29 (4 variants) | shadow_strength sweep | 0.6 is the sweet spot, 0.3-0.4 floats feet, 0.7+ paints blob, 0.5-0.6 photographically credible |
 | P3-A30 (4 variants) | shadow fine-tune around 0.6 | 0.6/15/10 baseline holds |
 | P3-A33/a2 | obj_4 inpaint_feather=8 | left.edge_reflex 3→4 |
-| **P3-A38/e2** | obj_4 padding=0 | left.edge_reflex 4→5. **Autonomous-experiment winner. Rejected on visual review (§6.5).** |
+| **P3-A38/e2** | obj_4 padding=0 | left.edge_reflex 4→5. **Iterative-experiment winner. Rejected on visual review (§6.5).** |
 | P3-A40 | shadow_strength=0.8 | floor_walkover_occlusion_iou collapsed to 0.60 (gate < 0.80). Rejected. |
 
 Full per-cycle reports in `docs/EXPERIMENT_LEDGER.md`.
@@ -317,7 +317,7 @@ P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the rubric-best var
 2. **MELBOURNE wordmark erasure.** `erase_text=true` removed the painted MELBOURNE wordmark from under the floor logo. This was the right move on the rubric ("no bleed-through") but visually changed the floor texture context, the logo now sat on a plain green floor instead of the patterned painted area, which read as artificial.
 3. **Harder banner edges.** `obj_4 padding=0` exposed harder banner edges on the left logo. The rubric called this `edge_reflex=5` (no smearing); on direct viewing the harder edge actually read as "pasted on" more than the slightly-softer P3-A1 baseline did.
 
-**Why the rubric got it wrong.** The visual rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was specified in `docs/AGENT_BRIEFING.md` but the rubric reviewers in practice scored the composite alone rather than direct-comparing to the original.
+**Why the rubric got it wrong.** The visual rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was specified in `docs/EXPERIMENT_LEDGER.md` but the rubric reviewers in practice scored the composite alone rather than direct-comparing to the original.
 
 **Lesson.** A numerical rubric, even an structured visual one, is not a substitute for direct human visual review against the ground truth. The deterministic metrics (§8) are useful as regression gates and as outlier detectors, but the final accept/reject decision needs a human looking at the video.
 
@@ -457,10 +457,10 @@ The eval framework is a self-contained module under `src/banner_pipeline/eval/`.
 
 ```bash
 uv run python -m banner_pipeline.eval \
-    --experiment experiments/<run_dir>/ \
-    [--reference auto]                            # auto-resolves via configs/eval/reference.yaml
-    [--regions back,left,floor,full,walkover]     # subset; default = all
-    [--walkover-window 690:745]                   # override auto-detected window
+ --experiment experiments/<run_dir>/ \
+ [--reference auto] # auto-resolves via configs/eval/reference.yaml
+ [--regions back,left,floor,full,walkover] # subset; default = all
+ [--walkover-window 690:745] # override auto-detected window
 ```
 
 Exit codes:
@@ -494,7 +494,7 @@ Hard gates determine pass/fail per region. Warnings are surfaced in `report.md` 
 
 ```yaml
 melbourne-walking-over-logo.mov:
-  gold_dir: experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200
+ gold_dir: experiments/2026-04-30_17-06-28_walkover_v68_clicked_homography_static_full_H200
 ```
 
 When `--reference auto` is supplied, the eval framework computes per-region SSIM and corner-distance vs gold. A 5% deviation per metric (in the direction-of-worse) flags `regression_<metric>: true` and surfaces an `any_regression` boolean. Adding a new clip = adding a new entry to `reference.yaml`; no other code change.
@@ -554,10 +554,10 @@ The main pipeline requires a human to click 1–3 positive points inside each ad
 - **Hardware:** all runs on **A100-80GB** via Modal.
 - **Key results:**
 
-  | Scenario | Run | Detected | Segmented | Output FPS |
-  |---|---|---|---|---|
-  | Standard clip | `2026-04-29_10-11-10_sam3_pca_A100-80GB` | n/a | 21 | 0.93 |
-  | Zoom + camera change | `2026-05-04_23-41-58_sam3_pca_A100-80GB` | 38 | 27 | 0.99 |
+ | Scenario | Run | Detected | Segmented | Output FPS |
+ |---|---|---|---|---|
+ | Standard clip | `2026-04-29_10-11-10_sam3_pca_A100-80GB` | n/a | 21 | 0.93 |
+ | Zoom + camera change | `2026-05-04_23-41-58_sam3_pca_A100-80GB` | 38 | 27 | 0.99 |
 
 - **Takeaway:** detection quality is acceptable for static and slowly-changing footage, but throughput is the binding constraint, full per-frame SAM3 inference comes in around **1 fps**, ~3× slower than the manually-prompted SAM2 baseline. Kept as the reference full-quality auto-detection implementation; superseded for production by the lighter variant on `feat/sam3-light-v1` (next).
 
@@ -580,20 +580,20 @@ Direct follow-up to `feat/sam3-v2`: instead of running SAM3 inference on every f
 A separate axis from the main `feat/quality-fixes-next` track. Explores a different way of stabilising placements: instead of a hybrid_lock state machine, do the compositing in a **rectified canonical plane** and warp back to the image. Adds court-line detection + vanishing-point estimation + a hybrid temporal mask stabilization pass via optical flow.
 
 - **What's added:**
-  - **Stabilization** (`src/banner_pipeline/stabilization.py`): hybrid temporal mask stabilization. Estimates inter-frame motion via Shi-Tomasi corners + Lucas-Kanade pyramidal tracking, warps previous masks forward, fuses them with the raw tracker output. Hard-hold for static frames, weighted blending for moving frames, mask carry-forward when the tracker drops an object. Gated by IoU between predicted and raw masks.
-  - **Court geometry estimation** (`src/banner_pipeline/court_geometry.py`): Hough-line detector → classify lines into width (horizontal) and depth (perspective) families → estimate vanishing points for each family → smooth temporally via EMA → produce a per-frame `CourtGeometryEstimate` with VPs, dominant directions, court boundary lines, and an image-to-court homography.
-  - **Five fitter strategies** chosen per-object based on `geometry_model` and `surface_type`:
+ - **Stabilization** (`src/banner_pipeline/stabilization.py`): hybrid temporal mask stabilization. Estimates inter-frame motion via Shi-Tomasi corners + Lucas-Kanade pyramidal tracking, warps previous masks forward, fuses them with the raw tracker output. Hard-hold for static frames, weighted blending for moving frames, mask carry-forward when the tracker drops an object. Gated by IoU between predicted and raw masks.
+ - **Court geometry estimation** (`src/banner_pipeline/court_geometry.py`): Hough-line detector → classify lines into width (horizontal) and depth (perspective) families → estimate vanishing points for each family → smooth temporally via EMA → produce a per-frame `CourtGeometryEstimate` with VPs, dominant directions, court boundary lines, and an image-to-court homography.
+ - **Five fitter strategies** chosen per-object based on `geometry_model` and `surface_type`:
 
-    | Strategy | When used | Algorithm |
-    |---|---|---|
-    | `pca` / `lp` / `hull` | `mask_free_quad` or geometry disabled | Mask-only geometric fitting |
-    | `fronto_parallel_wall_banner` | `back_wall_banner` surfaces | Oriented rectangle from mask contour + smoothed court width direction |
-    | `vp_constrained_horizontal_banner` | Horizontal banners with VP | Support lines + VP rays from the depth vanishing point |
-    | `vp_constrained_vertical_banner` | `side_wall_banner` surfaces | Support lines + VP rays from the width vanishing point |
-    | `court_plane` | `court_marking` surfaces | Quad projected via the court homography from a stored local-plane template |
+ | Strategy | When used | Algorithm |
+ |---|---|---|
+ | `pca` / `lp` / `hull` | `mask_free_quad` or geometry disabled | Mask-only geometric fitting |
+ | `fronto_parallel_wall_banner` | `back_wall_banner` surfaces | Oriented rectangle from mask contour + smoothed court width direction |
+ | `vp_constrained_horizontal_banner` | Horizontal banners with VP | Support lines + VP rays from the depth vanishing point |
+ | `vp_constrained_vertical_banner` | `side_wall_banner` surfaces | Support lines + VP rays from the width vanishing point |
+ | `court_plane` | `court_marking` surfaces | Quad projected via the court homography from a stored local-plane template |
 
-    All geometry-constrained fitters smooth their parameters temporally and support hold-last-good + fallback-to-mask-free-quad when the geometry estimate is unavailable.
-  - **`temporal_rectified` compositor** (`src/banner_pipeline/composite/temporal_rectified.py`): stateful. Rectifies the quad region to a canonical plate, caches a clean plate (wall) or updates a shading field (court), composites the logo in rectified space, and warps back. Supports wall-plate freezing after initialisation and court-plane shading adaptation via per-frame luminosity-ratio estimation.
+ All geometry-constrained fitters smooth their parameters temporally and support hold-last-good + fallback-to-mask-free-quad when the geometry estimate is unavailable.
+ - **`temporal_rectified` compositor** (`src/banner_pipeline/composite/temporal_rectified.py`): stateful. Rectifies the quad region to a canonical plate, caches a clean plate (wall) or updates a shading field (court), composites the logo in rectified space, and warps back. Supports wall-plate freezing after initialisation and court-plane shading adaptation via per-frame luminosity-ratio estimation.
 - **Configs:** `configs/sam3_default.yaml` (wall-banner), `configs/sam3_court_eval.yaml` (court-plane validation for the left-court ad).
 - **Test coverage:** `tests/test_temporal_rectified_compositor.py`, `tests/test_court_geometry.py`.
 - **Takeaway.** This branch carries the most thoughtful re-architecture of the geometry + compositor stack we tried. The `temporal_rectified` compositor, in particular, is a different point in the design space from the LED-blend inpaint compositor that the final main-line uses, it caches a clean plate per surface class instead of inpainting per frame. Most useful as a follow-up direction if the production target shifts to broadcast clips with significantly more camera motion than the Melbourne walkover demo.
@@ -651,7 +651,7 @@ Each branch's own README is the authoritative design doc for that direction.
 - `experiments/2026-05-06_05-33-48_hull_H200/`, rubric-best variant (rejected, kept as historical record).
 
 **Internal docs:**
-- `docs/AGENT_BRIEFING.md`, iterative experimentation contract (internal only; for anyone continuing the experimentation loop).
+- `docs/EXPERIMENT_LEDGER.md`, iterative experimentation contract (internal only; for anyone continuing the experimentation loop).
 - `docs/EXPERIMENT_LEDGER.md`, append-only raw experiment log (1779 lines as of hand-off).
 - `docs/EVALUATION.md`, eval framework spec (deterministic metrics + CLI).
 

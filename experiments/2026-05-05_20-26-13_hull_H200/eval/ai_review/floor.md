@@ -1,3 +1,0 @@
-# Floor logo (P3-A17)
-
-Floor surface inherits P3-A12's erase_text=true: the MELBOURNE bleed-through that haunted P3-A5 is gone across early/mid/late motion strips — the court around the Red Bull patch reads as uniform painted blue. The known trade-off carries forward unchanged: the inpainted region is a hair smoother than the surrounding matte-paint grain, so texture_match (3) and painted_on_vs_pasted_on (3) stay where P3-A12 had them. Halo is zero; edge_reflex is zero; jitter is zero. obj_4 mask_dilate=4 is a banner-only override and does not modify this region, so compounding the two flags introduces no new floor-side regression. Player contact shadow remains the 4 it became under erase_text. Net: floor at parity with P3-A12, strict gain over P3-A5.

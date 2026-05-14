@@ -1,3 +1,0 @@
-# left banner review
-
-The Red Bull mark sits on a blue banner whose hue is essentially native to Red Bull's palette, so color match is one of the strongest dimensions on the run. Geometry is locked across all motion strips — no jitter, no skew, perspective stays correct as the camera frames change. The viewer would mostly notice the v2 reflex artifact: the rings around the bulls and the upper/lower edges of the lettering show a faint softness/ghost relative to the crisp YoPRO original baked into the broadcast. It does not read as a hard halo (no bright glow on the banner fabric), so halo_presence holds up; the docking happens on edge_reflex.
