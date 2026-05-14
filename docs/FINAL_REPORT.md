@@ -14,7 +14,7 @@ This document is the canonical narrative for the project. It is structured so th
 
 **Demonstration clip.** `data/melbourne-walking-over-logo.mov`, 767 frames at 59 fps from the Melbourne broadcast. A player walks across the court while we insert a Red Bull logo on the floor; the logo must occlude correctly under the player's feet AND track if the camera moves during the walkover. Five virtual ad regions are placed simultaneously: 3 back-wall black banners, 1 left-side Red Bull banner (texture surface), 1 court-floor Red Bull walkover logo (paint surface).
 
-**Solution.** SAM2 segmentation → hull fitting → court-plane homography (BallTrackerNet learned-keypoint detector) → MatAnyone2 person-mask occlusion → inpaint compositor with LED-blend brightness re-baking. The homography is gated by a **hybrid_lock** at 30-pixel tolerance: while the camera is static, the placement stays pixel-locked at the manually-clicked seed (looks like a perfect static lock); when motion exceeds 30 px, the BallTrackerNet estimate ramps in over 3+ frames.
+**Solution.** SAM2 segmentation → hull fitting → court-plane homography (BallTrackerNet learned-keypoint detector) → MatAnyone person-mask occlusion → inpaint compositor with LED-blend brightness re-baking. The homography is gated by a **hybrid_lock** at 30-pixel tolerance: while the camera is static, the placement stays pixel-locked at the manually-clicked seed (looks like a perfect static lock); when motion exceeds 30 px, the BallTrackerNet estimate ramps in over 3+ frames.
 
 **Final result.** `experiments/2026-05-05_18-38-39_hull_H200/outputs/composited.mp4`. Visually indistinguishable from the V68 manually-clicked-corners gold while the camera is static, with stable BallTrackerNet tracking through the walkover frames where the V68 baseline would have drifted. All five regions pass the deterministic per-region scorecard. Walkover occlusion IoU = 0.985 (gate > 0.80). Temporal SSIM ≥ 0.99 across every region.
 
@@ -69,7 +69,7 @@ CourtGeometryEstimator src/banner_pipeline/court_geometry.py
  ↓
 HybridLockState src/banner_pipeline/court_geometry.py:HybridLockState
  ↓
-MatAnyone2 person masker CVPR 2026 alpha-matting model (occlusion)
+MatAnyone person masker (CVPR 2025 alpha-matting model, occlusion)
  ↓
 Inpaint compositor src/banner_pipeline/composite/painted.py
  (median_fill inpaint, LED brightness re-baking, surface overrides)
@@ -115,7 +115,7 @@ The court-geometry estimator computes a homography from the broadcast image plan
 
 #### Backend B, `ball_tracker_net_v1` (FINAL)
 
-**Source:** `src/banner_pipeline/court_geometry_ball_tracker.py` (~720 lines, ported from BallTrackerNet's CVPR 2020 reference implementation).
+**Source:** `src/banner_pipeline/court_geometry_ball_tracker.py` (~720 lines, adapted from the open-source TennisCourtDetector port of the TrackNet architecture (Huang et al., AVSS 2019)).
 
 **How it's built.** Per frame:
 
@@ -147,11 +147,11 @@ else:
 
 In the final config: `tolerance_px: 30, ramp_min_frames: 3, ramp_motion_px_per_frame: 2.0`. The 30-px tolerance is loose enough that the eye doesn't see micro-jitter from BTN's per-frame estimation but tight enough that real camera motion (PTZ pans, walkover handheld drift) crosses the threshold and the dynamic estimate kicks in. The 3-frame ramp prevents pop artifacts when the gate fires.
 
-The Melbourne clip is a mostly-static camera, so the vast majority of the 767 frames stay locked (visually pixel-identical to V68 gold). The ~80 walkover-window frames (685–723) where the camera drifts get a stable BTN re-estimation, without hybrid_lock, the placements would slide off the court in those frames.
+On the Melbourne clip the eval-framework counters report 751 of 767 frames locked at the seed (visually pixel-identical to V68 gold), 16 frames inside the walkover window ramping toward the dynamic BTN estimate, and 0 frames reaching the full-estimate state (camera motion subsides before any ramp completes). Without hybrid_lock the placements would either slide off the court during the walkover (always-locked) or pulse with per-frame keypoint noise during the static portion (always-dynamic).
 
-### 3.5 Person-mask occlusion, MatAnyone2
+### 3.5 Person-mask occlusion, MatAnyone
 
-**Source:** Configured via `pipeline.occlusion_masker.type: matanyone2`. The MatAnyone2 model is loaded into the Modal experiments image (CVPR 2026 alpha matting; PyTorch CNN that predicts a per-pixel alpha matte for foreground-person pixels).
+**Source:** Configured via `pipeline.occlusion_masker.type: matanyone2`. The MatAnyone model is loaded into the Modal experiments image (CVPR 2025 alpha matting; PyTorch CNN that predicts a per-pixel alpha matte for foreground-person pixels).
 
 **How it's built.** The model takes the original frame and a sparse set of positive prompt points (the player's center) and returns a continuous alpha matte (0 = fully background, 1 = fully foreground person) at full resolution. We run it once per frame. The matte is post-processed with `mask_smooth: true` and `mask_close_px: 5` to smooth temporal flicker and close pinhole gaps. The final compositor uses this alpha matte to occlude any logo pixels behind the player, `final_pixel = composite_pixel * (1 - person_alpha) + frame_pixel * person_alpha`.
 
@@ -201,7 +201,7 @@ compositor:
 **How it's built.** `Pipeline.from_config()` (in `pipeline.py`) loads the frozen YAML, instantiates the segmenter / fitter / compositor / occlusion-masker via dispatch dicts, and validates the prompt schema. The video loop has two paths:
 
 - **`mode: video`**, segments per-frame via SAM video tracker, fits per-frame quads via the chosen fitter, composites. The simple path. Used in earlier phases.
-- **`mode: video_hybrid`** (FINAL), adds the court-geometry estimator + hybrid_lock state machine + MatAnyone2 person-mask path. Per-frame: SAM mask → hull fit → BTN homography → hybrid_lock decision → composite under person-mask occlusion. This is what produces the final composite.
+- **`mode: video_hybrid`** (FINAL), adds the court-geometry estimator + hybrid_lock state machine + MatAnyone person-mask path. Per-frame: SAM mask → hull fit → BTN homography → hybrid_lock decision → composite under person-mask occlusion. This is what produces the final composite.
 
 The orchestrator writes:
 - `outputs/composited.mp4`, the result
@@ -263,7 +263,7 @@ Phase 2 concluded that the binding constraint was the estimator. We needed somet
 
 - **Hand-tuned line detector improvements**: increase the line-pool, more aggressive RANSAC. Rejected, the noise was characteristic of the algorithm class, not parameters.
 - **Optical-flow-based homography tracking**: track the seed corners with LK optical flow. Rejected, not robust to player occlusion; would lose the corners when a player walks over them.
-- **Learned-keypoint detector, BallTrackerNet** (chosen). Stylianou-Konstantinidis et al. 2020 published a CNN trained on labeled tennis broadcast frames to localize 14 court-specific keypoints (the corners + line intersections). Originally for tennis-ball context, the keypoint head is reusable as a court-detection head.
+- **Learned-keypoint detector, BallTrackerNet** (chosen). We adapted the heatmap-regression backbone of TrackNet (Huang et al., AVSS 2019) via the open-source `yastrebksv/TennisCourtDetector` port, which trains the network on labeled tennis broadcast frames to localize 14 court-specific keypoints (baseline corners + line intersections + service-line points). Originally TrackNet was built for tennis-ball context; the keypoint head adapts cleanly to court detection.
 
 **Port, P3-A1 (the FINAL).** New module `src/banner_pipeline/court_geometry_ball_tracker.py`. Loads the BTN CNN, runs it on every frame, extracts one keypoint per heatmap channel via Hough-circle peak detection, and runs RANSAC over all 14 keypoints to compute a court-reference→image homography. Frame-0 is bridged: the BTN-estimated homography for frame 0 is used to define a calibration mapping such that the BTN reference frame is aligned to V68's manually-clicked corners. This means subsequent BTN estimates are all consistent with the production seed. Selected via `geometry.court_backend: ball_tracker_net_v1`.
 
@@ -273,13 +273,13 @@ Phase 2 concluded that the binding constraint was the estimator. We needed somet
 
 Once we had a viable dynamic homography, the question shifted to: *can we lift the visual quality of the placements further with compositor tweaks?* This question is well-suited to iterative experimentation: many config knobs, many independent variants, parallel Modal capacity available.
 
-The framework (defined in `docs/EXPERIMENT_LEDGER.md`, internal-only):
+The cadence we adopted:
 
-- **Per-cycle experiments**, one experiments process per Modal cycle. Writes ONE branched config (one knob change), runs the pipeline on H200, runs the eval framework, returns a structured 250-word report. Each cycle is config-only by default; "code-fork" cycles (where source edits are required) are dispatched in isolated git worktrees.
-- **Parallel operator**, when an axis has independent variants, fan out 5–8 in parallel. The user pays for 10 concurrent Modal H200 slots and we aimed to keep them saturated.
-- **Cross-agent knowledge sharing**, each cycle's report contains a "Lessons learned" block. The operator extracts non-obvious findings from completed sibling reports and prepends them to the next experiments's brief.
+- **One config branch per cycle.** Each cycle changes exactly one knob (e.g., `obj_4.padding`, `shadow_strength`), runs the pipeline on H200, runs the eval framework, and writes a structured ~250-word note into the ledger covering hypothesis, result, and decision. Cycles that require code changes use isolated git worktrees so they do not perturb one another.
+- **Parallel waves.** When an axis has several independent variants worth trying, we fan out 5–8 in parallel against Modal's 10 concurrent H200 slots and harvest results together.
+- **Lessons-learned propagation.** Each cycle's note carries a short "Lessons learned" block. Non-obvious findings from completed sibling cycles are folded into the brief for the next wave so we do not repeat dead ends.
 
-**Total Phase 3 cycles.** ~50 H200 GPU runs across 14 waves (P3-A1 through P3-A40) + 3 code-fork worktrees + ~12 visual-rubric review passes. Detail in `docs/EXPERIMENT_LEDGER.md`.
+**Total Phase 3 cycles.** ~50 H200 GPU runs across 14 waves (P3-A1 through P3-A40), plus 3 code-fork worktrees and ~12 visual-rubric review passes. Full per-cycle detail in `docs/EXPERIMENT_LEDGER.md`.
 
 ### 6.3 Code changes shipped during Phase 3
 
@@ -317,9 +317,9 @@ P3-A38/e2 (`experiments/2026-05-06_05-33-48_hull_H200/`) was the rubric-best var
 2. **MELBOURNE wordmark erasure.** `erase_text=true` removed the painted MELBOURNE wordmark from under the floor logo. This was the right move on the rubric ("no bleed-through") but visually changed the floor texture context, the logo now sat on a plain green floor instead of the patterned painted area, which read as artificial.
 3. **Harder banner edges.** `obj_4 padding=0` exposed harder banner edges on the left logo. The rubric called this `edge_reflex=5` (no smearing); on direct viewing the harder edge actually read as "pasted on" more than the slightly-softer P3-A1 baseline did.
 
-**Why the rubric got it wrong.** The visual rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was specified in `docs/EXPERIMENT_LEDGER.md` but the rubric reviewers in practice scored the composite alone rather than direct-comparing to the original.
+**Why the rubric got it wrong.** The visual rubric was asked to score in absolute terms (1–5 per dimension) rather than as a direct comparison against the original baked-in ads in the same broadcast frame. Without that anchor, scores collapse toward "looks fine" for every variant that looks remotely competent. The pairing-based prompt (top row = original, bottom row = composite) was documented in the rubric brief, but in practice the scoring drifted toward judging the composite alone rather than as a direct comparison against the original.
 
-**Lesson.** A numerical rubric, even an structured visual one, is not a substitute for direct human visual review against the ground truth. The deterministic metrics (§8) are useful as regression gates and as outlier detectors, but the final accept/reject decision needs a human looking at the video.
+**Lesson.** A numerical rubric, even a structured visual one, is not a substitute for direct human visual review against the ground truth. The deterministic metrics (§8) are useful as regression gates and as outlier detectors, but the final accept/reject decision needs a human looking at the video.
 
 **Decision.** P3-A1 (the BTN port baseline, before any compositor tweaks) is the final delivered output. The `feat/quality-fixes-next` branch retains the experimental Phase 3 code changes (shadow synthesis lives in the compositor; rubric v2 lives in the eval module) so that future work can opt back in to those knobs if it wants, but the final config does not enable them.
 
@@ -651,15 +651,15 @@ Each branch's own README is the authoritative design doc for that direction.
 - `experiments/2026-05-06_05-33-48_hull_H200/`, rubric-best variant (rejected, kept as historical record).
 
 **Internal docs:**
-- `docs/EXPERIMENT_LEDGER.md`, iterative experimentation contract (internal only; for anyone continuing the experimentation loop).
-- `docs/EXPERIMENT_LEDGER.md`, append-only raw experiment log (1779 lines as of hand-off).
+- `docs/EXPERIMENT_LEDGER.md`, append-only raw experiment log (per-cycle hypothesis / result / decision for every run in Phase 1–3).
 - `docs/EVALUATION.md`, eval framework spec (deterministic metrics + CLI).
 
 ### External
 
-- **BallTrackerNet:** Stylianou-Konstantinidis, Y. et al. *TrackNet: A Deep Learning Network for Tracking High-speed and Tiny Objects in Sports Applications*. CVPR 2020. https://arxiv.org/abs/1907.03698
-- **SAM2 (Segment-Anything 2):** Ravi, N. et al. *SAM 2: Segment Anything in Images and Videos*. https://github.com/facebookresearch/sam2
-- **MatAnyone2:** Yang, P. et al. *MatAnyone: Stable Video Matting with Consistent Memory Propagation*. CVPR 2026.
+- **TrackNet (BallTrackerNet backbone):** Huang, Y.-C., Liao, I.-N., Chen, C.-H., İk, T.-U., and Peng, W.-C. *TrackNet: A Deep Learning Network for Tracking High-Speed and Tiny Objects in Sports Applications*. 16th IEEE International Conference on Advanced Video and Signal Based Surveillance (AVSS), 2019. https://arxiv.org/abs/1907.03698 · DOI 10.1109/AVSS.2019.8909871
+- **TennisCourtDetector (the open-source TrackNet adaptation we ported):** yastrebksv. *TennisCourtDetector: Deep Learning Network for Detecting Tennis-Court Keypoints*. 2023. https://github.com/yastrebksv/TennisCourtDetector
+- **SAM 2 (Segment Anything 2):** Ravi, N. et al. *SAM 2: Segment Anything in Images and Videos*. ICLR 2025 (Oral). https://arxiv.org/abs/2408.00714 · https://github.com/facebookresearch/sam2
+- **MatAnyone:** Yang, P., Zhou, S., Zhao, J., Tao, Q., and Loy, C. C. *MatAnyone: Stable Video Matting with Consistent Memory Propagation*. CVPR 2025. https://arxiv.org/abs/2501.14677
 
 ### Key git commits
 
